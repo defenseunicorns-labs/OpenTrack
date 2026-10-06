@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenTrack: open, explainable track management</title>
-<meta name="description" content="OpenTrack fuses AIS, ADS-B, TAK, SAPIENT, GMTI, radar, lidar and ESM feeds into one correlated track picture, and every decision comes with its evidence. Open source, MIT licensed.">
+<meta name="description" content="OpenTrack is an open-source tracking and correlation framework for sensor correlation, fusion and track management. It has a plugin SDK for algorithms, a fast web UI for operators, and a headless mode for autonomous systems. MIT licensed.">
 <meta property="og:title" content="OpenTrack">
 <meta property="og:description" content="Open, explainable track management: many feeds in, one correlated picture out.">
 <meta property="og:image" content="assets/screenshots/tracks.jpg">
@@ -96,7 +96,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
   <div class="wrap">
     <div class="eyebrow">Open source · MIT licensed</div>
     <h1>Many feeds in. One explainable track picture out.</h1>
-    <p class="lede">OpenTrack is a track management server. It ingests AIS, ADS-B, TAK, SAPIENT, STANAG 4607 GMTI, radar, lidar and ESM feeds, fuses them into one correlated picture, and publishes it to NATS and TAK. Every merge and pairing keeps the evidence behind it, and an operator can undo any of them.</p>
+    <p class="lede">OpenTrack is an open-source tracking and correlation framework for sensor correlation, fusion and track management. Its plugin SDK lets you bring in new algorithms quickly. Operators work in a fast web UI, and autonomous systems can run it headless to coordinate with each other.</p>
     <div class="cta">
       <a class="btn primary" href="#start">Get started</a>
       <a class="btn" href="https://github.com/kineticlogic-io/OpenTrack">View on GitHub</a>
@@ -128,9 +128,9 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <figure>
         <video src="assets/video/scenario2-tracks.mp4" poster="assets/video/scenario2-tracks.jpg" controls muted loop playsinline preload="none"></video>
         <figcaption>
-          <strong>Lidar and radar tracks paired with vessels</strong>
+          <strong>LiDAR and radar tracks paired with vessels</strong>
           <span class="result">4/4 paired correctly · 0 wrong · 0 clutter paired</span>
-          <span>Recorded data from the NTNU Autoferry dataset. A radar track turns blue once it agrees with the vessel. When the lidar tracker splits one 30 m vessel into several tracks, OpenTrack keeps them apart rather than guessing.</span>
+          <span>Recorded data from the NTNU Autoferry dataset. A radar track turns blue once it agrees with the vessel. When the LiDAR tracker splits one 30 m vessel into several tracks, OpenTrack keeps them apart rather than guessing.</span>
         </figcaption>
       </figure>
       <figure>

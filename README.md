@@ -1,7 +1,7 @@
 # OpenTrack
 
 **An open, explainable track management server.** OpenTrack takes in any number of track and sensor
-feeds (AIS, ADS-B, TAK/CoT, SAPIENT, STANAG 4607 GMTI, radar and lidar plots, ESM bearings and
+feeds (AIS, ADS-B, TAK/CoT, SAPIENT, STANAG 4607 GMTI, radar and LiDAR plots, ESM bearings and
 more) and fuses them into one correlated picture, which it publishes to NATS JetStream and TAK. Every
 merge, split and pairing records the evidence behind it, so an operator can see why it happened and
 undo it.
@@ -71,7 +71,7 @@ setups and upgrades.
 
 - **SAPIENT acoustic arrays:** `docker compose -f docs/examples/sapient/docker-compose.yml up -d`,
   then `scripts/demo-sapient-acoustic.sh`.
-- **Benchmarks and replays:** recorded Autoferry lidar and radar data, GMTI, AIS and ADS-B with
+- **Benchmarks and replays:** recorded Autoferry LiDAR and radar data, GMTI, AIS and ADS-B with
   simulated radars. See [scripts/benchmark](scripts/benchmark/README.md).
 
 ## Project layout
