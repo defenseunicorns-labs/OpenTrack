@@ -1,0 +1,7 @@
+numpy>=1.26
+scipy>=1.11
+nats-py>=2.6
+grpcio>=1.60
+grpcio-tools>=1.60
+matplotlib>=3.8
+imageio-ffmpeg>=0.5

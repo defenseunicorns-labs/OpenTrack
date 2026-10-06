@@ -1,0 +1,21 @@
+{
+  "name": "air-surveillance-radar",
+  "label": "Air surveillance radar (terminal / en route)",
+  "description": "A rotating primary radar watching aircraft: about 4 s a revolution, over 100 km, fast and manoeuvring targets.",
+  "sensor": {
+    "kind": "air_radar",
+    "revisit_secs": 4,
+    "range_km": 110,
+    "domain": "air"
+  },
+  "basis": "Benchmark, opensky-radar (OpenSky ADS-B as truth, simulated radars at Heathrow and Manchester: 4 s, 50 m and 0.15 deg, Pd 0.9).",
+  "tracker": {
+    "algorithm": "mht",
+    "measurement_sigma_m": 150.0,
+    "process_noise_mps2": 3.0,
+    "initial_speed_sigma_mps": 150.0,
+    "domain": "air",
+    "clutter_density": 1e-10,
+    "key_prefix": "A"
+  }
+}

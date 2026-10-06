@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Make the release signing key, once, inside the OpenSSL FIPS provider:
+# ECDSA P-256, the private key as encrypted PKCS#8 (AES-256-CBC, PBKDF2 with
+# HMAC-SHA-256), the public key as cosign.pub (what `cosign verify --key`
+# takes). Keep the private key and its password out of the repository.
+# Usage: scripts/release/new-signing-key <private-key.pem> <password-file> <cosign.pub>
+set -euo pipefail
+key="${1:?usage: new-signing-key <private-key.pem> <password-file> <cosign.pub>}"
+pass="${2:?password file}"
+pub="${3:?public key output}"
+[ -e "$key" ] && { echo "$key exists: not replacing a signing key" >&2; exit 1; }
+source "$(dirname "$0")/fips-openssl.sh"
+umask 077
+if [ ! -s "$pass" ]; then
+  openssl rand -base64 32 >"$pass"
+fi
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+  -aes-256-cbc -pass "file:$pass" -out "$key"
+openssl pkey -in "$key" -passin "file:$pass" -pubout -out "$pub"
+echo "signing key: $key (password in $pass); public key: $pub" >&2

@@ -1,0 +1,18 @@
+[project]
+name = "opentrack-plugin"
+version = "0.2.0"
+license = "MIT"
+description = "Write OpenTrack plugins (codecs, trackers, pairing scorers) in Python: served over a socket, or built as WebAssembly components"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+# Building WebAssembly components (plain Python only: no numpy and the like).
+component = ["componentize-py>=0.25"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["opentrack_plugin"]

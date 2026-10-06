@@ -1,0 +1,64 @@
+{
+  "id": "sapient-mqtt",
+  "name": "SAPIENT demo (MQTT, BSI Flex 335 v2.0)",
+  "description": "Subscribes to SAPIENT protobuf messages on MQTT topics (sapient/v2/data/#). Each message is decoded by the sapient codec plugin. Detection reports carry Location/Velocity oneofs that map to positions and kinematics.",
+  "reports": "detections",
+  "publish_alone": true,
+  "transport": {
+    "type": "mqtt",
+    "url": "mqtt://127.0.0.1:1883",
+    "topics": [
+      "sapient/v2/data/#"
+    ],
+    "qos": 1
+  },
+  "pipeline": {
+    "codec": {
+      "type": "plugin",
+      "plugin": "sapient"
+    },
+    "mapping": {
+      "schema_version": 1,
+      "rules": [
+        {
+          "name": "detection",
+          "when": {
+            "path": "detection_report.object_id",
+            "exists": true
+          },
+          "key": "detection_report.object_id",
+          "fields": {
+            "position.latitude": "detection_report.location.y",
+            "position.longitude": "detection_report.location.x",
+            "position.altitude_hae_m": "detection_report.location.z",
+            "observed_at": {
+              "path": "timestamp",
+              "transforms": [
+                "time"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "tracker": {
+      "algorithm": "gnn",
+      "measurement_sigma_m": 200.0,
+      "process_noise_mps2": 10.0,
+      "initial_speed_sigma_mps": 50.0,
+      "gate": 13.8,
+      "scans": "time",
+      "scan_hold_secs": 0.5,
+      "confirm_hits": 2,
+      "confirm_probability": 0.7,
+      "domain": "air",
+      "key_prefix": "S",
+      "drop_tentative_secs": 5.0,
+      "drop_confirmed_secs": 5.0,
+      "detection_probability": 0.5,
+      "clutter_density": 0.000001,
+      "birth_density": 0.01,
+      "profile": "gmti-wide-area"
+    }
+  }
+}

@@ -1,0 +1,103 @@
+name: release
+
+# A published GitHub release builds the image, attaches BuildKit's SLSA
+# provenance and SBOM to it, pushes it to the (private) GitHub container
+# registry, signs it with the project's cosign key, and adds the SBOMs and
+# the image digest to the release. See docs/security/supply-chain.md.
+#
+# The signature goes to no public transparency log (the repository is
+# private): .github/cosign/signing-config.json names none. Verify with the
+# committed public key, cosign.pub.
+
+on:
+  release:
+    types: [published]
+  # Re-run for an existing release (the workflow as on this branch).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build, sign and attach to (e.g. v0.4.0)
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE: ghcr.io/kineticlogic-io/opentrack
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}
+          provenance: mode=max
+          sbom: true
+      # v4: the installer that knows cosign 3.x (payload and attach only; the
+      # signature is made by the OpenSSL FIPS provider, scripts/release/sign-image).
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: Sign (OpenSSL FIPS provider)
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_PASSWORD: ${{ secrets.RELEASE_SIGNING_PASSWORD }}
+          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/key.pem"
+          printf '%s' "$RELEASE_SIGNING_PASSWORD" > "$RUNNER_TEMP/key.pass"
+          OT_SIGNING_KEY="$RUNNER_TEMP/key.pem" OT_SIGNING_KEY_PASSWORD_FILE="$RUNNER_TEMP/key.pass" \
+            scripts/release/sign-image "$REF"
+          rm -f "$RUNNER_TEMP/key.pem" "$RUNNER_TEMP/key.pass"
+      - name: Record the digest
+        env:
+          REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: echo "$REF" > image-digest.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-digest
+          path: image-digest.txt
+
+  sbom:
+    runs-on: ubuntu-latest
+    needs: image
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --no-fund
+        working-directory: ui
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - run: cargo install --locked cargo-cyclonedx
+      - run: scripts/security/sbom.py target/sbom
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: image-digest
+          path: target/sbom
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" target/sbom/* --clobber

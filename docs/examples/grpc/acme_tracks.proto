@@ -1,0 +1,42 @@
+// An example producer's schema: vessel tracks, streamed to whoever
+// subscribes (OpenTrack's grpc_client) or pushed to a collector
+// (OpenTrack's grpc_server). Uploaded with the source; OpenTrack compiles it.
+syntax = "proto3";
+
+package acme.tracks.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message Position {
+  double lat = 1;
+  double lon = 2;
+}
+
+message Track {
+  string track_id = 1;
+  Position position = 2;
+  google.protobuf.Timestamp time = 3;
+  // Course over ground, degrees true; speed over ground, m/s.
+  double course = 4;
+  double speed = 5;
+  uint64 mmsi = 6;
+  string name = 7;
+}
+
+message TrackBatch {
+  repeated Track tracks = 1;
+}
+
+message Subscribe {
+  // Which area's tracks to stream; empty: all.
+  string area = 1;
+}
+
+message Ack {}
+
+service TrackFeed {
+  // A subscriber gets a batch every second until it hangs up.
+  rpc Stream(Subscribe) returns (stream TrackBatch);
+  // A producer pushes batches as they come.
+  rpc Push(stream TrackBatch) returns (Ack);
+}

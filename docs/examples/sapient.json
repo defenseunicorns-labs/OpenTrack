@@ -1,0 +1,62 @@
+{
+  "id": "sapient-demo",
+  "name": "SAPIENT demo (BSI Flex 335 v2.0)",
+  "description": "SAPIENT protobuf messages over TCP: one SapientMessage per frame, framed with a 4-byte little-endian length prefix. Detection reports carry Location/Velocity oneofs that map to positions and kinematics.",
+  "reports": "detections",
+  "publish_alone": true,
+  "transport": {
+    "type": "tcp_client",
+    "host": "127.0.0.1",
+    "port": 8085,
+    "framing": {
+      "type": "length_prefix",
+      "width": "u32",
+      "endian": "little"
+    }
+  },
+  "pipeline": {
+    "codec": {
+      "type": "plugin",
+      "plugin": "sapient"
+    },
+    "mapping": {
+      "schema_version": 2,
+      "rules": [
+        {
+          "name": "detection",
+          "when": {
+            "path": "content.detection_report.object_id",
+            "exists": true
+          },
+          "key": "content.detection_report.object_id",
+          "fields": {
+            "position.latitude": "content.detection_report.location.x",
+            "position.longitude": "content.detection_report.location.y",
+            "position.altitude_hae_m": "content.detection_report.location.z",
+            "observed_at": {
+              "path": "timestamp",
+              "transforms": ["time"]
+            },
+            "ext.east_mps": "content.detection_report.enu_velocity.east_rate",
+            "ext.north_mps": "content.detection_report.enu_velocity.north_rate",
+            "ext.up_mps": "content.detection_report.enu_velocity.up_rate"
+          }
+        }
+      ]
+    },
+    "tracker": {
+      "algorithm": "gnn",
+      "measurement_sigma_m": 10.0,
+      "process_noise_mps2": 1.0,
+      "initial_speed_sigma_mps": 5.0,
+      "confirm_hits": 2,
+      "domain": "air",
+      "key_prefix": "S",
+      "auto_timing": {},
+      "detection_probability": 0.5,
+      "clutter_density": 1e-06,
+      "birth_density": 1e-08,
+      "profile": "wide-area"
+    }
+  }
+}

@@ -1,0 +1,127 @@
+# Runs OpenTrack with its own Redis on a private bridge network, publishing
+# system tracks to the NATS server OpenStare runs on the host. Only port 8090
+# is published. Settings and secrets come from `.env` next to this file (never
+# committed); see the README for every OT_* variable, and the administrator
+# guide (docs/guides/admin.md#docker-compose) for upgrading a host-network
+# deployment.
+services:
+  opentrack:
+    build: .
+    image: opentrack:dev
+    container_name: opentrack
+    restart: unless-stopped
+    command: ["all"]
+    networks: [opentrack, redis]
+    ports:
+      # Only the web UI and API. Set OT_BIND_PORT to publish another host
+      # port, or "127.0.0.1:8090" to keep it behind a proxy on this host.
+      - "${OT_BIND_PORT:-8090}:8090"
+    # OpenStare's NATS listens on the host; the container reaches it here.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Hardening (docs/security/hardening.md): nothing but /data and scratch
+    # space is writable, no Linux capabilities, no privilege escalation, and
+    # bounded memory, CPU and processes (about 16,000 live tracks fit; see
+    # the administrator guide to size them).
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/opentrack
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${OT_MEM_LIMIT:-2g}
+    cpus: ${OT_CPUS:-2}
+    pids_limit: ${OT_PIDS_LIMIT:-1024}
+    env_file: .env
+    environment:
+      OT_BIND: ${OT_BIND:-0.0.0.0:8090}
+      OT_REDIS_URL: ${OT_REDIS_URL:-redis://redis:6379}
+      OT_NATS_URL: ${OT_NATS_URL:-nats://host.docker.internal:4222}
+      OT_NATS_STREAM: ${OT_NATS_STREAM:-TRACKS}
+      OT_NATS_TRACKS_SUBJECT: ${OT_NATS_TRACKS_SUBJECT:-tracks}
+      OT_SITE_CODE: ${OT_SITE_CODE:-OTK}
+      # Other OpenTrack nodes (docs/multi-node.md): the sync boundary on
+      # this NATS, for a networking package or `opentrack bridge`.
+      OT_SYNC_PREFIX: ${OT_SYNC_PREFIX:-ot.sync}
+      # Sign-in (see the README): the first admin, where browsers reach
+      # OpenTrack (for SAML), and TLS with optional client certificates.
+      OT_AUTH: ${OT_AUTH:-on}
+      OT_ADMIN_EMAIL: ${OT_ADMIN_EMAIL:-}
+      OT_ADMIN_PASSWORD: ${OT_ADMIN_PASSWORD:-}
+      OT_SESSION_SECRET: ${OT_SESSION_SECRET:-}
+      OT_PUBLIC_URL: ${OT_PUBLIC_URL:-}
+      OT_TLS_CERT: ${OT_TLS_CERT:-}
+      OT_TLS_KEY: ${OT_TLS_KEY:-}
+      OT_TLS_CLIENT_CA: ${OT_TLS_CLIENT_CA:-}
+      OT_TLS_CLIENT_OCSP_URL: ${OT_TLS_CLIENT_OCSP_URL:-}
+      # An admin listener (docs/guides/admin.md#admin-listener): the admin
+      # routes are served only there, e.g. 0.0.0.0:8091. Off while unset.
+      # Publish its port yourself, to a management network only, and firewall
+      # it; nothing here publishes it.
+      OT_ADMIN_BIND: ${OT_ADMIN_BIND:-}
+      OT_ADMIN_TLS_CERT: ${OT_ADMIN_TLS_CERT:-}
+      OT_ADMIN_TLS_KEY: ${OT_ADMIN_TLS_KEY:-}
+      OT_ADMIN_TLS_CLIENT_CA: ${OT_ADMIN_TLS_CLIENT_CA:-}
+      OT_LOG: ${OT_LOG:-info}
+      # OpenTelemetry (docs/guides/admin.md#opentelemetry): logs, the audit
+      # record, traces and metrics to your collector. Off while unset.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_EXPORTER_OTLP_CERTIFICATE: ${OTEL_EXPORTER_OTLP_CERTIFICATE:-}
+      OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE: ${OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE:-}
+      OTEL_EXPORTER_OTLP_CLIENT_KEY: ${OTEL_EXPORTER_OTLP_CLIENT_KEY:-}
+    volumes:
+      # SQLite: sources, schema, registry, entities, decisions and the track
+      # graph. A named volume; the image makes /data belong to uid 1000.
+      - opentrack-data:/data
+
+  # The live picture (docs/guides/admin.md#redis). Reachable only from
+  # OpenTrack, on a network with no way out; never published.
+  redis:
+    image: redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    restart: unless-stopped
+    # The image's redis user from the start, so its entrypoint needs no
+    # capabilities to change user.
+    user: "999:1000"
+    networks: [redis]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${OT_REDIS_MEM_LIMIT:-16g}
+    cpus: ${OT_REDIS_CPUS:-2}
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis-data:/data
+
+  # A local NATS with JetStream, for development only (`--profile dev-nats`,
+  # with OT_NATS_URL=nats://nats:4222 in `.env`). In deployment OpenTrack
+  # connects to OpenStare's server instead.
+  nats:
+    image: nats:2@sha256:cd3fcd4ecdda44e3a66728a5334af0a959bc3979b32810e033d1c547241cd0f4
+    profiles: ["dev-nats"]
+    command: ["-js", "-sd", "/data"]
+    networks: [opentrack]
+    volumes:
+      - nats-data:/data
+
+networks:
+  # OpenTrack's own network: the published port, and the way out to NATS,
+  # feeds and the OpenTelemetry collector.
+  opentrack:
+    driver: bridge
+  # OpenTrack to Redis only, with no route out.
+  redis:
+    driver: bridge
+    internal: true
+
+volumes:
+  opentrack-data:
+  redis-data:
+  nats-data:

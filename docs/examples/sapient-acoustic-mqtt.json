@@ -1,0 +1,71 @@
+{
+  "id": "sapient-acoustic-1",
+  "name": "SAPIENT acoustic array 1",
+  "description": "One fixed acoustic array from the five-node sapient-sim experiment. OpenTrack positions complete range-bearing reports and can cross-fix bearings-only reports.",
+  "reports": "tracks",
+  "publish_alone": false,
+  "emitter_motion": {
+    "manoeuvre_mps2": 12.0,
+    "max_speed_mps": 50.0
+  },
+  "transport": {
+    "type": "mqtt",
+    "url": "mqtt://127.0.0.1:1883",
+    "topics": [
+      "sapient/v2/detections/acoustic/00000000-0000-4000-8000-000000000001"
+    ],
+    "qos": 1
+  },
+  "pipeline": {
+    "codec": {
+      "type": "plugin",
+      "plugin": "sapient"
+    },
+    "mapping": {
+      "schema_version": 1,
+      "rules": [
+        {
+          "name": "acoustic-bearing",
+          "when": {
+            "path": "detection_report.range_bearing.azimuth",
+            "exists": true
+          },
+          "key": "detection_report.object_id",
+          "fields": {
+            "name": "detection_report.id",
+            "observed_at": {
+              "path": "timestamp",
+              "transforms": [
+                "time"
+              ]
+            },
+            "position.latitude": {
+              "const": 51.5
+            },
+            "position.longitude": {
+              "const": -0.102
+            },
+            "position.altitude_hae_m": {
+              "const": 18.0
+            },
+            "geometry.bearing_deg": "detection_report.range_bearing.azimuth",
+            "geometry.sigma_deg": "detection_report.range_bearing.azimuth_error",
+            "geometry.range_m": "detection_report.range_bearing.range",
+            "geometry.range_sigma_m": "detection_report.range_bearing.range_error",
+            "geometry.max_range_m": {
+              "const": 1000.0
+            },
+            "geometry.elevation_deg": "detection_report.range_bearing.elevation",
+            "classification.domain": {
+              "const": "air"
+            },
+            "provenance.confidence": "detection_report.detection_confidence",
+            "track_type": {
+              "const": "simulated_training"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

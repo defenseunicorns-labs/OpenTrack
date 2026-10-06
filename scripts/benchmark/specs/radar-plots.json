@@ -1,0 +1,32 @@
+{
+  "id": "radar",
+  "name": "Benchmark radar plots",
+  "description": "A surveillance radar's plots, one frame per scan, formed into tracks by the tracker stage. The scenario builder sets the tracker.",
+  "reports": "detections",
+  "transport": {"type": "udp", "bind": "127.0.0.1:47101"},
+  "unauthenticated": "accepted",
+  "pipeline": {
+    "codec": {"type": "json", "records": "plots"},
+    "mapping": {
+      "schema_version": 2,
+      "rules": [
+        {
+          "name": "plot",
+          "key": "id",
+          "fields": {
+            "position.latitude": "lat",
+            "position.longitude": "lon",
+            "position.altitude_hae_m": "alt",
+            "observed_at": {"path": "t", "transforms": ["time"]},
+            "uncertainty.circular_error_m": "cep",
+            "uncertainty.ellipse.semi_major_m": "smaj",
+            "uncertainty.ellipse.semi_minor_m": "smin",
+            "uncertainty.ellipse.orientation_deg": "orient",
+            "track_type": {"const": "simulated_training"}
+          }
+        }
+      ]
+    },
+    "tracker": {"algorithm": "mht", "measurement_sigma_m": 20.0, "domain": "surface"}
+  }
+}

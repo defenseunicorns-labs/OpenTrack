@@ -1,0 +1,51 @@
+{
+  "id": "acme-push",
+  "name": "ACME tracks (producers push)",
+  "description": "Producers call TrackFeed/Push with a bearer token (ACME_PUSH_TOKEN).",
+  "transport": {
+    "type": "grpc_server",
+    "bind": "0.0.0.0:50051",
+    "token": "${env:ACME_PUSH_TOKEN}"
+  },
+  "pipeline": {
+    "codec": {
+      "type": "protobuf",
+      "files": {
+        "acme_tracks.proto": "// An example producer's schema: vessel tracks, streamed to whoever\n// subscribes (OpenTrack's grpc_client) or pushed to a collector\n// (OpenTrack's grpc_server). Uploaded with the source; OpenTrack compiles it.\nsyntax = \"proto3\";\n\npackage acme.tracks.v1;\n\nimport \"google/protobuf/timestamp.proto\";\n\nmessage Position {\n  double lat = 1;\n  double lon = 2;\n}\n\nmessage Track {\n  string track_id = 1;\n  Position position = 2;\n  google.protobuf.Timestamp time = 3;\n  // Course over ground, degrees true; speed over ground, m/s.\n  double course = 4;\n  double speed = 5;\n  uint64 mmsi = 6;\n  string name = 7;\n}\n\nmessage TrackBatch {\n  repeated Track tracks = 1;\n}\n\nmessage Subscribe {\n  // Which area's tracks to stream; empty: all.\n  string area = 1;\n}\n\nmessage Ack {}\n\nservice TrackFeed {\n  // A subscriber gets a batch every second until it hangs up.\n  rpc Stream(Subscribe) returns (stream TrackBatch);\n  // A producer pushes batches as they come.\n  rpc Push(stream TrackBatch) returns (Ack);\n}\n"
+      },
+      "message": "acme.tracks.v1.TrackBatch",
+      "records": "tracks"
+    },
+    "mapping": {
+      "schema_version": 1,
+      "rules": [
+        {
+          "name": "track",
+          "key": "track_id",
+          "fields": {
+            "position.latitude": "position.lat",
+            "position.longitude": "position.lon",
+            "observed_at": {
+              "path": "time",
+              "transforms": [
+                "time"
+              ]
+            },
+            "kinematics.course_deg": "course",
+            "kinematics.speed_mps": "speed",
+            "name": "name",
+            "classification.domain": {
+              "const": "surface"
+            }
+          },
+          "identifiers": [
+            {
+              "scheme": "mmsi",
+              "value": "mmsi"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

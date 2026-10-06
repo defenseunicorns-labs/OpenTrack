@@ -1,0 +1,25 @@
+{
+  "name": "astor-dmti",
+  "label": "ASTOR / Sentinel R1 DMTI class",
+  "description": "Airborne stand-off radar (dual-mode SAR and MTI): long stand-off range, wide footprints.",
+  "sensor": {
+    "kind": "gmti",
+    "platform": "ASTOR (Sentinel R1)",
+    "format": "STANAG 4607",
+    "domain": "ground"
+  },
+  "basis": "A nominal starting point for this class of sensor from public descriptions, not tuned on its own recordings: score it on yours with scripts/benchmark (bench run --profile) and adjust. Clutter density as gmti-wide-area (2e-7); gmti-high-clutter shows the stricter choice.",
+  "tracker": {
+    "algorithm": "gnn",
+    "measurement_sigma_m": 35.0,
+    "process_noise_mps2": 2.0,
+    "initial_speed_sigma_mps": 15.0,
+    "confirm_hits": 4,
+    "domain": "ground",
+    "key_prefix": "AS",
+    "auto_timing": {},
+    "detection_probability": 0.55,
+    "clutter_density": 2e-07,
+    "birth_density": 1e-09
+  }
+}

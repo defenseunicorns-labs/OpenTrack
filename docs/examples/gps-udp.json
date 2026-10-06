@@ -1,0 +1,46 @@
+{
+  "id": "gps-tabasco",
+  "name": "GPS track feed (exercise replay)",
+  "description": "GPS logs of an exercise's vehicles, replayed with the GMTI of the same exercise by scripts/benchmark/replay/gmti-gps-replay.py: one JSON message per fix over UDP. Live training data.",
+  "transport": {
+    "type": "udp",
+    "bind": "127.0.0.1:47010"
+  },
+  "unauthenticated": "accepted",
+  "pipeline": {
+    "codec": {
+      "type": "json"
+    },
+    "mapping": {
+      "schema_version": 2,
+      "rules": [
+        {
+          "name": "fix",
+          "key": "id",
+          "fields": {
+            "position.latitude": "lat",
+            "position.longitude": "lon",
+            "observed_at": {
+              "path": "t",
+              "transforms": [
+                "time"
+              ]
+            },
+            "uncertainty.circular_error_m": {
+              "const": 5.0
+            },
+            "name": "name",
+            "callsign": "name",
+            "kinematics.course_deg": "course",
+            "kinematics.speed_mps": "speed",
+            "classification.domain": "domain",
+            "track_type": {
+              "const": "live_training"
+            },
+            "state": "state"
+          }
+        }
+      ]
+    }
+  }
+}

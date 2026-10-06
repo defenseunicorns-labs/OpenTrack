@@ -1,0 +1,18 @@
+{
+  "name": "lidar-surface",
+  "label": "Lidar (surface, short range)",
+  "description": "A scanning lidar on a vessel or at a quay: very fine plots, many per target, short range.",
+  "sensor": {
+    "kind": "lidar",
+    "domain": "surface"
+  },
+  "basis": "Benchmark, Autoferry lidar: the settings of docs/examples/autoferry, with plot clustering. MHT, not GNN: two boats passing within metres swap under GNN (harbour gate 2.00% -> 1.51% wrong pairings, autoferry-4 pairing precision 79% -> 100%).",
+  "tracker": {
+    "algorithm": "mht",
+    "measurement_sigma_m": 4.0,
+    "cluster_m": 10.0,
+    "domain": "surface",
+    "key_prefix": "L",
+    "detection_probability": 0.8
+  }
+}

@@ -1,0 +1,11 @@
+/target
+/data
+/data-sapient*/
+node_modules
+/ui/dist
+*.db
+*.db-wal
+*.db-shm
+.env
+__pycache__/
+sdk/rust/target/

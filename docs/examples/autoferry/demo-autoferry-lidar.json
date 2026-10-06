@@ -1,0 +1,48 @@
+{
+  "id": "demo-autoferry-lidar",
+  "name": "Autoferry demo: lidar (GNN tracker)",
+  "description": "Replay (scripts/benchmark/replay/autoferry-replay.py): raw Autoferry detections, one frame per scan, formed into tracks by the tracker stage. Simulated training data.",
+  "reports": "detections",
+  "transport": {
+    "type": "udp",
+    "bind": "127.0.0.1:47002"
+  },
+  "unauthenticated": "accepted",
+  "pipeline": {
+    "codec": {
+      "type": "json",
+      "records": "plots"
+    },
+    "mapping": {
+      "schema_version": 2,
+      "rules": [
+        {
+          "name": "plot",
+          "key": "id",
+          "fields": {
+            "position.latitude": "lat",
+            "position.longitude": "lon",
+            "observed_at": {
+              "path": "t",
+              "transforms": [
+                "time"
+              ]
+            },
+            "uncertainty.circular_error_m": "cep",
+            "track_type": {
+              "const": "simulated_training"
+            }
+          }
+        }
+      ]
+    },
+    "tracker": {
+      "algorithm": "mht",
+      "measurement_sigma_m": 4.0,
+      "cluster_m": 10.0,
+      "domain": "surface",
+      "key_prefix": "L",
+      "detection_probability": 0.8
+    }
+  }
+}

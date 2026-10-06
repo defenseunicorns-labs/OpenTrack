@@ -1,0 +1,45 @@
+{
+  "id": "demo-autoferry-track",
+  "name": "Autoferry demo: vessel track feed",
+  "description": "Replay (scripts/benchmark/replay/autoferry-replay.py): the Autoferry ground truth as an AIS-like track feed, every 3 s with 2 m noise. Simulated training data.",
+  "transport": {
+    "type": "udp",
+    "bind": "127.0.0.1:47001"
+  },
+  "unauthenticated": "accepted",
+  "pipeline": {
+    "codec": {
+      "type": "json"
+    },
+    "mapping": {
+      "schema_version": 2,
+      "rules": [
+        {
+          "name": "vessel",
+          "key": "id",
+          "fields": {
+            "position.latitude": "lat",
+            "position.longitude": "lon",
+            "observed_at": {
+              "path": "t",
+              "transforms": [
+                "time"
+              ]
+            },
+            "uncertainty.circular_error_m": "cep",
+            "track_type": {
+              "const": "simulated_training"
+            },
+            "name": "name",
+            "kinematics.course_deg": "course",
+            "kinematics.speed_mps": "speed",
+            "classification.domain": {
+              "const": "surface"
+            },
+            "state": "state"
+          }
+        }
+      ]
+    }
+  }
+}

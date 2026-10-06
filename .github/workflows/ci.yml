@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Actions are pinned by commit (docs/security/supply-chain.md); the comment
+# names the tag the commit was taken from.
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+    env:
+      OT_TEST_REDIS_URL: redis://127.0.0.1:6379
+      OT_TEST_NATS_URL: nats://127.0.0.1:4222
+      OT_TEST_MQTT_URL: mqtt://127.0.0.1:1883
+      # Full debug info for both clippy and test artifacts exhausts the hosted runner disk.
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # samael (SAML SSO) binds to libxmlsec1 at build time.
+      - run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
+      # Service containers cannot take arguments, and JetStream needs `-js`.
+      - run: docker run -d --name nats -p 4222:4222 nats:2 -js
+      - run: docker run -d --name mqtt -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+      # The version rust-toolchain.toml pins.
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+          components: clippy, rustfmt
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # The AWS-LC FIPS module builds with Go and CMake (both on the runner).
+      - run: go version && cmake --version
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Vulnerabilities, licences, banned (non-FIPS) crates, sources: deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --no-fund
+        working-directory: ui
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: ui
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo install --locked cargo-cyclonedx
+      - run: scripts/security/sbom.py target/sbom
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: target/sbom/
+
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --no-fund
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

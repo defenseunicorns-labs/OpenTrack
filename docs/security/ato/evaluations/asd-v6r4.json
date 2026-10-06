@@ -1,0 +1,1718 @@
+[
+ {
+  "vid": "V-222387",
+  "status": "NotAFinding",
+  "finding_details": "Each account may hold at most 3 browser sessions (stig::SESSIONS_PER_ACCOUNT, fixed, crates/ot-server/src/auth/stig.rs); start_session in crates/ot-server/src/auth/api.rs ends and revokes the oldest sessions past the limit and audits each as session_end reason 'limit'. Documented in docs/guides/admin.md#session-limits.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222388",
+  "status": "NotAFinding",
+  "finding_details": "Logout (crates/ot-server/src/auth/api.rs logout) revokes the token, ends the server-side session and sends a Max-Age=0 ot_session cookie (Auth::clear_cookie in crates/ot-server/src/auth/mod.rs); the only cookie is the HttpOnly/SameSite=Strict/Secure session token, never a user name or password. The UI stores no credentials in web storage: sessionStorage holds only banner-acknowledgement and notice flags, cleared on sign-out/sign-in page (ui/src/auth/AuthProvider.tsx, ui/src/auth/LoginPage.tsx). The login form marks fields autocomplete=username/current-password, so a browser password manager may still offer to save; the application itself never prompts.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222389",
+  "status": "NotAFinding",
+  "finding_details": "Browser sessions end after 15 minutes without user activity (stig::IDLE_MINUTES, fixed); sessions::alive in crates/ot-server/src/auth/sessions.rs ends an idle session on its next use and maintenance.rs ends stale ones every minute, auditing session_timeout. The UI sends x-ot-idle-ms so its own polling does not keep a session alive, and redirects to /login?ended=1 on 401 (ui/src/auth/AuthProvider.tsx). docs/guides/admin.md#session-limits.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222390",
+  "status": "NotAFinding",
+  "finding_details": "Admin sessions end after 10 minutes idle (stig::ADMIN_IDLE_MINUTES, idle_ms(Role::Admin) in crates/ot-server/src/auth/stig.rs), enforced by sessions::alive and the once-a-minute end_stale_sessions sweep in crates/ot-server/src/auth/maintenance.rs; not configurable. docs/guides/admin.md#session-limits.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222391",
+  "status": "NotAFinding",
+  "finding_details": "Every signed-in user has Sign out in the account menu (ui/src/auth/UserChip.tsx signOut), which calls POST /api/v1/auth/logout; the server revokes the token, ends the session row, audits 'logout' and clears the cookie (crates/ot-server/src/auth/api.rs logout).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222392",
+  "status": "NotAFinding",
+  "finding_details": "Signing out lands on /login?signed_out=1, which says 'You have signed out. Your session has ended; close the browser to finish.' (ui/src/auth/AuthProvider.tsx logout, ui/src/auth/LoginPage.tsx); a session ended by the server shows its own message (?ended=1).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222393",
+  "status": "NotAFinding",
+  "finding_details": "Security labels (classification, restrictions, sharing) are set per source (source spec in SQLite, docs/guides/admin.md#security-labels) and stored with every observation and system track (security field on the schema types in crates/ot-core/src/schema.rs, the track view kept in Redis tms:sys:<uid>); the classification order is stored in the correlation settings. Labels persist with the data at rest.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222394",
+  "status": "NotAFinding",
+  "finding_details": "Labels are retained through processing: correlation computes a fused track's label from all contributors (highest classification, union of restrictions, intersection of releasability; labels.combine in crates/ot-server/src/correlate.rs), and track management (merge/group) recombines them (crates/ot-server/src/engine/manage.rs). Unknown classifications rank above all known ones so a track is never under-marked. Tests in correlate.rs cover it.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222395",
+  "status": "NotAFinding",
+  "finding_details": "Each labelled track has one portion marking (ot-core SecurityLabel::marking, e.g. (S//REL TO USA, GBR)): TAK/CoT events carry a <detail><__security .../> element and remarks starting with the marking; track exports (GeoJSON, CSV), the audit CSV, registry sheets and the configuration export are marked (crates/ot-server/src/marking.rs); the UI shows each track's marking; NATS carries the label. Tests: markings_follow_us_syntax, a_labelled_track_carries_its_marking, a_file_is_marked_by_its_highest_label_else_the_banner.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222396",
+  "status": "NotAFinding",
+  "finding_details": "UI/API remote access is served over TLS (OT_TLS_CERT/OT_TLS_KEY, crates/ot-server/src/https.rs) or a TLS proxy, with rustls restricted to its FIPS configuration on the AWS-LC FIPS 140-3 module (fips::init in crates/ot-server/src/fips.rs; TLS 1.2/1.3 AES-GCM, docs/security/fips.md). Plain HTTP remains possible if TLS is not configured; docs/security/hardening.md (Encrypt every link) requires it for accredited deployments.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222397",
+  "status": "NotAFinding",
+  "finding_details": "Session integrity is protected by TLS AEAD suites (AES-GCM) from the FIPS provider (crates/ot-server/src/fips.rs, docs/security/fips.md), HSTS over TLS (security_headers in crates/ot-server/src/control.rs), and HS256-signed session tokens backed by a server-side session record with Secure/HttpOnly/SameSite=Strict cookies (crates/ot-server/src/auth/mod.rs). TLS is required by docs/security/hardening.md.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222398",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack uses no SOAP messages or web services; its APIs are REST/JSON, NATS, gRPC and CoT (README.md, crates/ot-server/src/control.rs). SAML uses the HTTP-Redirect/HTTP-POST browser bindings, not SOAP.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222399",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack does not use WS-Security or SOAP; no WS-Security tokens are produced or consumed (SAML is browser-binding only, crates/ot-server/src/auth/saml.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222400",
+  "status": "NotAFinding",
+  "finding_details": "SAML assertions (the only such messages) have their validity periods checked by the service provider in third_party/samael/src/service_provider/mod.rs: response and assertion IssueInstant within 90 s (max_issue_delay), Conditions NotBefore/NotOnOrAfter, and SubjectConfirmationData NotBefore/NotOnOrAfter (required), with 180 s clock skew; OpenTrack also requires the response to answer a request it made within 5 minutes (signed RelayState, crates/ot-server/src/auth/saml.rs). No WS-Security is used.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222401",
+  "status": "NotAFinding",
+  "finding_details": "The ACS refuses any assertion whose ID was already used until it expires (saml::State::first_use in crates/ot-server/src/auth/saml.rs, test an_assertion_is_used_once), so a reused assertion ID from the asserting party is rejected; responses must also answer a fresh 128-bit request ID. The replay cache is per process (cleared on restart), bounded by the 5-minute request window and the 90 s issue delay.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222402",
+  "status": "Not_Applicable",
+  "finding_details": "The check concerns WS-Security tokens, which OpenTrack does not use. SAML assertions pass through the browser only over the TLS-protected ACS endpoint (OT_PUBLIC_URL https, docs/security/hardening.md); the SP accepts encrypted assertions only if it has a key (third_party/samael decrypt_assertion).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222403",
+  "status": "NotAFinding",
+  "finding_details": "The service provider requires NotOnOrAfter on the bearer SubjectConfirmationData and refuses an assertion without it (validate_assertion_subject_confirmation in third_party/samael/src/service_provider/mod.rs returns AssertionSubjectConfirmationMissing when not_on_or_after is None), and refuses an expired one. crates/ot-server/src/auth/saml.rs test a_signed_response_verifies... adds it because the SP requires it.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222404",
+  "status": "NotAFinding",
+  "finding_details": "When Conditions carry NotBefore/NotOnOrAfter the SP enforces them (third_party/samael/src/service_provider/mod.rs validate_assertion), and OpenTrack treats every assertion as one-time use regardless of a OneTimeUse element: the assertion ID is cached and a second use refused until its NotOnOrAfter (or 10 minutes) (first_use in crates/ot-server/src/auth/saml.rs). IssueInstant is limited to 90 s and the response must answer a request made in the last 5 minutes.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222405",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack does not rely on the OneTimeUse element: every assertion is single-use by ID (first_use in crates/ot-server/src/auth/saml.rs). Conditions is deserialised into a struct with a single optional one_time_use field (third_party/samael/src/schema/conditions.rs); a duplicated element fails serde deserialisation and the response is refused.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222406",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack does not use the AuthnStatement SessionIndex (no SAML single logout; crates/ot-server/src/auth/saml.rs reads only the NameID and role attribute) and ties no privacy data to it; its own session is a separate server-side record.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222407",
+  "status": "NotAFinding",
+  "finding_details": "Account management is automated in the application: Settings -> Users, the /api/v1/auth/users API and the opentrack user CLI create, change, disable, unlock, reset and delete accounts (crates/ot-server/src/auth/api.rs, crates/ot-server/src/user_cli.rs); SAML provisions accounts and roles from the IdP (saml.rs account); inactive accounts are disabled automatically (maintenance.rs). docs/guides/admin.md#users.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222408",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack defines no shared or group accounts and needs none; every account is individual (email), service use is by per-service accounts and API tokens (docs/guides/admin.md#api-tokens). If a site creates a shared account, its handling is a site account-management process.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222409",
+  "status": "NotAFinding",
+  "finding_details": "A temporary or emergency account (Settings -> Users -> Temporary, or opentrack user add --temporary) is turned off automatically 72 hours after it is made (stig::TEMPORARY_ACCOUNT_HOURS, fixed): the maintenance sweep disables it, ends its sessions and revokes its API tokens, audited as account_disabled reason expired, and sign-in and every request refuse it once expired (auth/maintenance.rs disable_expired, ot-store auth.rs; tests a_temporary_account_is_turned_off_when_its_time_runs_out, a_temporary_account_expires_72_hours_after_it_is_made).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222410",
+  "status": "NotAFinding",
+  "finding_details": "Break-glass accounts are marked Never turn off in Settings -> Users; the inactivity sweep exempts them (disable_inactive in crates/ot-server/src/auth/maintenance.rs, InactivityPolicy.exempt in auth/settings.rs), OpenTrack has no other automatic disable or removal, and it refuses any change that would leave no active admin (keeps_an_admin in auth/api.rs). docs/guides/admin.md#inactive-accounts, docs/security/hardening.md (Sign-in).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222411",
+  "status": "NotAFinding",
+  "finding_details": "Accounts not signed in for 35 days are turned off (stig::DISABLE_INACTIVE_AFTER_DAYS, fixed), checked at sign-in and every 10 minutes (disable_inactive in crates/ot-server/src/auth/maintenance.rs), audited as account_disabled reason 'inactivity' and revoking tokens. docs/guides/admin.md#inactive-accounts.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222412",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack ships no default or vendor accounts except the first admin created at first start (bootstrap_admin in crates/ot-server/src/auth/mod.rs, random temporary password that must be changed); Settings -> Users lists every account with last sign-in and lets an admin disable or delete it, and inactive ones are turned off after 35 days. Whether unnecessary accounts exist is a site review.",
+  "comments": "Site: ISSO account review"
+ },
+ {
+  "vid": "V-222413",
+  "status": "NotAFinding",
+  "finding_details": "Account creation is audited: create_user decisions (UI/API, CLI, SAML first sign-on, first admin) are written with actor and the new account to the decisions table and copied into the append-only audit table (record_decision in crates/ot-store/src/sqlite.rs; crates/ot-server/src/auth/api.rs, saml.rs, user_cli.rs, auth/mod.rs bootstrap_admin), and each row is logged as audit.record (docs/guides/admin.md#audit-record).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222414",
+  "status": "NotAFinding",
+  "finding_details": "Account modification is audited: update_user (role, name, active, including SAML role changes), reset_password, change_password, unlock_user, revoke_sessions and API token create/revoke are recorded as decisions with before/after and copied to the audit table (crates/ot-server/src/auth/api.rs, saml.rs; record_decision in crates/ot-store/src/sqlite.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222415",
+  "status": "NotAFinding",
+  "finding_details": "Disabling is audited: an admin turning an account off is an update_user decision with before/after active (crates/ot-server/src/auth/api.rs update_user); automatic disabling for inactivity is an account_disabled audit row with reason and last activity (crates/ot-server/src/auth/maintenance.rs); lockouts are account_locked rows (auth/api.rs login).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222416",
+  "status": "NotAFinding",
+  "finding_details": "Account removal is audited: delete_user records a decision with the deleted account as 'before' and the actor, copied into the audit table (crates/ot-server/src/auth/api.rs delete_user; record_decision in crates/ot-store/src/sqlite.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222417",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack does not send notifications itself; every account creation is written to the audit record and emitted immediately as an audit.record log event (op create_user) over OpenTelemetry to the site's collector/SIEM (docs/guides/admin.md#audit-record, #opentelemetry), where an alert to SAs/ISSOs can be raised. With SAML, the enterprise IdP manages users.",
+  "comments": "Site: SIEM alert rule on audit.record op=create_user"
+ },
+ {
+  "vid": "V-222418",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack emits every account modification (update_user, reset_password, unlock_user, revoke_sessions, token changes) as an audit.record event over OpenTelemetry to the site's SIEM (docs/guides/admin.md#audit-record); notifying SAs/ISSOs is a SIEM alerting rule.",
+  "comments": "Site: SIEM alert rule on audit.record account-change ops"
+ },
+ {
+  "vid": "V-222419",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack emits disabling actions as audit.record events (update_user with active=false, account_disabled for inactivity, also logged as a warning) over OpenTelemetry to the site's SIEM (docs/guides/admin.md#audit-record, crates/ot-server/src/auth/maintenance.rs); notification is a SIEM alerting rule.",
+  "comments": "Site: SIEM alert rule on audit.record op=account_disabled/update_user"
+ },
+ {
+  "vid": "V-222420",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack emits account removals as audit.record events (op delete_user) over OpenTelemetry to the site's SIEM (docs/guides/admin.md#audit-record); notifying SAs/ISSOs is a SIEM alerting rule.",
+  "comments": "Site: SIEM alert rule on audit.record op=delete_user"
+ },
+ {
+  "vid": "V-222421",
+  "status": "NotAFinding",
+  "finding_details": "Enabling is audited: turning an account on (Settings -> Users, API or opentrack user enable) is an update_user decision with before/after active, copied to the audit table (crates/ot-server/src/auth/api.rs update_user, crates/ot-server/src/user_cli.rs; record_decision in crates/ot-store/src/sqlite.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222422",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack emits account enabling as an audit.record event (update_user with active true) over OpenTelemetry to the site's SIEM (docs/guides/admin.md#audit-record); notifying SAs/ISSOs is a SIEM alerting rule.",
+  "comments": "Site: SIEM alert rule on audit.record op=update_user (active)"
+ },
+ {
+  "vid": "V-222423",
+  "status": "NotAFinding",
+  "finding_details": "The shipped documentation identifies OpenTrack's data and its protection: docs/guides/admin.md#data-directory and #redis list every store (database, session.key, initial-admin.txt, Redis keys) with what it holds; #security, #security-labels, #encryption-in-transit and #backup-and-restore give the protections; docs/security/stig-mapping.md maps SC-8, SC-13, SC-28 (at-rest encryption inherited from the platform) and AC-16. The data's categorisation for a given deployment belongs in the site's SSP.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222424",
+  "status": "Not_Reviewed",
+  "finding_details": "Whether data-mining protections are required is set by the site's security plan. OpenTrack restricts access by role (crates/ot-server/src/auth/policy.rs), audits sign-ins and changes, and rate-limits sign-in attempts, but offers no query quotas or atypical-query alarms; exports (GeoJSON/CSV) are available to viewers.",
+  "comments": "Site: ISSO/SSP to state whether data-mining protections are required"
+ },
+ {
+  "vid": "V-222425",
+  "status": "NotAFinding",
+  "finding_details": "Every /api/v1 route passes through the auth::layer gate (crates/ot-server/src/control.rs router, crates/ot-server/src/auth/mod.rs layer), which identifies the caller and checks the role the path needs from one table (crates/ot-server/src/auth/policy.rs need: viewer reads, track_manager picture changes, admin everything else, unknown writes default to admin), from the account as it is now; disabled accounts, revoked tokens and ended sessions are refused. Unit tests in policy.rs cover each path class. OT_AUTH=off is an accepted-risk development mode excluded by docs/security/hardening.md (F-4).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222426",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack implements role-based access control only (viewer < track_manager < admin, crates/ot-server/src/auth/policy.rs); users cannot set permissions on data or objects they own, so there is no discretionary access control.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222427",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack carries security labels but provides no label-based flow-control policy within the system: by design all roles see every track and enforcement is downstream (docs/security/stig-mapping.md AC-16, docs/guides/admin.md#security-labels). With no flow-control capability the check is not applicable.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222428",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack provides no rule-set or label-based control of flow to interconnected systems (outputs to NATS, TAK and other nodes are configured by admins and send the whole picture; enforcement of labels is downstream by design, docs/security/stig-mapping.md AC-16). With no flow-control capability the check is not applicable; the site's boundary devices and accredited interconnections govern the flows.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222429",
+  "status": "NotAFinding",
+  "finding_details": "Privileged functions (accounts, sign-in settings, sources, schema, settings, plugins, purge, audit) need the admin role, checked server-side on every request (crates/ot-server/src/auth/policy.rs, auth::layer in auth/mod.rs); a SAML sign-on cannot grant admin unless Allow admin is on (saml.rs acs_checked). The process runs as unprivileged uid 1000 (Dockerfile USER opentrack) with all capabilities dropped, no-new-privileges and a read-only root filesystem (docker-compose.yml); only /data is writable.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222430",
+  "status": "NotAFinding",
+  "finding_details": "The image runs as the unprivileged opentrack user, uid 1000 (Dockerfile useradd/USER), and docker-compose.yml drops all capabilities, sets no-new-privileges and a read-only root filesystem with only /data writable. The database is embedded SQLite owned by that user, with no DBMS server account or DBA role. The Redis and NATS accounts OpenTrack uses are provisioned by the site (docs/security/hardening.md).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222431",
+  "status": "NotAFinding",
+  "finding_details": "Every privileged change (accounts, API tokens, sign-in settings, sources, schema, correlation settings, plugins, tracker profiles, purge, audit export/verify) is recorded as a decision with actor, time, op and before/after, copied into the hash-chained audit table and logged as audit.record (record_decision in crates/ot-store/src/sqlite.rs; crates/ot-server/src/audit_api.rs; docs/guides/admin.md#audit-record).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222432",
+  "status": "NotAFinding",
+  "finding_details": "Three failed password sign-ins within 15 minutes lock the account until an admin unlocks it (stig::LOCKOUT_FAILURES, LOCKOUT_WINDOW_MINUTES, LOCK_UNTIL_UNLOCKED, fixed): login in crates/ot-server/src/auth/api.rs calls note_login_failure (crates/ot-store/src/auth.rs) and refuses a locked account even with the right password, auditing the failure and account_locked; tested in auth/api.rs lockout_sessions_idle_timeout_and_the_audit_record. SAML and PKI lockout belong to the IdP/CA.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222433",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack provides the unlock mechanism (Settings -> Users unlock button, POST /api/v1/auth/users/{id}/unlock, opentrack user unlock) and audits each unlock_user with the actor (crates/ot-server/src/auth/api.rs; docs/guides/admin.md#account-lockout); the approved, ISSO/ISSM-documented unlock procedure is the site's.",
+  "comments": "Site: ISSO process"
+ },
+ {
+  "vid": "V-222434",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack provides a notice-and-consent banner (Settings -> Banners, up to 20,000 characters) shown after sign-in and before any application content (WarnGate in ui/src/auth/WarnGate.tsx, docs/guides/admin.md#notice-and-consent); docs/security/hardening.md (Sign-in) requires it to be turned on with the standard DoD text. The text itself is entered by the site.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222435",
+  "status": "NotAFinding",
+  "finding_details": "The banner stays on screen until the user chooses AGREE; DECLINE signs the user out (ui/src/auth/WarnGate.tsx), and it is asked again after every sign-out (sessionStorage flag cleared in LoginPage.tsx/AuthProvider.tsx).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222436",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack is not a publicly accessible application: it is deployed on accredited DoD networks behind sign-in (docs/security/hardening.md). The same notice-and-consent banner capability applies (V-222434).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222437",
+  "status": "NotAFinding",
+  "finding_details": "After each sign-in the UI shows the date and time of the previous sign-in (UTC, YYYY-MM-DD HH:MM:SSZ) and the number of failed attempts since (ui/src/auth/LastLoginNotice.tsx, prev_login_at_ms recorded by start_session in crates/ot-server/src/auth/api.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222438",
+  "status": "NotAFinding",
+  "finding_details": "Every change is attributed to the authenticated account that made it (actor header set only by auth::layer, crates/ot-server/src/auth/mod.rs) in the decision log and the append-only, SHA-256 hash-chained audit table whose UPDATE/DELETE are refused by triggers (crates/ot-store/src/audit.rs, migrations/0016_audit.sql), verifiable with GET /api/v1/audit/verify and exported to the SIEM. OpenTrack has no digital-signature non-repudiation requirement beyond this.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222439",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack does not aggregate audit records from other systems or components: each node keeps its own audit table and exports its records over OpenTelemetry; aggregation and time correlation happen in the site's collector/SIEM (docs/guides/admin.md#opentelemetry).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222441",
+  "status": "NotAFinding",
+  "finding_details": "Session creation is audited: start_session writes a login (or session_start after a password change) audit row with the session identifier (jti), method and client IP (crates/ot-server/src/auth/api.rs start_session).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222442",
+  "status": "NotAFinding",
+  "finding_details": "Session destruction is audited: logout rows on sign-out (auth/api.rs logout), session_end rows when a user or admin ends a session, the per-account limit pushes one out or the lifetime expires (crates/ot-server/src/auth/sessions.rs end/ended, maintenance.rs), each with the session id and reason.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222443",
+  "status": "NotAFinding",
+  "finding_details": "Sessions are not renewed or extended: a session token keeps its ID for its fixed 24-hour lifetime (crates/ot-server/src/auth/stig.rs SESSION_HOURS). The only replacement, the new session issued after a password change, is audited as session_start with its new id (start_session with How::PasswordChange in crates/ot-server/src/auth/api.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222444",
+  "status": "NotAFinding",
+  "finding_details": "No passwords, tokens or keys are written to the logs, and source changes are recorded in the decision log and audit record with their secrets masked (ot_core::secrets::redact_spec in crates/ot-store/src/sources.rs; test decisions_hide_a_sources_secrets_and_the_revision_keeps_them); exported log copies also drop before/after.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222445",
+  "status": "NotAFinding",
+  "finding_details": "Idle timeouts are audited as session_timeout rows with the session id and client IP, whether found on use (sessions::alive in crates/ot-server/src/auth/sessions.rs) or by the once-a-minute sweep (crates/ot-server/src/auth/maintenance.rs); lifetime expiry is session_end reason 'expired'.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222446",
+  "status": "NotAFinding",
+  "finding_details": "Every audit row carries at_ms (UTC milliseconds) inside the hash chain (crates/ot-store/src/audit.rs AuditRow, row_hash), shown as RFC 3339 in the CSV export (audit_api.rs); log lines carry UTC timestamps. The clock source is the host (time sync is inherited).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222447",
+  "status": "NotAFinding",
+  "finding_details": "Every API request is logged with target access: account, method, path, status, client address, User-Agent, Referer, X-Forwarded-For and duration (auth/access.rs log), on standard output and over OpenTelemetry to the site's SIEM; decisions' audit rows carry the client address (ot_store::audit::with_client).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222448",
+  "status": "NotAFinding",
+  "finding_details": "Audit rows record the connecting IP for sign-in success and failure, lockout, sign-out and session timeouts (AuditEvent.ip, client_ip from the socket peer in crates/ot-server/src/auth/mod.rs; failed_login and start_session in auth/api.rs). Behind a TLS proxy the recorded address is the proxy's (X-Forwarded-For is not trusted).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222449",
+  "status": "NotAFinding",
+  "finding_details": "Every audit row records the actor (account email, or 'system'/'saml' for automatic actions, the attempted email for failed sign-ins) inside the hash chain (crates/ot-store/src/audit.rs, record_decision in crates/ot-store/src/sqlite.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222450",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222451",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222452",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222453",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack carries classification labels on tracks but does not compartment data: every role sees every track and no access decision depends on a label or clearance (product decision, docs/security/stig-mapping.md AC-16, docs/guides/admin.md#security-labels), so there are no successful/unsuccessful category-access events to record. If the site's SSP requires compartmented access within OpenTrack, this becomes a finding.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222454",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222455",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222456",
+  "status": "Not_Applicable",
+  "finding_details": "Roles and their permissions are fixed in code (crates/ot-server/src/auth/policy.rs, docs/guides/admin.md#roles); OpenTrack has no function to create or modify a security level's permissions. Changing a user's role is covered under V-222454.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222457",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222458",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222459",
+  "status": "Not_Applicable",
+  "finding_details": "Roles are fixed in code (crates/ot-server/src/auth/policy.rs); OpenTrack has no function to delete a security level or its permissions.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222460",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222461",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222462",
+  "status": "NotAFinding",
+  "finding_details": "Password and SAML sign-ins are audited on success and failure (auth/api.rs). API tokens, client certificates and OpenStare trust have no sign-in of their own: their first use in each hour is audited as login with via, and a credential that identifies no one (bad, expired or revoked token, unmapped certificate) as access_refused (auth/access.rs). TLS-level certificate refusals are logged by the TLS listener.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222463",
+  "status": "NotAFinding",
+  "finding_details": "Every privileged change (accounts, API tokens, sign-in settings, sources, schema, settings, plugins, purge, session revocation) is recorded as a decision with the acting account and copied into the append-only audit table in the same call path (crates/ot-store/src/sqlite.rs record_decision; crates/ot-server/src/auth/api.rs create_user/update_user/delete_user/revoke_sessions/auth_settings). Audit review and export are themselves audited (audit_export, audit_verify in crates/ot-server/src/audit_api.rs). Service start/stop is logged (crates/ot-server/src/main.rs shutdown_signal, 'control plane listening').",
+  "comments": ""
+ },
+ {
+  "vid": "V-222464",
+  "status": "NotAFinding",
+  "finding_details": "Session start and end are audit rows with UTC millisecond time: 'login'/'session_start' at creation (crates/ot-server/src/auth/api.rs), 'logout', 'session_end' and 'session_timeout' at the end (crates/ot-server/src/auth/sessions.rs ended(), crates/ot-server/src/auth/maintenance.rs for idle/expired sessions). Documented in docs/guides/admin.md#audit-record.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222465",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222466",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack gives no direct OS access: file transports (sources and probes) read only under the data directory, with links resolved and '..' refused (probe.rs file_allowed, enforced on create, update, validate, probe and configuration import; test a_file_source_reads_only_under_the_data_directory), and every probe is audited (probe_source: actor, transport, target, frames, outcome). No shell or command is ever run.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222467",
+  "status": "NotAFinding",
+  "finding_details": "Account creation, modification (role, name, active), disabling (by an admin or for inactivity) and deletion are all recorded with the actor: decisions create_user/update_user/delete_user/reset_password/unlock_user in crates/ot-server/src/auth/api.rs and crates/ot-server/src/user_cli.rs, SAML-made accounts in crates/ot-server/src/auth/saml.rs, and 'account_disabled' audit events in crates/ot-server/src/auth/maintenance.rs; every decision is copied into the audit table (crates/ot-store/src/sqlite.rs record_decision). See docs/security/stig-mapping.md AC-2.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222468",
+  "status": "NotAFinding",
+  "finding_details": "Logging is initialised first thing in main() before any role runs (crates/ot-server/src/main.rs: fips::init, telemetry::init), and the roles log their start sequence ('control plane listening', 'source workers started', 'exporting over OpenTelemetry'). The audit chain is opened with the database (crates/ot-store/src/audit.rs start_chain) so sign-in events are recorded from the first request.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222469",
+  "status": "NotAFinding",
+  "finding_details": "On SIGTERM/SIGINT every role logs 'shutting down' (crates/ot-server/src/main.rs shutdown_signal) and a role that stops on error logs 'stopped' with the error; logs go to standard output and OTLP and telemetry is flushed on exit (telemetry.shutdown()). An abrupt kill is visible only to the host/orchestrator.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222470",
+  "status": "NotAFinding",
+  "finding_details": "Every outbound connection logs, at INFO on each connect and reconnect, the component and the resolved remote address in the field peer_addr (helpers in crates/ot-core/src/netlog.rs and crates/ot-source/src/netlog.rs). Where OpenTrack holds the socket it logs the socket's peer address: source TCP, WebSocket and gRPC clients (crates/ot-source/src/transport.rs log_peer, crates/ot-source/src/grpc.rs; source workers run in a source.transport span carrying the source id, crates/ot-server/src/sources.rs), the TAK Server output (crates/ot-server/src/cot/output.rs connected, beside the configured host:port), the CoT multicast output (the group address) and external plugins (crates/ot-plugin/src/external.rs). HTTP clients log the response's remote address when it changes rather than on every request: source HTTP polling (reset after a failed poll, so the next success is logged as a reconnect), OCSP responders (crates/ot-server/src/cert_status.rs), the OpenStare sign-in check (crates/ot-server/src/auth/openstare.rs) and the basemap tile proxy (crates/ot-server/src/basemap.rs). Where the library keeps the socket, the addresses the configured host resolves to are logged on each connect: NATS and the bridge on async-nats's Connected event (crates/ot-nats/src/lib.rs log_destinations), MQTT on each CONNACK, Redis on connect and, through a 30 s PING watcher, on each reconnect (crates/ot-store/src/redis_store.rs), and OTLP collectors at start and when an export recovers (crates/ot-server/src/telemetry.rs log_destination). URLs in these logs are redacted or reduced to host:port, so credentials are not logged. Tested in ot-core netlog, ot-source netlog (against a local listener) and ot-nats server_host_ports.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222471",
+  "status": "NotAFinding",
+  "finding_details": "The API gate audits every refused attempt and every read of a security object (crates/ot-server/src/auth/access.rs, auth/mod.rs gate): a credential that identifies no one (access_refused), a role that doesn't reach (access_denied, with the role needed), a change the server refused (change_refused, method, path, status), and an admin reading accounts, API tokens, sign-in settings, the configuration export or the audit record (read_security_object). Successful changes to privileges, security objects, labels and settings are audited as decisions, with the client address. Every request is also logged (target access) and exported over OpenTelemetry. Tested in auth/api.rs refusals_security_reads_token_use_and_decision_addresses_are_audited.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222472",
+  "status": "NotAFinding",
+  "finding_details": "Every change to data is a decision with the actor, reason, evidence and before/after, written in the same transaction as the change for store-level changes (crates/ot-store/src/sqlite.rs record_decision; sources.rs, registry.rs, correlation.rs, graph.rs, undo.rs) and copied into the audit table. The decision log is queryable (GET /api/v1/decisions) and the audit record by actor and op (GET /api/v1/audit). docs/guides/admin.md#audit-record.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222473",
+  "status": "NotAFinding",
+  "finding_details": "Each audit row carries at_ms (UTC epoch milliseconds from the host clock, crates/ot-store/src/sqlite.rs now_ms), exported as an RFC 3339 time in CSV (crates/ot-server/src/audit_api.rs); every log line carries a timestamp (tracing_subscriber fmt, crates/ot-server/src/telemetry.rs init; example in docs/guides/admin.md#audit-record).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222474",
+  "status": "NotAFinding",
+  "finding_details": "Audit rows name the operation (op) and the log records name their module target (target 'audit' for audit rows, instrumentation scope over OTLP) and the resource attributes opentrack.role, opentrack.node_id, service.name and service.version (crates/ot-server/src/telemetry.rs init). Traces name the function (request, source.process, engine.batch, writer.flush; docs/guides/admin.md#opentelemetry).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222475",
+  "status": "NotAFinding",
+  "finding_details": "Exported records carry service.name (default 'opentrack'), service.instance.id (host name and process id), opentrack.node_id and opentrack.role as OTLP resource attributes (crates/ot-server/src/telemetry.rs init), and audit records a distinct event name 'audit.record' (docs/guides/admin.md#opentelemetry).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222476",
+  "status": "NotAFinding",
+  "finding_details": "Every audit row has an outcome column constrained to success/failure (crates/ot-store/migrations/0016_audit.sql; crates/ot-store/src/audit.rs append), with the failure reason in detail for sign-ins and audit_verify; decisions are recorded only when the change succeeded (documented success-by-default).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222477",
+  "status": "NotAFinding",
+  "finding_details": "Each audit row records the actor: the account email for users and API tokens, the OpenStare user's email for trusted sign-in, 'system', 'saml', 'cli' or the engine for automated processes (crates/ot-store/src/audit.rs AuditEvent/actor, crates/ot-server/src/auth/mod.rs layer sets the actor header from the authenticated user only).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222478",
+  "status": "NotAFinding",
+  "finding_details": "Privileged actions are recorded in full: each decision's audit copy holds reason, evidence and the before/after of what changed (crates/ot-store/src/sqlite.rs record_decision), e.g. the whole source spec or settings object; the log copy omits before/after (crates/ot-store/src/audit.rs log_detail) but the table keeps them. There are no group accounts; every account is individual. Note: credentials written inline in a source spec are stored in that detail (admin-only), which the admin guide advises against (docs/guides/admin.md#security, use ${env:NAME}).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222479",
+  "status": "NotAFinding",
+  "finding_details": "The SQLite database runs in WAL mode with transactional writes (crates/ot-store/src/sqlite.rs journal_mode=WAL), and store-level changes and their decision/audit rows commit in one transaction (record_decision). Backup and recovery of the WAL files are documented in docs/guides/admin.md#sqlite-backup.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222480",
+  "status": "NotAFinding",
+  "finding_details": "All components are one binary with one configuration: the audit content is fixed in code for every role (crates/ot-store/src/audit.rs), and log content and export are set by the same OT_LOG / OT_LOG_FORMAT / OTEL_* variables from the shared environment file used by docker-compose.yml for every role (docs/guides/admin.md#logging, #opentelemetry).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222481",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack sends each audit row to the site's collector as it is written (log event audit.record over OTLP/TLS, crates/ot-server/src/telemetry.rs, crates/ot-store/src/audit.rs log_pending), but export is off until OTEL_EXPORTER_OTLP_ENDPOINT is set. The hardening checklist requires it (docs/security/hardening.md, Operate).",
+  "comments": "Site: confirm OTEL_EXPORTER_OTLP_ENDPOINT is set on every role and the SIEM receives audit.record (then N/A per the check)."
+ },
+ {
+  "vid": "V-222482",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack supports writing its logs and audit record to a centralized repository over OTLP (docs/guides/admin.md#opentelemetry) and to standard output for a log shipper; whether the deployment is configured to do so is a site setting.",
+  "comments": "Site: set the OTLP endpoint per docs/security/hardening.md and route audit.record to the SIEM."
+ },
+ {
+  "vid": "V-222483",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack does not monitor the capacity of its local audit table on the /data volume; the design relies on the centralized collector/SIEM for audit storage (docs/security/stig-mapping.md AU-4 Inherited). The check is N/A where the centralized logging system provides storage capacity alarming.",
+  "comments": "Site: SIEM/collector storage alarm at 75% and host monitoring of the /data volume."
+ },
+ {
+  "vid": "V-222484",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack reports audit export failure in real time on its side (log 'OpenTelemetry export failing', Overview Telemetry status red, telemetry in GET /api/v1/status; crates/ot-server/src/telemetry.rs) and refuses sign-ins it cannot record, but it does not notify the SA/ISSO itself; alerting is expected in the SIEM (docs/security/hardening.md, Operate).",
+  "comments": "Site: SIEM/monitoring alerts to SA and ISSO on export failure and on missing audit.record/chain-head events."
+ },
+ {
+  "vid": "V-222485",
+  "status": "Not_Reviewed",
+  "finding_details": "Audit processing failures are surfaced by OpenTrack (export failure log and status, crates/ot-server/src/telemetry.rs; error logs when an audit row cannot be written, crates/ot-server/src/auth/saml.rs), but the alarm to the ISSO and SA is the SIEM's/monitoring system's job (docs/security/stig-mapping.md AU-5).",
+  "comments": "Site: SIEM/monitoring alerting to SA and ISSO."
+ },
+ {
+  "vid": "V-222486",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack fails closed when the local audit table cannot be written (a sign-in that can't be recorded is refused, crates/ot-server/src/auth/api.rs; store changes and their audit rows share a transaction, crates/ot-store/src/sqlite.rs record_decision), but by design keeps running when the collector is down (docs/guides/admin.md#opentelemetry). The audit table keeps every record as the local store (never overwritten), from which the SIEM gap is refilled via GET /api/v1/audit; records are not automatically re-sent.",
+  "comments": "Site ISSO: document the availability decision to continue on collector failure and the backfill procedure."
+ },
+ {
+  "vid": "V-222487",
+  "status": "Not_Reviewed",
+  "finding_details": "All roles and nodes export logs and audit records with role/node/instance attributes to one collector (crates/ot-server/src/telemetry.rs), and the audit table of a node is reviewable from GET /api/v1/audit; central review across components is done in the site's SIEM (docs/security/stig-mapping.md AU-6).",
+  "comments": "Site: SIEM provides the central review (then N/A per the check)."
+ },
+ {
+  "vid": "V-222488",
+  "status": "Not_Reviewed",
+  "finding_details": "GET /api/v1/audit filters by time range, user (actor), event type (op) and outcome (crates/ot-store/src/audit.rs AuditFilter), but not by IP address, keyword, object or level; the full criteria set is expected from the site's SIEM receiving audit.record with all fields as attributes (docs/guides/admin.md#audit-record).",
+  "comments": "Site: SIEM filtering (then N/A per the check)."
+ },
+ {
+  "vid": "V-222489",
+  "status": "NotAFinding",
+  "finding_details": "GET /api/v1/audit (admins) reduces the record on demand by date/time, user, event type and outcome and produces a CSV report with format=csv (crates/ot-server/src/audit_api.rs, crates/ot-store/src/audit.rs audit_rows); documented in docs/guides/admin.md#audit-record.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222490",
+  "status": "NotAFinding",
+  "finding_details": "On-demand review and analysis via GET /api/v1/audit filters (from_ms, to_ms, actor, op, outcome, paging with before_seq) returning JSON or CSV (crates/ot-server/src/audit_api.rs); every row is also in the SIEM with the same fields.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222491",
+  "status": "NotAFinding",
+  "finding_details": "After-the-fact investigation is supported: the record is kept forever (no delete path, crates/ot-store/migrations/0016_audit.sql triggers), filterable by time window, account, event and outcome through GET /api/v1/audit, with the chain checked by GET /api/v1/audit/verify (crates/ot-server/src/audit_api.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222492",
+  "status": "NotAFinding",
+  "finding_details": "GET /api/v1/audit?format=csv generates an immediate report of the filtered rows (seq, time, actor, op, outcome, ip, decision_id, detail, hash) (crates/ot-server/src/audit_api.rs); the export is itself audited (audit_export).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222493",
+  "status": "NotAFinding",
+  "finding_details": "Ad hoc reports on any combination of date range, account, event types and outcome via GET /api/v1/audit with format=csv (crates/ot-server/src/audit_api.rs; docs/guides/admin.md#audit-record).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222494",
+  "status": "NotAFinding",
+  "finding_details": "Reports for investigations: CSV of any time window and account from the permanent, hash-chained record (crates/ot-server/src/audit_api.rs, crates/ot-store/src/audit.rs); each decision row links to its full before/after via decision_id.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222495",
+  "status": "NotAFinding",
+  "finding_details": "Reduction is a read-only SELECT on the append-only table ordered by seq (crates/ot-store/src/audit.rs audit_rows); UPDATE/DELETE are refused by triggers (crates/ot-store/migrations/0016_audit.sql), and each returned row carries its seq and hash so the original content and order can be re-verified.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222496",
+  "status": "NotAFinding",
+  "finding_details": "The CSV report writes the stored values unchanged with seq and hash per row (crates/ot-server/src/audit_api.rs); reporting never writes to the audit table other than appending its own audit_export row.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222497",
+  "status": "NotAFinding",
+  "finding_details": "Time stamps come from the host's system clock (chrono Utc::now in crates/ot-store/src/sqlite.rs now_ms for audit rows; tracing_subscriber's system time for log lines). Clock synchronisation is the host's.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222498",
+  "status": "NotAFinding",
+  "finding_details": "Audit times are UTC epoch milliseconds (at_ms), rendered as RFC 3339 UTC in CSV (crates/ot-server/src/audit_api.rs from_ms/to_rfc3339); log timestamps are UTC with a Z suffix (example in docs/guides/admin.md#audit-record).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222499",
+  "status": "NotAFinding",
+  "finding_details": "Audit rows are stamped to the millisecond (at_ms, crates/ot-store/src/sqlite.rs now_ms) and log lines to the microsecond, finer than one second.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222500",
+  "status": "NotAFinding",
+  "finding_details": "The audit record (/api/v1/audit, /audit/verify) is admin-only (auth/policy.rs ADMIN_READS). The decision log answers non-admins only for track-management and configuration operations; account, API token, sign-in and configuration import/export decisions are refused (decisions_api.rs TRACK_OPS; test viewers_list_track_decisions_but_not_account_ones). Source changes are recorded with their credentials masked.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222501",
+  "status": "NotAFinding",
+  "finding_details": "The audit table is append-only: triggers refuse UPDATE and DELETE (crates/ot-store/migrations/0016_audit.sql), no API writes other than appends, and each row is SHA-256 chained to the previous one so any change is detected by GET /api/v1/audit/verify; the chain head is logged hourly for off-host comparison (crates/ot-server/src/auth/maintenance.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222502",
+  "status": "NotAFinding",
+  "finding_details": "Rows cannot be deleted: the delete trigger refuses unless the purge gate is open, and the only purge code is test-only (crates/ot-store/src/audit.rs #[cfg(test)] purge_audit); the Settings purge leaves the decision log and audit record (crates/ot-server/src/settings_api.rs purge). A removed tail is detectable against the hourly chain head in the exported logs. Protection of the /data file itself is the host's.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222503",
+  "status": "NotAFinding",
+  "finding_details": "The audit tools are the API endpoints GET /api/v1/audit and /api/v1/audit/verify, reachable only by authenticated admins (ADMIN_READS in crates/ot-server/src/auth/policy.rs, enforced in crates/ot-server/src/auth/mod.rs layer); their use is audited (audit_export, audit_verify).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222504",
+  "status": "NotAFinding",
+  "finding_details": "The audit tools are compiled into the opentrack binary, shipped in a cosign-signed image run with a read-only root file system, non-root user and no capabilities (Dockerfile, docker-compose.yml, docs/security/supply-chain.md); nothing in the application can modify them.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222505",
+  "status": "NotAFinding",
+  "finding_details": "The audit tools are part of the signed binary in a read-only root file system (docker-compose.yml read_only: true, Dockerfile non-root user); the application has no function that removes them.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222506",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack has no built-in backup function for its audit records (the configuration export excludes the audit record, docs/guides/admin.md#what-to-back-up); records are off-loaded continuously over OTLP instead, and backups of opentrack.db are a host procedure (docs/guides/admin.md#sqlite-backup).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222507",
+  "status": "NotAFinding",
+  "finding_details": "Audit integrity is protected by a SHA-256 hash chain computed in the AWS-LC FIPS module (crates/ot-store/src/audit.rs row_hash using aws_lc_rs::digest), verified by GET /api/v1/audit/verify, with the head hash logged hourly off-host; exports to the collector use TLS (docs/security/fips.md).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222508",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack provides no separate, file-based audit tool: audit review and verification are API endpoints inside the single opentrack binary (crates/ot-server/src/audit_api.rs). The binary as a whole is covered by the signed image digest (docs/security/supply-chain.md).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222509",
+  "status": "Not_Applicable",
+  "finding_details": "No separate audit tool file exists (audit functions are API endpoints of the opentrack binary). The image containing the binary is verified by digest and cosign signature (docs/security/hardening.md step 1).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222510",
+  "status": "NotAFinding",
+  "finding_details": "The only software OpenTrack can install is plugins (WebAssembly components or external plugin addresses), and adding, replacing, enabling or granting them requires the admin role (non-GET routes default to admin in crates/ot-server/src/auth/policy.rs need(); docs/guides/admin.md#plugins); WASM plugins run sandboxed with explicit grants, and each install is a decision.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222511",
+  "status": "NotAFinding",
+  "finding_details": "Configuration changes through the application need the admin role, checked server-side on every /api/v1 route (crates/ot-server/src/auth/policy.rs need, crates/ot-server/src/auth/mod.rs layer); secrets in the data directory (session.key, initial-admin.txt) are written owner-only and the container runs as a non-root user with a read-only root FS (docs/guides/admin.md#security, docker-compose.yml). Host permissions on .env are the site's.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222512",
+  "status": "NotAFinding",
+  "finding_details": "Every configuration change made in the application records the acting account in the decision log and the audit record (sources, schema, settings, banners, sign-in, plugins, accounts: crates/ot-store/src/sqlite.rs record_decision; docs/guides/admin.md#security 'Everything is recorded'). Changes to the environment file are host edits and fall to the host's logs.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222513",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack is patched by replacing the image; release images are cosign-signed with the project key, carry SLSA provenance and SBOM, and are verified before running with cosign verify against cosign.pub (docs/security/supply-chain.md, docs/security/hardening.md step 1, .github/workflows/release.yml); release notes list image digests. Note: admin-installed WebAssembly plugins are not signature-checked, only their SHA-256 is recorded and shown (crates/ot-server/src/plugins_api.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222514",
+  "status": "NotAFinding",
+  "finding_details": "Application libraries are inside the image with a read-only root file system and a non-root user (docker-compose.yml, Dockerfile); the only in-application extension function, plugin install, is admin-only and audited (crates/ot-server/src/auth/policy.rs, docs/guides/admin.md#plugins).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222515",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack's CI runs cargo deny (RustSec advisories), npm audit, clippy -D warnings and tests (.github/workflows/, deny.toml); image scanning is left to the deployer (docs/security/hardening.md step 2: scan with grype or trivy and keep the report). A vulnerability assessment of the deployed application is the site's.",
+  "comments": "Site/ISSO: run and retain application and image vulnerability scans (e.g. ACAS, DAST, grype/trivy) and track remediation."
+ },
+ {
+  "vid": "V-222516",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack enforces role-based access (viewer < track_manager < admin, crates/ot-server/src/auth/policy.rs) and sandboxes plugins with explicit grants (docs/guides/admin.md#plugins); whether an organizational policy imposes further execution restrictions is the site's to define.",
+  "comments": "Site ISSO: define usage restrictions, if any, and confirm RBAC/plugin settings match them."
+ },
+ {
+  "vid": "V-222517",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack is a track correlation server, not a configuration-management or process-management application; it does not manage execution of programs on systems.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222518",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack runs one role per command (serve, sources, engine, writer, cot, link) and optional features (SAML, OpenStare trust, client certificates, TAK outputs, plugins, OTLP) stay off until configured (docs/guides/admin.md#server-roles, docs/security/stig-mapping.md CM-7). Which roles and features the mission needs is a site decision.",
+  "comments": "Site: confirm only mission-required roles and features are enabled."
+ },
+ {
+  "vid": "V-222519",
+  "status": "Not_Reviewed",
+  "finding_details": "The ports OpenTrack uses are set by the site: control plane OT_BIND (compose default 0.0.0.0:8090, docker-compose.yml), feed listeners and TAK outputs per configuration, and client connections to NATS, Redis, the OTLP collector and feeds (docs/guides/admin.md#configuration). Registration against the PPSM CAL is the site's.",
+  "comments": "Site: register ports and protocols in the PPSM CAL and verify at runtime."
+ },
+ {
+  "vid": "V-222520",
+  "status": "NotAFinding",
+  "finding_details": "Users cannot change or escalate their own role: roles are set only by an admin (or the IdP for SAML accounts) and the server re-reads the account on every call so changes apply at once (docs/guides/admin.md#roles, crates/ot-server/src/auth/mod.rs from_token). Reauthentication is forced at the 24 h absolute session limit and idle timeout, and a password change requires the current password and ends other sessions (crates/ot-server/src/auth/api.rs change_password).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222521",
+  "status": "NotAFinding",
+  "finding_details": "Devices authenticate on every request: API tokens are re-validated each call (signature, revocation, account active, expiry chosen per token) and client certificates at every TLS handshake against the CA and current CRLs, failing closed on a stale list (crates/ot-server/src/auth/mod.rs from_token/from_cert, crates/ot-server/src/https.rs). Token lifetime (1 h to 10 years) is set per token by the admin to the local policy.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222522",
+  "status": "NotAFinding",
+  "finding_details": "Every /api/v1 route except the sign-in and banner endpoints requires an authenticated identity (PUBLIC list in crates/ot-server/src/auth/policy.rs, enforced in crates/ot-server/src/auth/mod.rs layer); accounts are unique by email (crates/ot-store/src/auth.rs create_user rejects duplicates, case-insensitive) and authenticate by password, SAML, client certificate, API token or OpenStare trust, each tied to one account. OT_AUTH=off exists but is excluded from accredited deployments (finding F-4, docs/security/hardening.md step 6).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222523",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack supports multifactor sign-in through the site's SAML identity provider and PKI client certificates, and password sign-in can be turned off once SAML or OpenStare is on (docs/guides/admin.md#password-sign-in); SAML gives admin only when Allow admin is on. Whether admin access requires an Alt Token depends on the IdP policy and the certificate-to-account mapping the site configures.",
+  "comments": "Site: IdP enforces Alt Token MFA for admin roles; password sign-in off; break-glass local admin under ISSO control."
+ },
+ {
+  "vid": "V-222524",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack accepts PIV/CAC certificates: mutual TLS with OT_TLS_CLIENT_CA, certificate CN mapped to an account (docs/guides/admin.md#client-certificates, crates/ot-server/src/auth/mod.rs from_cert, crates/ot-server/src/https.rs); CAC can also be used through a SAML identity provider. Requiring it for all users is a site configuration.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222525",
+  "status": "NotAFinding",
+  "finding_details": "Client certificates are path-validated to the configured CA and checked against CRLs (OT_TLS_CLIENT_CRL), failing closed on unknown status or a stale list and reloaded on change (crates/ot-server/src/https.rs reload_on_crl_change, crates/ot-source/src/tls.rs; finding F-6 fixed). OCSP is not supported (roadmap #21); CRL checking satisfies electronic verification.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222526",
+  "status": "Not_Reviewed",
+  "finding_details": "Multifactor for non-privileged users is available via SAML (IdP-enforced MFA/CAC) or CAC client certificates, and password sign-in can be turned off when SAML or OpenStare is on (docs/guides/admin.md#sign-in). The deployment's choice determines whether password-only access remains.",
+  "comments": "Site: require CAC/MFA via IdP or client certificates and turn password sign-in off."
+ },
+ {
+  "vid": "V-222527",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack has no local console sign-in; local privileged access is the server CLI (opentrack user ..., docs/guides/admin.md#user-commands), which requires shell access to the host or container and inherits the host's authentication.",
+  "comments": "Site: host OS / container platform enforces MFA for local administrative access."
+ },
+ {
+  "vid": "V-222528",
+  "status": "Not_Applicable",
+  "finding_details": "There is no local access for non-privileged users: all user access is over the network (web UI/API); the only local interface is the admin CLI on the server host.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222529",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack has no group or shared accounts by design: every account, API token and certificate mapping names one individual or service account (docs/guides/admin.md#users, #api-tokens).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222530",
+  "status": "NotAFinding",
+  "finding_details": "Privileged sign-in is replay resistant: TLS 1.2+ only on FIPS suites (crates/ot-source/src/tls.rs with_safe_default_protocol_versions, docs/security/fips.md), SAML assertions used once and only in answer to a request made in the last 5 minutes (crates/ot-server/src/auth/saml.rs seen cache), signed session tokens bound to a server-side session record (crates/ot-server/src/auth/sessions.rs), and client certificates proven in the TLS handshake. TLS must be enabled per docs/security/hardening.md.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222531",
+  "status": "NotAFinding",
+  "finding_details": "Same mechanisms for non-privileged users: TLS 1.2+ (FIPS), one-time SAML assertions bound to the request, signed server-side-tracked sessions, SameSite=Strict/HttpOnly/Secure cookies and mutual TLS client certificates (crates/ot-server/src/auth/saml.rs, crates/ot-server/src/auth/sessions.rs, docs/guides/admin.md#web-protections).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222532",
+  "status": "Not_Reviewed",
+  "finding_details": "Mutual TLS is available on every OpenTrack link: UI/API client certificates (OT_TLS_CLIENT_CA, crates/ot-source/src/tls.rs ServerTls::server_config with WebPkiClientVerifier), listening TCP/gRPC feeds (per-source tls.client_ca_file), NATS and Redis client certificates, OTLP export and TAK outputs (docs/guides/admin.md#encryption-in-transit). Whether mutual authentication is mandated for endpoint non-repudiation is a data-owner decision and the configuration is set per site.",
+  "comments": "Site: data owner/ISSO decide whether mutual authentication is required and verify OT_TLS_CLIENT_CA and per-source client_ca_file are configured."
+ },
+ {
+  "vid": "V-222533",
+  "status": "NotAFinding",
+  "finding_details": "Listening sources must authenticate their senders: tcp_server by mutual TLS, grpc_server by mutual TLS or a bearer token; any other listener (every UDP source) needs an explicit per-source risk acceptance (\"unauthenticated\": \"accepted\"), checked on save, validate and import and recorded in the decision log, and unflagged listeners don't start (crates/ot-source/src/source.rs authentication_problem, crates/ot-server/src/sources.rs). External plugins authenticate with a mutual HMAC-SHA256 handshake (crates/ot-plugin/src/handshake.rs); other nodes by pinned Ed25519 keys on every sync message (crates/ot-sync/src/sign.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222534",
+  "status": "Not_Reviewed",
+  "finding_details": "Mutual TLS for system endpoints is supported on listening TCP and gRPC sources (tls.client_ca_file, crates/ot-source/src/tls.rs), on the UI/API (OT_TLS_CLIENT_CA with CRLs), NATS, Redis and OTLP (docs/guides/admin.md#encryption-in-transit). Whether the deployment handles non-releasable data, and that mTLS is then configured on every system endpoint, is determined by the site.",
+  "comments": "Site: data owner determines releasability; ISSO verifies mTLS is configured for all service endpoints."
+ },
+ {
+  "vid": "V-222535",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack does not register or authenticate devices by device identifiers. Machines authenticate either with PKI client certificates (CN mapped to an account, docs/guides/admin.md#client-certificates), which the check exempts, or as ordinary accounts, which are themselves turned off after 35 days of inactivity (crates/ot-server/src/auth/stig.rs DISABLE_INACTIVE_AFTER_DAYS, maintenance.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222536",
+  "status": "NotAFinding",
+  "finding_details": "Password length of 15 characters is fixed and enforced wherever a password is set (sign-up by admin, reset, own change, OT_ADMIN_PASSWORD, CLI): crates/ot-server/src/auth/stig.rs PASSWORD_MIN_LENGTH = 15, enforced in crates/ot-server/src/auth/password.rs check() called from auth/api.rs create_user, reset_password, change_password, auth/mod.rs bootstrap_admin and user_cli.rs.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222537",
+  "status": "NotAFinding",
+  "finding_details": "crates/ot-server/src/auth/password.rs check() rejects a password with no upper-case character (char::is_uppercase); applied on every password set (auth/api.rs create_user, reset_password, change_password). Not configurable (auth/stig.rs password_policy require_upper).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222538",
+  "status": "NotAFinding",
+  "finding_details": "crates/ot-server/src/auth/password.rs check() rejects a password with no lower-case character (char::is_lowercase); applied on every password set (auth/api.rs create_user, reset_password, change_password). Fixed policy (auth/stig.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222539",
+  "status": "NotAFinding",
+  "finding_details": "crates/ot-server/src/auth/password.rs check() rejects a password with no ASCII digit; applied on every password set (auth/api.rs create_user, reset_password, change_password). Fixed policy (auth/stig.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222540",
+  "status": "NotAFinding",
+  "finding_details": "crates/ot-server/src/auth/password.rs check() rejects a password with no special (non-alphanumeric) character; applied on every password set (auth/api.rs create_user, reset_password, change_password). Fixed policy (auth/stig.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222541",
+  "status": "NotAFinding",
+  "finding_details": "A user's own password change must differ from the current password by at least 8 characters (edit distance): auth/stig.rs PASSWORD_MIN_CHANGED_CHARS = 8, password.rs check_change()/changed_chars(), enforced in auth/api.rs change_password. Admin resets issue temporary passwords that must be changed at next sign-in.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222542",
+  "status": "NotAFinding",
+  "finding_details": "Account passwords are stored only as PBKDF2-HMAC-SHA256 hashes (600,000 iterations, 128-bit random salt) computed in the AWS-LC FIPS module: crates/ot-server/src/fips.rs hash_password, auth/mod.rs hash_password; pre-0.4.0 Argon2id hashes are verified and replaced at next sign-in (docs/security/fips.md#passwords-from-earlier-versions). No MD5. The only clear-text password on disk is the generated first-admin temporary password in initial-admin.txt, written mode 0600 (auth/mod.rs write_private), must be changed at first sign-in, and the hardening checklist says to delete it.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222543",
+  "status": "NotAFinding",
+  "finding_details": "Passwords are sent only in the sign-in/change JSON bodies over the UI/API listener, which uses TLS with FIPS-only suites when OT_TLS_CERT is set or behind a TLS proxy (crates/ot-server/src/https.rs, ot-source/src/tls.rs); session cookies are then Secure and HSTS is sent (control.rs security_headers). Outbound feed, NATS, Redis credentials go over TLS per docs/guides/admin.md#encryption-in-transit. TLS must be turned on as the hardening checklist requires (docs/security/hardening.md#encrypt-every-link); the default compose file serves plain HTTP on 8090 for laboratory use.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222544",
+  "status": "NotAFinding",
+  "finding_details": "Own password changes are refused within 24 hours of the last change unless the change is required: auth/stig.rs PASSWORD_MIN_AGE_HOURS = 24, enforced in auth/api.rs change_password (password_changed_at_ms vs PASSWORD_MIN_AGE_MS).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222545",
+  "status": "NotAFinding",
+  "finding_details": "Passwords expire after 60 days: auth/stig.rs PASSWORD_MAX_AGE_DAYS = 60; at password sign-in auth/api.rs start_session sets must_change_password and audits password_expired when the password is older, and auth/mod.rs layer blocks every route but the password change until it is changed (policy.rs allowed_before_password_change).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222546",
+  "status": "NotAFinding",
+  "finding_details": "A new password may not match any of the last 5: auth/stig.rs PASSWORD_HISTORY = 5; auth/api.rs change_password verifies the candidate against db.recent_password_hashes(id, 5) and refuses a match.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222547",
+  "status": "NotAFinding",
+  "finding_details": "Passwords set by an admin (create_user, reset_password in crates/ot-server/src/auth/api.rs), by the CLI (user_cli.rs) and the generated first-admin password (auth/mod.rs bootstrap_admin) are temporary: must_change_password is set and auth/mod.rs layer returns 403 password_change_required for every route except the password change (auth/policy.rs BEFORE_PASSWORD_CHANGE). Note: an OT_ADMIN_PASSWORD supplied at first start is not flagged temporary although docs/security/hardening.md step 4 says the first sign-in forces a change either way (doc inaccuracy).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222548",
+  "status": "NotAFinding",
+  "finding_details": "Only the account holder can change their own password (POST /auth/password, auth/api.rs change_password, requires the current password and a password session) and only admins can reset another's (POST /auth/users/{id}/password, admin-only under /auth/ in crates/ot-server/src/auth/policy.rs need()).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222549",
+  "status": "NotAFinding",
+  "finding_details": "Deleting an account (auth/api.rs delete_user, ot-store/src/auth.rs delete_user) removes the user row; every request re-reads the account (auth/mod.rs from_token: db.user(&sub) must exist and be active; from_cert: user_by_email), so the deleted user's sessions and API tokens are refused on the next request. The UI uses request/response polling only (no WebSocket/SSE streams that could outlive the session).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222550",
+  "status": "NotAFinding",
+  "finding_details": "Client certificates are validated by rustls/webpki building a path from the presented chain to the configured trust anchors (OT_TLS_CLIENT_CA) with the FIPS provider, and with OT_TLS_CLIENT_CRL the end-entity status is checked against CRLs, failing closed on unknown status or an expired list (crates/ot-source/src/tls.rs ServerTls::server_config: with_crls, only_check_end_entity_revocation, enforce_revocation_expiration). Limits: revocation status is checked for the end-entity certificate only (not intermediates) and OCSP is not supported (roadmap #21, docs/security/stig-mapping.md F-6).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222551",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack's own signing key (session.key) is generated in the FIPS DRBG and written readable by its owner only (crates/ot-server/src/auth/mod.rs write_private, mode 0600) by the container's non-root user, or supplied as OT_SESSION_SECRET from the site's secret store; no application interface returns private keys, and source secrets are masked for non-admins (ot_source::secrets, stig-mapping F-2). TLS private keys (OT_TLS_KEY, NATS/Redis/feed client keys) are site-supplied files; docs/guides/admin.md#security and docs/security/hardening.md direct protecting them.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222552",
+  "status": "NotAFinding",
+  "finding_details": "A client certificate's CN is mapped by an admin to an individual account (Settings -> Security -> Client certificates; crates/ot-server/src/auth/mod.rs from_cert), and requests, decisions and audit records then carry that account's email as actor (auth/mod.rs layer sets the actor header). Unmapped certificates get no identity (docs/guides/admin.md#client-certificates).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222553",
+  "status": "NotAFinding",
+  "finding_details": "Revocation data is held locally: OT_TLS_CLIENT_CRL points at a directory of CRL files that is read at start and reloaded when it changes (crates/ot-server/src/https.rs reload_on_crl_change, ot-source/src/tls.rs crls/crl_stamp); validation needs no network access and fails closed when a list is past its next update. The site supplies the periodic CRL download (docs/guides/admin.md#client-certificates suggests a daily job).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222554",
+  "status": "NotAFinding",
+  "finding_details": "Every authentication password entry in the UI is an <input type=\"password\"> (ui/src/auth/LoginPage.tsx, PasswordChangeScreen.tsx, UserChip.tsx, pages/settings/UsersPanel.tsx), so it is masked and cannot be copied as clear text. Observation outside this rule's authentication scope: feed credentials in the source editor (ui/src/pages/sources/TransportForm.tsx MQTT Password, gRPC Bearer token) are plain text fields visible to admins; ${env:NAME} references are recommended.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222555",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack does not provide authenticated access to a cryptographic module: it has no HSM/PKCS#11 or module operator login. It uses the AWS-LC FIPS 3.0 module and the OpenSSL 3.0.9 FIPS provider internally (docs/security/fips.md, crates/ot-server/src/fips.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222556",
+  "status": "NotAFinding",
+  "finding_details": "Every caller is identified as an individual account (local password, SAML, client certificate mapped by CN, OpenStare trust, or an API token bound to an account); there is no guest or anonymous access (crates/ot-server/src/auth/mod.rs identify/layer; auth/policy.rs PUBLIC only for sign-in pages). Non-organizational users arrive through the site's identity provider (stig-mapping IA-8). OT_AUTH=off is excluded from accredited deployments (hardening.md step 6, finding F-4).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222557",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack accepts PIV/CAC certificates from any CA the site places in OT_TLS_CLIENT_CA (for example Federal Bridge/other-agency PIV issuers), mapped to accounts by CN, or via a SAML identity provider that accepts PIV (docs/guides/admin.md#client-certificates, #saml). Whether the deployment serves other federal agencies and trusts their PIV issuers is a site decision.",
+  "comments": "Site: ISSO/AO determine whether non-DoD federal users are in scope and configure their PIV CAs."
+ },
+ {
+  "vid": "V-222558",
+  "status": "Not_Reviewed",
+  "finding_details": "When other-agency PIV CAs are configured, certificates are verified electronically by path validation and CRL status, fail closed (crates/ot-source/src/tls.rs server_config, OT_TLS_CLIENT_CRL); no OCSP. Whether other-agency PIV is in scope is a site decision.",
+  "comments": "Site: ISSO determines applicability and supplies the other agencies' CA certificates and CRLs."
+ },
+ {
+  "vid": "V-222559",
+  "status": "Not_Reviewed",
+  "finding_details": "Third-party credentials are accepted only through the site's SAML 2.0 identity provider (crates/ot-server/src/auth/saml.rs) or client certificates from configured CAs; whether that provider or CA is FICAM-approved is the site's choice.",
+  "comments": "Site: ISSO confirms the federated identity provider/credential providers are FICAM-approved."
+ },
+ {
+  "vid": "V-222560",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack is a SAML 2.0 service provider (SP-initiated, HTTP-Redirect AuthnRequest, HTTP-POST signed response, audience/conditions/InResponseTo and replay checks; crates/ot-server/src/auth/saml.rs; signatures via xmlsec with the OpenSSL FIPS provider). It does not support encrypted assertions (no SP decryption key). Conformance to the applicable FICAM SAML profile depends on the federating IdP and assurance level and must be confirmed at the site.",
+  "comments": "Site: ISSO/AO confirm the FICAM profile and assurance level of the federation; note encrypted assertions are not supported."
+ },
+ {
+  "vid": "V-222561",
+  "status": "NotAFinding",
+  "finding_details": "Remote administration (users, sign-in settings, sources, schema, settings, track management) is done through the authenticated UI/API; every change is written to the decision log and copied into the append-only, hash-chained audit table (ot-store/src/sqlite.rs record/record_decision -> audit::append), exported as audit.record over OpenTelemetry, and sign-in/session events are audited (docs/security/stig-mapping.md AC-2, AU-2; docs/guides/admin.md Audit record).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222562",
+  "status": "NotAFinding",
+  "finding_details": "Remote administration uses the same UI/API listener, protected by TLS 1.2/1.3 with FIPS-approved AEAD suites (docs/security/fips.md, crates/ot-source/src/tls.rs) and HSTS (control.rs security_headers). TLS must be turned on as the hardening checklist requires (docs/security/hardening.md#encrypt-every-link); the default compose file serves plain HTTP on 8090 for laboratory use.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222563",
+  "status": "NotAFinding",
+  "finding_details": "Remote administration traffic is encrypted by TLS with FIPS-approved suites on the UI/API (OT_TLS_CERT or TLS proxy; crates/ot-server/src/https.rs, docs/security/fips.md). TLS must be turned on as the hardening checklist requires (docs/security/hardening.md#encrypt-every-link); the default compose file serves plain HTTP on 8090 for laboratory use.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222564",
+  "status": "NotAFinding",
+  "finding_details": "Sign-out revokes the session token and ends the server-side session row, and the cookie is cleared (crates/ot-server/src/auth/api.rs logout: revoke_token, end_session, clear_cookie); a logout audit event is written, and Settings -> Users / /auth/sessions show ended sessions so an admin can verify disconnection. No persistent per-session connection remains (the UI polls).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222565",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack supports strong authenticators for administration: CAC/PKI client certificates (OT_TLS_CLIENT_CA with CRLs) and SAML to an IdP enforcing CAC, and password sign-in can be turned off (Settings -> Security -> Single sign-on, docs/security/hardening.md#sign-in). By default a local admin can still sign in with a password; requiring CAC for admins is a site configuration choice.",
+  "comments": "Site: ISSO configures client-certificate or CAC-backed SAML sign-in for admins and turns password sign-in off except break-glass."
+ },
+ {
+  "vid": "V-222566",
+  "status": "NotAFinding",
+  "finding_details": "Sessions end after 10 minutes idle for admins and 15 minutes for other users, fixed (crates/ot-server/src/auth/stig.rs ADMIN_IDLE_MINUTES/IDLE_MINUTES, idle_ms; checked per request in auth/sessions.rs alive and once a minute in auth/maintenance.rs end_stale_sessions); an absolute 24 h limit also applies. Idle time is the user's own activity (x-ot-idle-ms), so UI polling does not keep sessions alive.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222567",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack is written in Rust with unsafe code forbidden workspace-wide (Cargo.toml [lints] unsafe_code = \"forbid\"), so data races are prevented at compile time by the Send/Sync type system; shared state is behind Mutex/RwLock and database changes run in SQLite transactions (e.g. ot-store/src/auth.rs, sqlite.rs record_decision). CI runs tests and clippy -D warnings (docs/security/stig-mapping.md SA-11). No separate race-condition test report exists; the assessor may still request dynamic test results.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222568",
+  "status": "NotAFinding",
+  "finding_details": "Session state is server side and ends at sign-out, idle timeout, absolute expiry or revocation (crates/ot-server/src/auth/sessions.rs, api.rs logout); the browser UI uses short request/response HTTP calls (no WebSocket or server-sent-event streams per session), so no network connection is tied to a session after it ends. Idle TCP connection teardown below the application is the host/proxy's.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222570",
+  "status": "NotAFinding",
+  "finding_details": "Release images are signed inside the OpenSSL 3.0.9 FIPS provider (CMVP #4282) with an ECDSA P-256 key generated in that module (scripts/release/new-signing-key, sign-image); cosign only builds the payload and attaches the signature (docs/security/supply-chain.md). The binary's own cryptography is the AWS-LC FIPS module.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222571",
+  "status": "NotAFinding",
+  "finding_details": "All security hashes use the AWS-LC FIPS module: audit hash chain SHA-256 (crates/ot-store/src/audit.rs aws_lc_rs::digest), plugin identity SHA-256 (crates/ot-plugin/src/lib.rs), PBKDF2-HMAC-SHA256 and HMAC-SHA256 tokens (crates/ot-server/src/fips.rs, jsonwebtoken with the aws_lc_rs feature in Cargo.toml). sha1/sha2 crates in the tree are non-security uses (docs/security/fips.md#code-outside-the-modules); ring is banned by deny.toml.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222572",
+  "status": "NotAFinding",
+  "finding_details": "All cryptographic protection uses FIPS 140-3 modules: AWS-LC FIPS 3.0 for TLS (rustls FIPS provider only), tokens, passwords and random values, turned on at start with self-tests and the process stops if FIPS mode fails (crates/ot-server/src/fips.rs init); SAML signatures via the OpenSSL 3.0.9 FIPS provider with default_properties fips=yes (docker/openssl-fips.cnf), SAML refused otherwise (docs/security/fips.md). ring is banned in CI (deny.toml).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222573",
+  "status": "Not_Applicable",
+  "finding_details": "OpenTrack does not make SAML assertions or generate AuthnStatement SessionIndex values; it is only a service provider that consumes the IdP's assertion (crates/ot-server/src/auth/saml.rs). Its own AuthnRequest IDs are 128-bit values from the AWS-LC DRBG (docs/security/fips.md#algorithms).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222574",
+  "status": "NotAFinding",
+  "finding_details": "With OT_ADMIN_BIND, every admin function (accounts, security and sign-in settings, sources, settings, plugins, configuration import/export, the audit record) is served only on its own listener, which a site puts on the management network; the user listener answers them 404 and the UI hides them (crates/ot-server/src/auth/mod.rs AdminElsewhere, main.rs; test with_an_admin_listener_the_main_one_does_not_serve_admin_routes). The hardening checklist requires it for accredited deployments.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222575",
+  "status": "NotAFinding",
+  "finding_details": "The session cookie is always HttpOnly (crates/ot-server/src/auth/mod.rs Auth::session_cookie and clear_cookie: 'ot_session=...; HttpOnly; SameSite=Strict; Path=/'); tested in auth/api.rs tests.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222576",
+  "status": "NotAFinding",
+  "finding_details": "The session cookie carries Secure whenever TLS is in use, directly (OT_TLS_CERT) or at a proxy (OT_PUBLIC_TLS=1 or an https OT_PUBLIC_URL) (crates/ot-server/src/auth/mod.rs session_cookie, secure_cookies; docs/guides/admin.md Web protections). Accredited deployments must use TLS (docs/security/hardening.md); without TLS the flag is omitted.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222577",
+  "status": "NotAFinding",
+  "finding_details": "Session tokens travel only in an HttpOnly, SameSite=Strict, Secure (under TLS) cookie or an Authorization header, never in URLs (auth/mod.rs cookie/bearer); API responses are Cache-Control: no-store and Referrer-Policy: no-referrer (control.rs security_headers); request tracing uses DefaultMakeSpan without headers. Transport is TLS per docs/security/hardening.md.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222578",
+  "status": "NotAFinding",
+  "finding_details": "The session cookie is a browser-session cookie (no Max-Age or Expires; auth/mod.rs session_cookie, test the_session_cookie_ends_with_the_browser), so closing the browser discards it; the server-side session also ends on sign-out, idle timeout (15 min, admins 10), 24 h lifetime and revocation.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222579",
+  "status": "NotAFinding",
+  "finding_details": "Session identifiers are generated by the server at each sign-in (new jti UUIDv4 from the AWS-LC DRBG in an HMAC-signed token, auth/mod.rs issue_as; server-side session row in auth/api.rs start_session) and a fresh session is issued after a password change; a client-supplied identifier is never adopted, since a token must verify against the server's key and have a live session row (auth/mod.rs from_token, sessions.rs alive).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222580",
+  "status": "NotAFinding",
+  "finding_details": "Each request validates the session token: HS256 signature and expiry (auth/mod.rs decode), token kind, not revoked (token_revoked), account exists and is active, and a live server-side session row for this user not ended, not idle and not older than tokens_valid_from (auth/mod.rs from_token, auth/sessions.rs alive).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222581",
+  "status": "NotAFinding",
+  "finding_details": "Session identifiers are carried only in the ot_session cookie or an Authorization: Bearer header (crates/ot-server/src/auth/mod.rs cookie, bearer); no route reads a token from the URL or query string.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222582",
+  "status": "NotAFinding",
+  "finding_details": "Every sign-in gets a new random token id (auth/mod.rs issue_as, fips::uuid_v4 from the DRBG); on sign-out the id is added to revoked_tokens and the session row is ended (auth/api.rs logout, ot-store/src/auth.rs revoke_token/end_session), so a used id is never accepted again.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222583",
+  "status": "NotAFinding",
+  "finding_details": "Session token ids are version-4 UUIDs built from 16 bytes of the AWS-LC FIPS CTR-DRBG (crates/ot-server/src/fips.rs random_bytes/uuid_v4 via aws_lc_rs::rand::SystemRandom), and the tokens are HMAC-SHA256 signed with a 256-bit DRBG key (session.key) or OT_SESSION_SECRET (docs/security/fips.md#algorithms).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222584",
+  "status": "Not_Reviewed",
+  "finding_details": "Trust anchors are configured by the site: OT_TLS_CLIENT_CA for client certificates, per-source tls.ca_file, OT_NATS_CA, OT_REDIS_CA, OTEL_EXPORTER_OTLP_CERTIFICATE. When a source sets no ca_file, outbound TLS falls back to the image's system root store (crates/ot-source/src/tls.rs system_roots), which contains commercial CAs; the site must set DoD/ECA CA files on every link.",
+  "comments": "Site: ISSO verifies every configured CA bundle contains only DoD-approved/ECA CAs and that no link relies on the system root store."
+ },
+ {
+  "vid": "V-222585",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack fails closed: the process stops if FIPS mode or its self-tests fail (crates/ot-server/src/fips.rs init); an unidentifiable caller or unavailable account store yields 401 (auth/mod.rs identify/layer); a sign-in that can't be written to the audit table is refused; client-certificate revocation fails closed on unknown status or stale CRLs (ot-source/src/tls.rs); SAML is refused without the FIPS provider. /api/v1/status returns 503 when SQLite, Redis or NATS is down (control.rs status). Data stays in SQLite/Redis/NATS, not temporary files (read-only root FS, docker-compose.yml).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222586",
+  "status": "NotAFinding",
+  "finding_details": "Diagnostic information is preserved: errors are logged to standard output (JSON with OT_LOG_FORMAT=json) and exported over OpenTelemetry to the site's collector (crates/ot-server/src/telemetry.rs; docs/guides/admin.md#logs, #opentelemetry); state needed to resume (configuration, accounts, decision log, audit, track graph) is in SQLite with WAL on the /data volume, live tracks in Redis/NATS JetStream; backup and restore are documented (docs/guides/admin.md#backup-and-restore). Log retention is at the collector.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222587",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack protects stored information through access control (roles, secrets masked for non-admins), 0600 key files, and an append-only hash-chained audit table (crates/ot-store/src/audit.rs), but does not encrypt its database itself; confidentiality at rest is inherited from the platform's volume encryption (docs/security/stig-mapping.md SC-28; docs/guides/admin.md#configuration-export recommends an encrypted volume).",
+  "comments": "Site/Platform: data owner states at-rest requirements; hosting platform encrypts the /data volume and backups."
+ },
+ {
+  "vid": "V-222588",
+  "status": "Not_Reviewed",
+  "finding_details": "Integrity of the audit record at rest is protected cryptographically (SHA-256 hash chain, GET /api/v1/audit/verify, chain head logged hourly; crates/ot-store/src/audit.rs). Other stored data (SQLite database, Redis) relies on access control and on platform encryption of the /data volume (docs/security/stig-mapping.md SC-28 Inherited).",
+  "comments": "Site/Platform: data owner defines the information requiring at-rest integrity protection; platform provides FIPS-validated volume encryption."
+ },
+ {
+  "vid": "V-222589",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack does not encrypt stored data itself; protection of stored DoD information at rest is inherited from the hosting platform's disk/volume encryption of /data and backups (docs/security/stig-mapping.md SC-28). Passwords are stored as PBKDF2 hashes and key files 0600 (crates/ot-server/src/fips.rs, auth/mod.rs write_private).",
+  "comments": "Site/Platform: encrypt the /data volume and backups with FIPS-validated encryption commensurate with the data."
+ },
+ {
+  "vid": "V-222590",
+  "status": "NotAFinding",
+  "finding_details": "Security functions and settings (accounts, sign-in/SAML/client certificates, banners, audit, configuration import/export, source secrets) are admin-only on the server for every /api/v1 route (crates/ot-server/src/auth/policy.rs: /auth/ and /audit admin reads, every unlisted write admin), enforced in auth/mod.rs layer; the account policy is fixed in code (auth/stig.rs), not a modifiable setting.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222591",
+  "status": "NotAFinding",
+  "finding_details": "Each OpenTrack role (serve, sources, engine, writer, cot, link) runs as its own process/container of the single binary (docs/guides/admin.md#server-roles), in a container with a non-root user, read-only root FS, all capabilities dropped and no-new-privileges (docker-compose.yml, Dockerfile); third-party plugins run in WebAssembly sandboxes with explicit WASI grants (docs/plugins.md, stig-mapping CM-7). Rust memory safety (unsafe forbidden) isolates in-process tasks.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222592",
+  "status": "NotAFinding",
+  "finding_details": "The image runs as an unprivileged user in its own container with a read-only root file system and a private /data volume (docker-compose.yml); key and password files are written 0600 (crates/ot-server/src/auth/mod.rs write_private); Redis keys are namespaced per deployment and NATS/Redis access is authenticated (TLS/mTLS, creds). No file sharing is offered. Isolation of shared Redis/NATS servers from other tenants (ACLs) is the site's.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222593",
+  "status": "NotAFinding",
+  "finding_details": "XML input is limited: CoT/XML feeds are parsed with quick-xml, which does not expand DTD-defined or external entities, and every frame is bounded (crates/ot-source/src/frame.rs DEFAULT_MAX_FRAME 4 MiB, codec.rs); the SAML ACS POST is bounded by axum's default 2 MB form limit and parsed by samael/libxml2 (auth/saml.rs acs); SAML metadata is admin-only input. No XML-based web services are exposed.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222594",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack limits abuse of itself: per-address sign-in rate limit and account lockout (auth/mod.rs, stig.rs), body limits on API uploads (plugins_api.rs, config_backup.rs, registry_api.rs DefaultBodyLimit), frame/message limits on feeds (ot-source/src/frame.rs, proto.rs MAX_BYTES), and it only sends to admin-configured destinations. Anti-DoS infrastructure and DoS test results are the site's.",
+  "comments": "Site: network anti-DoS and penetration/DoS test results; ISSO reviews."
+ },
+ {
+  "vid": "V-222595",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack supports redundant nodes (multi-node sync, docs/multi-node.md) and separate scalable roles; whether the deployment is designated high-availability and built with load balancers/redundant nodes is a site decision.",
+  "comments": "Site: system owner determines HA designation and architecture."
+ },
+ {
+  "vid": "V-222596",
+  "status": "NotAFinding",
+  "finding_details": "TLS (1.2/1.3, FIPS-approved suites only) protects every TCP link: UI/API (OT_TLS_CERT or TLS proxy, HSTS), NATS, Redis, feeds, OTLP export and TAK outputs, with mTLS available (docs/guides/admin.md#encryption-in-transit, crates/ot-source/src/tls.rs, docs/security/fips.md). TLS must be turned on as the hardening checklist requires (docs/security/hardening.md#encrypt-every-link); the default compose file serves plain HTTP on 8090 for laboratory use. UDP/multicast feeds and multicast TAK output are plaintext by protocol and require a protected network and documented risk acceptance (docs/security/hardening.md).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222597",
+  "status": "NotAFinding",
+  "finding_details": "All TCP links support TLS with AES-GCM (confidentiality and integrity) from the AWS-LC FIPS module (docs/security/fips.md, docs/guides/admin.md#encryption-in-transit); the hardening checklist requires TLS on every link and permits plaintext TAK/multicast only on a protected, accredited network with documented risk acceptance (docs/security/hardening.md). TLS must be turned on as the hardening checklist requires (docs/security/hardening.md#encrypt-every-link); the default compose file serves plain HTTP on 8090 for laboratory use.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222598",
+  "status": "NotAFinding",
+  "finding_details": "Outbound data (NATS track output, Redis, TAK outputs, OTLP export, HTTP responses) is sent over TLS when configured as the hardening checklist requires (docs/security/hardening.md#encrypt-every-link); with OT_TLS_CERT the listener accepts TLS only and HSTS is sent (crates/ot-server/src/https.rs, control.rs). TLS must be turned on as the hardening checklist requires (docs/security/hardening.md#encrypt-every-link); the default compose file serves plain HTTP on 8090 for laboratory use.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222599",
+  "status": "NotAFinding",
+  "finding_details": "Inbound data is received over TLS: the UI/API listener with OT_TLS_CERT accepts TLS only (crates/ot-server/src/https.rs), feed transports offer TLS/mTLS (ot-source/src/tls.rs), and NATS/Redis tiers use tls:// and rediss:// (docs/guides/admin.md#encryption-in-transit). TLS must be turned on as the hardening checklist requires (docs/security/hardening.md#encrypt-every-link); the default compose file serves plain HTTP on 8090 for laboratory use. UDP feeds are plaintext by protocol.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222600",
+  "status": "NotAFinding",
+  "finding_details": "/api/v1/status gives non-admins only up/down flags and versions; paths, URLs, endpoints and error text are for admins (control.rs status_for_non_admins; test non_admins_see_status_without_paths_urls_or_errors). Server errors answer with a reference, not their text.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222601",
+  "status": "NotAFinding",
+  "finding_details": "The UI is a React single-page application that keeps no authentication or session data in hidden form fields; the session is an HttpOnly cookie (auth/mod.rs session_cookie) and the only sessionStorage keys are UI acknowledgements (ui/src/auth/WarnGate.tsx, LastLoginNotice.tsx). No type=hidden inputs exist in ui/src. The SAML relay state is HMAC-signed (docs/security/fips.md).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222602",
+  "status": "NotAFinding",
+  "finding_details": "Output is rendered through React's escaping with no dangerouslySetInnerHTML, innerHTML or eval in ui/src; every response carries a Content-Security-Policy with script-src 'self' (no inline or evaluated script), object-src 'none' and frame-ancestors 'none', plus nosniff (crates/ot-server/src/control.rs CSP, security_headers). Residual: style-src allows 'unsafe-inline' (finding F-5, open, low, docs/security/stig-mapping.md). Dynamic XSS scan results should be attached by the assessor.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222603",
+  "status": "NotAFinding",
+  "finding_details": "The session cookie is SameSite=Strict (auth/mod.rs session_cookie), state-changing API calls take JSON bodies (axum Json requires Content-Type: application/json, which a cross-site form cannot send without a CORS preflight) and no CORS is enabled (no CorsLayer in crates/ot-server); API tokens use an Authorization header that browsers never add automatically; framing is denied (X-Frame-Options DENY, frame-ancestors 'none').",
+  "comments": ""
+ },
+ {
+  "vid": "V-222604",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack never runs an operating-system command or shell: there is no std::process::Command or tokio process use anywhere under crates/ (only std::process::id()). External plugins are separate programs the operator starts; OpenTrack only connects to them over a socket with JSON lines (crates/ot-plugin/src/external.rs), and WebAssembly plugins run sandboxed with explicit WASI grants (crates/ot-plugin/src/wasm.rs, grants.rs). unsafe_code is forbidden workspace-wide (Cargo.toml [workspace.lints.rust]).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222605",
+  "status": "NotAFinding",
+  "finding_details": "All text is handled as Rust UTF-8 String and decoded by typed serde deserialisers; the UI page asserts UTF-8 (ui/index.html meta charset) and every response carries X-Content-Type-Options: nosniff (crates/ot-server/src/control.rs security_headers). Static UI files are served by tower-http ServeDir, which rejects path traversal, and the only user-named files (tracker profiles) are allow-listed to [a-z0-9_-]{1,64} before a path is built (crates/ot-server/src/profiles.rs Profile::validate; delete only matches listed profiles).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222606",
+  "status": "NotAFinding",
+  "finding_details": "Every API body and feed is decoded into typed structures (serde/axum Json, Form, Path, Query extractors; per-source codecs in crates/ot-source) and rejected with 400/422 when malformed; axum's default 2 MB body limit applies, with explicit DefaultBodyLimit only on import routes (config_backup.rs, registry_api.rs, plugins_api.rs); names and settings are validated server-side (e.g. profiles.rs validate, cot/settings.rs, auth/password.rs). No OpenTrack fuzz or DAST results are in the package; active/fuzz testing is assessed under V-222624.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222607",
+  "status": "NotAFinding",
+  "finding_details": "SQLite is accessed through rusqlite with bound parameters everywhere (?1, params![]); the few format!-built statements only splice compile-time column lists or generated placeholder names, never input (crates/ot-store/src/audit.rs audit_rows, registry.rs list_entities, sources.rs, auth.rs, app_settings.rs). Redis commands are built as argument vectors by the redis crate (crates/ot-store/src/redis_store.rs), not strings.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222608",
+  "status": "NotAFinding",
+  "finding_details": "The only XML parsed from untrusted input is the SAML response. check_response (crates/ot-server/src/auth/saml.rs) refuses it before any parser sees it when it carries a DTD (<!DOCTYPE, <!ENTITY) or exceeds 256 KB of base64; libxml2 then parses strictly (recover off, no network, no default DTD; parse_strict in third_party/samael/src/crypto/xmlsec/mod.rs), without entity substitution or DTD loading, and the assertion is taken only from the signature-verified XML. Tested in saml.rs responses_with_a_dtd_or_too_large_are_refused_before_parsing and a_signed_response_verifies_and_a_tampered_one_does_not.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222609",
+  "status": "NotAFinding",
+  "finding_details": "Input is handled by memory-safe Rust with unsafe_code forbidden (Cargo.toml), typed decoding of every API request and feed, size limits (axum 2 MB default body limit, DefaultBodyLimit on import routes, bounded Redis streams via MAXLEN/MINID in crates/ot-store/src/redis_store.rs), parameterised SQL and no command execution (see V-222604, V-222607). No fuzz/DAST results ship with the package; the site's active testing is V-222624.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222610",
+  "status": "NotAFinding",
+  "finding_details": "Server-side failures (5xx) answer every caller with a generic message and a reference; the detail is logged under the reference (control.rs ApiError into_response; test a_server_error_answers_with_a_reference_not_its_text). 4xx messages say what the caller must correct.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222611",
+  "status": "NotAFinding",
+  "finding_details": "Detailed error text goes only to the server log (and the site's collector over OpenTelemetry), which administrators read; users get a generic message with a reference (control.rs ApiError into_response). /status details are admin-only.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222612",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack's code is Rust with unsafe_code = \"forbid\" for the whole workspace (Cargo.toml [workspace.lints.rust]), so buffer, stack, heap and format-string overflows are excluded by the language in its own code; clippy -D warnings runs in CI (.github/workflows/ci.yml). Native libraries (AWS-LC, SQLite bundled, libxml2/xmlsec) are covered by cargo deny/RustSec and the image scan (docs/security/supply-chain.md).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222613",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack ships as one immutable container image (Dockerfile) with a read-only root filesystem, so an upgrade replaces the whole application and no older OpenTrack files remain inside the running container (docs/guides/admin.md#upgrades). Removing superseded images and old binaries from hosts/registries is the site's task.",
+  "comments": "Site: host / container platform administrator (prune superseded images)."
+ },
+ {
+  "vid": "V-222614",
+  "status": "Not_Reviewed",
+  "finding_details": "The project checks dependencies continuously in CI (cargo deny RustSec advisories, npm audit; .github/workflows/ci.yml) and documents rebuilding on Debian security updates (docs/security/hardening.md#operate, docs/security/supply-chain.md); the release image scan is produced with scripts/ato/scan. Checking IAVMs/CTOs weekly and applying updates is the operating site's patch process.",
+  "comments": "Site: ISSO / system administrator patch process (IAVM/CTO tracking)."
+ },
+ {
+  "vid": "V-222615",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack verifies its security functions: at start fips::init enables AWS-LC in FIPS mode, which runs the module's power-on self-tests, and refuses to run if they or the FIPS TLS provider fail (crates/ot-server/src/fips.rs, docs/security/fips.md#what-the-process-checks); SAML is refused unless OpenSSL reports FIPS mode (auth/saml.rs); client-certificate CRL checks fail closed (https.rs); the audit hash chain is verified on demand (GET /api/v1/audit/verify, crates/ot-server/src/audit_api.rs) and its head logged hourly (auth/maintenance.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222616",
+  "status": "NotAFinding",
+  "finding_details": "Verification runs at every start/restart (FIPS power-on self-tests and FIPS provider check in crates/ot-server/src/fips.rs init; process exits on failure) and upon command by a privileged user (admin-only GET /api/v1/audit/verify checks the whole audit hash chain and records the result as an audit_verify event, crates/ot-server/src/audit_api.rs verify).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222617",
+  "status": "Not_Reviewed",
+  "finding_details": "On failure OpenTrack emits the evidence: a failed FIPS self-test stops the process with an error; a broken audit chain logs an ERROR (\"the audit record's hash chain is broken\") and writes an audit_verify failure row, which is exported as an audit.record OTLP log event (crates/ot-server/src/audit_api.rs, telemetry.rs, docs/guides/admin.md#audit-record). OpenTrack has no direct notification channel (no email by design); alerting the ISSO/ISSM on these events is done by the site's SIEM/collector.",
+  "comments": "Site: SIEM alert rules routing these events to the ISSO/ISSM."
+ },
+ {
+  "vid": "V-222618",
+  "status": "Not_Applicable",
+  "finding_details": "The only mobile code is the React single-page application's JavaScript, which executes within the client browser; per the check text this makes the rule not applicable. No ActiveX, Java applets or other Category 1A mobile code is shipped (ui/, CSP script-src 'self' in crates/ot-server/src/control.rs).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222619",
+  "status": "Not_Reviewed",
+  "finding_details": "Account management process and prompt removal of departed users are ISSO duties. OpenTrack supports them: Settings -> Users and opentrack user CLI to create/disable/remove accounts, automatic disable after 35 days of inactivity, API-token revocation on disable, and every change audited (docs/guides/admin.md#users, docs/security/stig-mapping.md AC-2, AC-2(3)).",
+  "comments": "Site: ISSO account management process."
+ },
+ {
+  "vid": "V-222620",
+  "status": "Not_Reviewed",
+  "finding_details": "Network placement (DoD DMZ tiering) is decided by the hosting site. OpenTrack's roles (serve, sources, engine, writer, cot) can run as separate processes/containers, and SQLite/Redis/NATS are separate services, so tiers can be separated (README.md#architecture, docs/guides/admin.md#server-roles).",
+  "comments": "Site: network architecture / DMZ owner."
+ },
+ {
+  "vid": "V-222621",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack keeps its local audit table forever (append-only, nothing deletes rows; docs/guides/admin.md#audit-record, crates/ot-store/src/audit.rs) and exports every record over OTLP to the site's collector/SIEM. Retaining 30 months (5 years for SAMI) in active and cold storage is the site's retention process.",
+  "comments": "Site: ISSO / SIEM retention policy."
+ },
+ {
+  "vid": "V-222622",
+  "status": "Not_Reviewed",
+  "finding_details": "Periodic audit review is an ISSO process. OpenTrack provides the record in the SIEM (audit.record OTLP events), GET /api/v1/audit with filters and CSV for admins, and chain verification (docs/guides/admin.md#audit-record, docs/security/hardening.md#operate says to review at the interval the plan sets).",
+  "comments": "Site: ISSO audit review procedure and records."
+ },
+ {
+  "vid": "V-222623",
+  "status": "Not_Reviewed",
+  "finding_details": "Reporting suspected IA violations is an organisational SOP; OpenTrack supplies the events (failed sign-ins, lockouts, refused SAML, broken chain) in its audit record and logs.",
+  "comments": "Site: ISSO incident reporting SOP."
+ },
+ {
+  "vid": "V-222624",
+  "status": "Not_Reviewed",
+  "finding_details": "Active vulnerability and fuzz testing of the deployed application is the ISSO's responsibility. The project provides CI dependency scanning (cargo deny, npm audit; .github/workflows/ci.yml) and an image scanner script (scripts/ato/scan), but no DAST or fuzzing results are shipped.",
+  "comments": "Site: ISSO-directed DAST/fuzz testing and scan results."
+ },
+ {
+  "vid": "V-222625",
+  "status": "NotAFinding",
+  "finding_details": "The design is documented as a one-directional pipeline (feeds -> sources -> Redis streams -> engine -> outbox -> writer/cot) with an execution-flow diagram (README.md#architecture); the API reaches the engine only through a Redis command queue and waits with a timeout (logged as 'the engine did not answer'), so no service calls back into its caller. Loops between nodes are prevented by design: OpenTrack ignores its own messages and reports carry only the sender's sources (docs/sync-icd.md, docs/multi-node.md echo tests).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222626",
+  "status": "NotAFinding",
+  "finding_details": "Application code and control/configuration files live in the read-only image (/usr/local/bin/opentrack, /opt/opentrack/ui, /opt/opentrack/profiles, /etc/opentrack/*.cnf; Dockerfile, read_only: true in docker-compose.yml); runtime settings come from environment variables. Writable state is only the /data volume (database, session.key, imported profiles; docs/guides/admin.md#data-directory), owned by the non-root opentrack user; application users have no file-system access, only the role-checked API. The signing key can instead come from OT_SESSION_SECRET via the site's secret store.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222627",
+  "status": "Not_Reviewed",
+  "finding_details": "Configuring third-party components (Redis, NATS, host OS, container runtime, reverse proxy) per available guidance is the site's task. OpenTrack's docs give the settings it depends on: TLS/mTLS for Redis and NATS, Redis tls-auth-clients, container hardening (docs/security/hardening.md#encrypt-every-link, #before-first-start).",
+  "comments": "Site: ISSO / system administrator."
+ },
+ {
+  "vid": "V-222628",
+  "status": "Not_Reviewed",
+  "finding_details": "PPSM registration of IPs, ports and services is a site/program action. OpenTrack's listening and outbound ports are configurable and documented in scattered places (OT_BIND default 8090, TAK outputs 8087/8089 and SA multicast, source listeners such as UDP/gRPC binds, NATS, Redis, OTLP 4317/4318; docs/guides/admin.md, docs/security/hardening.md); the package has no single ports/protocols list.",
+  "comments": "Site: ISSO submits the PPS list to DoD PPSM."
+ },
+ {
+  "vid": "V-222629",
+  "status": "Not_Reviewed",
+  "finding_details": "Registration in the DoD Ports and Protocols Database is done for a production site by its program/ISSO, using the ports the site configures (see V-222628).",
+  "comments": "Site: ISSO / program office."
+ },
+ {
+  "vid": "V-222630",
+  "status": "Not_Reviewed",
+  "finding_details": "The CM repository is hosted on GitHub (private repository; .github/workflows/). Its patching and STIG compliance are the responsibility of the developer organisation / hosting provider and cannot be verified from the code.",
+  "comments": "Developer organisation: CM repository owner."
+ },
+ {
+  "vid": "V-222631",
+  "status": "Not_Reviewed",
+  "finding_details": "Quarterly review of CM repository access is a developer-organisation process; the repository documents branch protection (scripts/github/protect-main.sh) but no access review records.",
+  "comments": "Developer organisation: CM administrator (quarterly access review)."
+ },
+ {
+  "vid": "V-222632",
+  "status": "NotAFinding",
+  "finding_details": "docs/security/scm-plan.md is the software configuration management plan: the configuration items (source, lockfiles, pinned toolchain in rust-toolchain.toml, base images by digest, checksummed build inputs, forks in third_party/ with their OPENTRACK.md notes, the vendored stareSDK in ui/vendor, deny.toml, workflows, signing key, accreditation sources) and the released artefacts; the repository and branch rules (main protected by scripts/github/protect-main.sh, with the admin bypass and the current single-maintainer practice stated); version identification and CHANGELOG.md; the release process (tag, signed image with provenance and SBOMs, scan, coverage summary, GitHub pre-release); change control through issues and pull requests; configuration of deployed nodes (config export/import); and roles.",
+  "comments": "The organisational CCB (V-222633) remains the site's."
+ },
+ {
+  "vid": "V-222633",
+  "status": "Not_Reviewed",
+  "finding_details": "A Configuration Control Board is an organisational body; its charter and meeting records cannot be verified from the repository.",
+  "comments": "Developer organisation / program office: CCB charter and minutes."
+ },
+ {
+  "vid": "V-222634",
+  "status": "NotAFinding",
+  "finding_details": "IPv6 is supported throughout: listeners and clients bind and connect over IPv6, UDP sources join IPv6 multicast groups (interface by name or index) and the TAK multicast output sends to IPv6 groups (crates/ot-source/src/transport.rs, crates/ot-server/src/cot/output.rs; tests udp_joins_an_ipv6_multicast_group, sends_multicast_sa_over_ipv6).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222635",
+  "status": "Not_Reviewed",
+  "finding_details": "Whether the host is dedicated for a mission-critical application is a hosting decision; OpenTrack runs as its own container (Dockerfile, docker-compose.yml).",
+  "comments": "Site: ISSO / hosting."
+ },
+ {
+  "vid": "V-222636",
+  "status": "Not_Reviewed",
+  "finding_details": "The contingency plan is the site's. OpenTrack documents what to back up, how to restore and how to rebuild a node from a configuration export (docs/guides/admin.md#backup-and-restore, #rebuild-a-node-from-a-configuration-export) and supports several nodes sharing one picture (docs/multi-node.md).",
+  "comments": "Site: contingency plan owner."
+ },
+ {
+  "vid": "V-222637",
+  "status": "Not_Reviewed",
+  "finding_details": "The disaster recovery plan is the site's. OpenTrack provides recovery features: documented restore (docs/guides/admin.md#restore), PRAGMA integrity_check for backups, migrations that refuse a newer schema, audit hash-chain verification after restore (GET /api/v1/audit/verify), and FIPS self-tests on restart.",
+  "comments": "Site: DR plan including trusted recovery steps."
+ },
+ {
+  "vid": "V-222638",
+  "status": "Not_Reviewed",
+  "finding_details": "Performing backups at the required interval is a site process. OpenTrack documents online SQLite backup (sqlite3 .backup / VACUUM INTO), Redis backup, session.key and configuration export (docs/guides/admin.md#backup-and-restore).",
+  "comments": "Site: system administrator backup schedule and off-site storage."
+ },
+ {
+  "vid": "V-222639",
+  "status": "Not_Reviewed",
+  "finding_details": "Off-site or fire-rated storage of software and source copies is organisational. Source is held in a hosted Git repository and releases are published as signed images to ghcr.io (docs/security/supply-chain.md#releases); the site must keep its own copy of the deployed image.",
+  "comments": "Site / developer organisation: off-site software backups."
+ },
+ {
+  "vid": "V-222640",
+  "status": "Not_Reviewed",
+  "finding_details": "Physical and technical protection of backup and restoration assets is a site procedure; the admin guide warns that the database, session.key, .env and configuration exports hold secrets and must be kept safe (docs/guides/admin.md#what-to-back-up), and stig-mapping.md SC-28 leaves volume/backup encryption to the platform.",
+  "comments": "Site: backup and recovery procedures."
+ },
+ {
+  "vid": "V-222641",
+  "status": "NotAFinding",
+  "finding_details": "All key exchange is done by TLS 1.2/1.3 through rustls' FIPS configuration on the AWS-LC FIPS 140-3 module (ECDHE on NIST curves, AES-GCM), with server certificates validated and mutual TLS available on the UI/API, NATS, Redis, feeds and OTLP (crates/ot-server/src/fips.rs init, crates/ot-server/src/https.rs, crates/ot-source/src/tls.rs, docs/security/fips.md, docs/security/hardening.md#encrypt-every-link).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222642",
+  "status": "NotAFinding",
+  "finding_details": "No credentials, keys or certificates are embedded in code or configuration: the repository has no private keys or credential files (only cosign.pub), secrets come from environment variables or ${env:...} references (docs/examples/aisstream.json, docker-compose.yml with empty defaults), the session key is generated at first start into /data/session.key with owner-only permissions, and the only literal passwords are in #[cfg(test)] tests (e.g. crates/ot-server/src/auth/api.rs tests).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222643",
+  "status": "NotAFinding",
+  "finding_details": "Each labelled track has one portion marking (ot-core SecurityLabel::marking, e.g. (S//REL TO USA, GBR)): TAK/CoT events carry a <detail><__security .../> element and remarks starting with the marking; track exports (GeoJSON, CSV), the audit CSV, registry sheets and the configuration export are marked (crates/ot-server/src/marking.rs); the UI shows each track's marking; NATS carries the label. Tests: markings_follow_us_syntax, a_labelled_track_carries_its_marking, a_file_is_marked_by_its_highest_label_else_the_banner.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222644",
+  "status": "NotAFinding",
+  "finding_details": "Every change runs the test suites before merge: cargo fmt/clippy -D warnings/cargo test (with Redis, NATS and MQTT services) and UI lint/test/build, required as status checks on main (.github/workflows/ci.yml, scripts/github/protect-main.sh); README.md#tests describes the tests and scripts/check.sh the end-to-end check; each release's changes and upgrade steps are in CHANGELOG.md.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222645",
+  "status": "NotAFinding",
+  "finding_details": "Release images are identified by SHA-256 digest, signed with the project's cosign key, verified in the release workflow, and the digest is attached to the release (image-digest.txt) with SBOMs and SLSA provenance (.github/workflows/release.yml); the documented deployment step is to verify the signature by digest before running (docs/security/hardening.md#before-first-start, docs/security/supply-chain.md#releases).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222646",
+  "status": "Not_Reviewed",
+  "finding_details": "Designating a security tester is an organisational staffing decision that cannot be verified from the repository.",
+  "comments": "Developer organisation: named security tester."
+ },
+ {
+  "vid": "V-222647",
+  "status": "Not_Reviewed",
+  "finding_details": "Annual test procedures and dates are a site/developer process. OpenTrack's secure-state behaviour on initialisation and abort is built in (process stops if FIPS self-tests fail, fips.rs; sign-in fails closed if it can't be audited; every /api/v1 route checks the session and role, auth/policy.rs), but no annual test procedure document ships.",
+  "comments": "Site / developer organisation: annual secure-state test procedure and records."
+ },
+ {
+  "vid": "V-222648",
+  "status": "Not_Reviewed",
+  "finding_details": "Code review is a developer-organisation process. The repository shows a PR workflow requiring one approval and passing CI before merge (scripts/github/protect-main.sh, merge commits such as 'Merge pull request #55'), clippy -D warnings and unsafe_code forbidden, but branch protection lets admins bypass and no code review reports covering the listed flaw classes are in the package.",
+  "comments": "Developer organisation: provide code review records / SAST report per release."
+ },
+ {
+  "vid": "V-222649",
+  "status": "NotAFinding",
+  "finding_details": "scripts/coverage.sh measures test coverage of the Rust workspace with cargo-llvm-cov, running the tests against real Redis, NATS and MQTT, and writes target/coverage/summary.txt. docs/security/scm-plan.md#releases makes attaching the coverage summary to each GitHub release part of the release process and records the figures at the start of the practice. The UI's Vitest suite runs without a coverage figure (no coverage provider is a UI dependency); the script measures it where one is installed.",
+  "comments": "Coverage is recorded per release, not gated."
+ },
+ {
+  "vid": "V-222650",
+  "status": "NotAFinding",
+  "finding_details": "Flaws are tracked in the project's GitHub issue tracker and carried into the security documentation: findings F-1..F-9 with their status (docs/security/stig-mapping.md#findings) and issue numbers referenced in CHANGELOG.md (e.g. #50, #53).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222651",
+  "status": "Not_Reviewed",
+  "finding_details": "IA and accreditation impact assessment of changes is a CCB/ISSO process. The project flags security-relevant changes in CHANGELOG.md and docs (e.g. docs/security/fips.md: an aws-lc-fips-sys change is a crypto change; supply-chain.md: moving base images), but the assessment itself is organisational.",
+  "comments": "Developer organisation / ISSO: CCB impact assessment records."
+ },
+ {
+  "vid": "V-222652",
+  "status": "NotAFinding",
+  "finding_details": "Security flaws are fixed or carried in the plan: stig-mapping.md#findings lists F-1..F-9 with fixed/accepted/open status (F-5 inline styles open, low; F-4 accepted), missing OCSP is on the roadmap (#21), and fixes are recorded in CHANGELOG.md.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222653",
+  "status": "NotAFinding",
+  "finding_details": "docs/security/coding-standards.md is the coding standard: the rules the tools enforce in CI and scripts/check.sh (rustfmt, clippy -D warnings on all targets, unsafe_code = forbid for every crate, dbg_macro, --locked builds, the pinned toolchain, cargo-deny and npm audit, the UI type check, oxlint and tests) and the rules checked in review: FIPS-only cryptography through aws-lc-rs and the rustls FIPS provider, secrets handling (ot_core::secrets, ${env:NAME}, nothing secret in logs or audit), errors (ApiError::internal answers with a reference), input limits and validation, roles for new routes, UI rules (no dangerouslySetInnerHTML, CSP), the dependency policy and test expectations.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222654",
+  "status": "NotAFinding",
+  "finding_details": "Design documentation is maintained with each release: architecture and data flow (README.md#architecture), external interfaces and exchanged data (docs/nats-output.md, docs/sync-icd.md, docs/protobuf-grpc.md, docs/non-point-contacts.md, admin guide TAK output), protections on each interface (docs/security/hardening.md#encrypt-every-link), roles and privileges (docs/guides/admin.md#roles, auth/policy.rs), security requirements and sensitive data handling (docs/security/stig-mapping.md, fips.md, admin.md#security-labels), updated per release in CHANGELOG.md.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222655",
+  "status": "NotAFinding",
+  "finding_details": "docs/security/threat-model.md is the threat model: a data-flow diagram and trust boundaries, then STRIDE threats, current mitigations (citing code and documents), residual risk and the POA&M item for each interface (UI/API, SAML, client certificates and OpenStare sign-in, source transports, plugins, Redis, NATS, multi-node sync, TAK, OpenTelemetry, SQLite and the data volume, the image and supply chain), and a criticality analysis. It is re-reviewed for every minor release and with any change that adds an interface or trust boundary.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222656",
+  "status": "NotAFinding",
+  "finding_details": "Errors are handled without leaking internals: 5xx answers are generic with a reference and logged in full (control.rs), sign-in refusals are uniform, and Rust's typed errors mean no unhandled exception reaches the client; tested in control.rs.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222657",
+  "status": "NotAFinding",
+  "finding_details": "SECURITY.md is the product's vulnerability and incident response process: how to report (privately to the maintainer on GitHub; sites through their own channel), acknowledgement within 5 working days, confirmation and severity within 10, fix or mitigation targets by severity (Critical/High 30 days), private tracking until the fix ships and then an issue labelled security, the fix with a regression test and the accreditation documents updated in the same pull request, and notification of users through release notes, CHANGELOG Security fixes and advisories.",
+  "comments": "The site's own incident response plan (IR-8) covers the deployment."
+ },
+ {
+  "vid": "V-222658",
+  "status": "Not_Reviewed",
+  "finding_details": "Support is contractual/organisational. OpenTrack is developed and released by its development team (CHANGELOG.md, releases), labelled alpha (docs/guides/admin.md#upgrades); its base OS is Debian bookworm and dependencies are pinned and scanned (docs/security/supply-chain.md). Proof of a support agreement must come from the program.",
+  "comments": "Program office / site: support agreement with the development team."
+ },
+ {
+  "vid": "V-222659",
+  "status": "Not_Reviewed",
+  "finding_details": "Decommissioning when support ends is a program/site decision.",
+  "comments": "Program office / ISSO."
+ },
+ {
+  "vid": "V-222660",
+  "status": "Not_Reviewed",
+  "finding_details": "Notifying users of decommissioning is an organisational procedure; OpenTrack's notice-and-consent and classification banners (Settings -> Banners) could carry such a notice.",
+  "comments": "Site: ISSO / program communications procedure."
+ },
+ {
+  "vid": "V-222661",
+  "status": "NotAFinding",
+  "finding_details": "OpenTrack has no vendor or built-in accounts. Only when the database has no accounts does serve create a first admin, from OT_ADMIN_EMAIL/OT_ADMIN_PASSWORD (checked against the password policy) or admin@opentrack.local with a random generated password written owner-only to initial-admin.txt and flagged must-change (crates/ot-server/src/auth/mod.rs bootstrap_admin; docs/guides/admin.md#first-admin). No service or guest accounts exist.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222662",
+  "status": "NotAFinding",
+  "finding_details": "There is no published default password: the first admin's password is either the operator's policy-checked OT_ADMIN_PASSWORD or a random one generated by the FIPS DRBG and marked temporary so the first sign-in forces a change (crates/ot-server/src/auth/mod.rs bootstrap_admin, auth/password.rs generate). Note: docs/guides/admin.md#first-admin still says 'at least 8 characters', while the code enforces the full policy.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222663",
+  "status": "NotAFinding",
+  "finding_details": "The administrator guide and hardening checklist are the configuration guide: encryption and PKI (docs/guides/admin.md#tls, #client-certificates, docs/security/fips.md), password/lockout/session settings (#password-policy etc.), audit (#audit-record, #opentelemetry), SAML/IdP (#saml), backup and recovery (#backup-and-restore), network links (docs/security/hardening.md#encrypt-every-link), deployment (#installation, docker-compose.yml) and security assumptions (docs/security/stig-mapping.md inherited controls).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222664",
+  "status": "Not_Reviewed",
+  "finding_details": "Whether the deployment processes classified data, and its Security Classification Guide, are determined by the program/data owner. OpenTrack carries per-source classification labels but defines no classified data elements itself (docs/guides/admin.md#security-labels).",
+  "comments": "Program office / data owner: SCG covering the track data."
+ },
+ {
+  "vid": "V-222665",
+  "status": "NotAFinding",
+  "finding_details": "The only mobile code is the SPA's JavaScript bundle served from the same origin under a CSP with script-src 'self' and no inline script (crates/ot-server/src/control.rs; F-5 concerns inline styles only). The UI ships no WebAssembly, Flash, Java or ActiveX; WebAssembly plugins run on the server, not in the browser.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222666",
+  "status": "Not_Reviewed",
+  "finding_details": "Whether production data is exported to test/development is a site practice. OpenTrack's configuration export includes secrets and the admin guide says to keep it as safe as the database (docs/guides/admin.md#configuration-export); non-admin API views mask source credentials (F-2).",
+  "comments": "Site: data owner / system administrator sanitisation procedure."
+ },
+ {
+  "vid": "V-222667",
+  "status": "NotAFinding",
+  "finding_details": "Application-level DoS protections are implemented: per-address sign-in rate limit and account lockout (crates/ot-server/src/auth/mod.rs allow_attempt), request body limits (axum default 2 MB, DefaultBodyLimit on import routes), bounded Redis streams and outbox (MAXLEN/MINID, OT_OBS_WINDOW_SECS), per-track output throttling, timeouts on plugin calls and dependency checks, and WASM plugin resource grants (crates/ot-plugin/src/grants.rs). Network-level DoS protection is the site's.",
+  "comments": ""
+ },
+ {
+  "vid": "V-222668",
+  "status": "Not_Reviewed",
+  "finding_details": "OpenTrack reports resources (CPU, memory, threads, Redis memory, SQLite and NATS stream size, backlogs) on the Overview, /api/v1/metrics and as OTLP metrics, and dependency failures via /api/v1/status (503) (docs/guides/admin.md#monitoring, crates/ot-server/src/metrics.rs), but it does not itself raise a low-disk or low-memory alert; alert thresholds are set in the site's monitoring/SIEM.",
+  "comments": "Site / platform: monitoring alert rules on OpenTrack metrics and host resources."
+ },
+ {
+  "vid": "V-222669",
+  "status": "Not_Reviewed",
+  "finding_details": "Registering an administrator for update and security notifications is a site action.",
+  "comments": "Site: system administrator subscription to release/advisory notifications."
+ },
+ {
+  "vid": "V-222670",
+  "status": "NotAFinding",
+  "finding_details": "SECURITY.md (How fixes are announced) defines the security notification process: every fix is published in the GitHub release notes and CHANGELOG.md under Security fixes, and each Medium or higher gets an advisory giving the description, affected versions, severity, fixed version, how to obtain the signed image, and interim mitigations: a GitHub Security Advisory once the repository is public (GitHub offers them only then), a Security advisory section of the release notes until then. Supported versions are stated (latest 0.4.x). The 0.4.3 release notes already carry a Security fixes section.",
+  "comments": "Users are notified by watching the repository's releases; the application does not check for updates itself."
+ },
+ {
+  "vid": "V-222671",
+  "status": "Not_Reviewed",
+  "finding_details": "Whether OpenTrack is reachable from the Internet and routed through a DMZ is a site network decision.",
+  "comments": "Site: network / boundary owner."
+ },
+ {
+  "vid": "V-222672",
+  "status": "NotAFinding",
+  "finding_details": "Every sign-in writes a login audit row with the client address and session id (crates/ot-server/src/auth/api.rs start_session: AuditEvent login .ip), so a second, concurrent sign-in from another workstation records its own IP; sessions beyond the limit of 3 are ended and audited as session ended with reason limit and their address. Rows are also exported as audit.record events (docs/guides/admin.md#audit-record).",
+  "comments": ""
+ },
+ {
+  "vid": "V-222673",
+  "status": "Not_Reviewed",
+  "finding_details": "Annual security training of the program's managers, designers, developers and testers is an organisational record that cannot be verified from the repository.",
+  "comments": "Developer organisation / program manager: training records."
+ },
+ {
+  "vid": "V-265634",
+  "status": "Not_Reviewed",
+  "finding_details": "Whether the deployment processes classified data, and the required NSA-approved protection, is determined by the AO/data owner. OpenTrack uses only FIPS 140-3 validated modules (AWS-LC FIPS, OpenSSL 3.0.9 FIPS provider; docs/security/fips.md) with TLS for every link; it has no Type 1 or CSfC capability of its own, and data at rest encryption is left to the platform (stig-mapping.md SC-28).",
+  "comments": "Site / AO: classified-data encryption (Type 1/CSfC network and storage encryption) if classified data is processed."
+ }
+]

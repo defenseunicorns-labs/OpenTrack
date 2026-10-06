@@ -1,0 +1,19 @@
+{
+  "name": "coastal-surveillance-radar",
+  "label": "Coastal surveillance radar",
+  "description": "A shore radar watching a port or strait: a few seconds a revolution, tens of kilometres, sea clutter.",
+  "sensor": {
+    "kind": "surface_radar",
+    "revisit_secs": 3,
+    "range_km": 24,
+    "domain": "surface"
+  },
+  "basis": "Benchmark, solent-radar (Solent AIS as truth, simulated radar at Southsea: 3 s, 15 m and 0.5 deg, Pd 0.85, 10 false plots a scan).",
+  "tracker": {
+    "algorithm": "mht",
+    "measurement_sigma_m": 60.0,
+    "domain": "surface",
+    "clutter_density": 2e-08,
+    "key_prefix": "C"
+  }
+}

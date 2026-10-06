@@ -1,0 +1,116 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# Plugin SDKs and examples build for WebAssembly: their own workspace.
+exclude = ["third_party", "sdk"]
+
+[workspace.package]
+version = "0.4.7"
+edition = "2024"
+repository = "https://github.com/kineticlogic-io/OpenTrack"
+rust-version = "1.90"
+license = "MIT"
+# Not published to crates.io; build from this repository.
+publish = false
+
+[workspace.dependencies]
+ot-core = { path = "crates/ot-core" }
+ot-store = { path = "crates/ot-store" }
+ot-nats = { path = "crates/ot-nats" }
+ot-source = { path = "crates/ot-source" }
+ot-codec-stanag4607 = { path = "crates/ot-codec-stanag4607" }
+ot-plugin = { path = "crates/ot-plugin" }
+ot-sync = { path = "crates/ot-sync" }
+ot-sapient = { path = "crates/ot-sapient" }
+anyhow = "1"
+# FIPS: aws-lc (validated module) instead of ring; the default features minus `ring`.
+async-nats = { version = "0.50", default-features = false, features = ["fips", "server_2_10", "server_2_11", "server_2_12", "server_2_14", "service", "jetstream", "nkeys", "crypto", "object-store", "kv", "websockets", "nuid"] }
+bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+quick-xml = "0.42"
+# Registry spreadsheets: xlsx out, xlsx/ods in, CSV both ways.
+calamine = "0.36"
+csv = "1"
+rust_xlsxwriter = "0.99"
+regex = "1"
+rumqttc = "0.25"
+# Named so the process can pick its TLS crypto provider (see ot-server main).
+rustls = { version = "0.23", default-features = false, features = ["fips", "std"] }
+hyper = "1"
+hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+# OCSP response signatures (ot-server): the same webpki rustls uses, with the
+# process's FIPS provider's algorithms; no crypto of its own is turned on.
+webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["fips"] }
+# Default trust for feed TLS with a client certificate: the system roots.
+rustls-native-certs = "0.8"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+socket2 = "0.6"
+# Interface name to index for IPv6 multicast joins (if_nametoindex), without unsafe code.
+nix = { version = "0.30", default-features = false, features = ["net"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+# `rediss://` URLs: TLS through rustls (the process's FIPS provider), system roots.
+redis = { version = "1", default-features = false, features = ["tokio-comp", "connection-manager", "streams", "script", "tokio-rustls-comp", "tls-rustls"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+# Test certificates (CA, server, client) for the TLS transport tests.
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem", "crypto"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "net", "io-util"] }
+tower-http = { version = "0.7", features = ["fs", "trace", "compression-gzip", "set-header"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Logs (audit included), traces and metrics over OTLP to the deployment's
+# collector. gRPC (tonic) and HTTP (reqwest); TLS through the process's rustls
+# provider, which is the AWS-LC FIPS one (no `ring`).
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs", "grpc-tonic", "tls-provider-agnostic", "tls-roots", "http-proto", "reqwest-blocking-client"] }
+opentelemetry-appender-tracing = { version = "0.33", default-features = false }
+tracing-opentelemetry = { version = "0.34", default-features = false }
+# Plugins: WebAssembly components (wit/plugin.wit), sandboxed with WASI.
+wasmtime = { version = "49", default-features = false, features = ["anyhow", "cranelift", "runtime", "component-model", "std", "parallel-compilation", "cache"] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
+base64 = "0.22"
+# Sign-in: password hashes, session tokens, account ids.
+# Only to verify passwords hashed before 0.4.0; they are rehashed with
+# PBKDF2 at the next sign-in.
+argon2 = { version = "0.5.3", features = ["std"] }
+# All cryptography: the AWS-LC FIPS 140-3 validated module.
+aws-lc-rs = { version = "1", features = ["fips"] }
+jsonwebtoken = { version = "10.4", features = ["aws_lc_rs"] }
+uuid = { version = "1", features = ["v4"] }
+# SAML single sign-on (ot-server's `saml` feature): OpenStare's fork of
+# samael 0.0.20, which builds against libxmlsec1 1.2.41 and on arm64.
+samael = { path = "third_party/samael", features = ["xmlsec"] }
+flate2 = "1"
+# Protobuf inputs: a producer's .proto compiled at runtime (no protoc), messages
+# decoded by reflection (carried over gRPC, which OpenTrack speaks on hyper).
+prost = "0.14"
+prost-reflect = { version = "0.16", features = ["serde"] }
+protox = "0.9"
+# Where in a .proto a compile error is (protox reports spans through it).
+miette = "7"
+
+url = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+
+# rumqttc 0.25.1 with rustls-webpki's `ring` default turned off (FIPS: no
+# crypto outside AWS-LC). Only that line differs from the published crate.
+[patch.crates-io]
+rumqttc = { path = "third_party/rumqttc" }
+

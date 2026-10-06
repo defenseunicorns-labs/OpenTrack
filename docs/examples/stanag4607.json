@@ -1,0 +1,198 @@
+{
+  "id": "gmti-4607",
+  "name": "GMTI (STANAG 4607)",
+  "description": "STANAG 4607 GMTI over TCP: every dwell target report is a detection, formed into ground tracks by the GNN tracker. With publish_platform, the sensor platform's own position (dwell and platform location segments) is a friendly air track that bypasses the tracker. For testing, stream recordings with scripts/benchmark/replay/gmti-rebroadcast.py.",
+  "reports": "detections",
+  "publish_alone": true,
+  "transport": {
+    "type": "tcp_client",
+    "host": "127.0.0.1",
+    "port": 4607,
+    "framing": {
+      "type": "length_field",
+      "offset": 2,
+      "width": "u32",
+      "endian": "big"
+    }
+  },
+  "pipeline": {
+    "codec": {
+      "type": "plugin",
+      "plugin": "stanag4607",
+      "options": {
+        "emit": "targets",
+        "publish_platform": true,
+        "shift_to_now": true,
+        "range_sigma_m": 20.0,
+        "cross_range_sigma_deg": 0.2
+      }
+    },
+    "mapping": {
+      "schema_version": 2,
+      "rules": [
+        {
+          "name": "target",
+          "when": {
+            "all": [
+              {
+                "path": "record",
+                "eq": "target"
+              },
+              {
+                "path": "lat",
+                "exists": true
+              }
+            ]
+          },
+          "key": {
+            "template": "{dwell.revisit_index}-{dwell.dwell_index}-{report_index}"
+          },
+          "fields": {
+            "position.latitude": "lat",
+            "position.longitude": "lon",
+            "observed_at": {
+              "path": "time",
+              "transforms": [
+                "time"
+              ]
+            },
+            "uncertainty.ellipse.semi_major_m": "ground_error.semi_major_m",
+            "uncertainty.ellipse.semi_minor_m": "ground_error.semi_minor_m",
+            "uncertainty.ellipse.orientation_deg": "ground_error.orientation_deg",
+            "track_type": {
+              "path": "packet.exercise_indicator_code",
+              "table": {
+                "0": "tactical",
+                "1": "simulated_training",
+                "2": "simulated_training",
+                "128": "live_training",
+                "129": "simulated_training",
+                "130": "simulated_training"
+              }
+            }
+          }
+        },
+        {
+          "name": "platform",
+          "kind": "track",
+          "when": {
+            "path": "record",
+            "eq": "platform"
+          },
+          "key": "platform_id",
+          "fields": {
+            "callsign": "platform_id",
+            "position.latitude": "lat",
+            "position.longitude": "lon",
+            "position.altitude_hae_m": "alt_m",
+            "observed_at": {
+              "path": "time",
+              "transforms": [
+                "time"
+              ]
+            },
+            "kinematics.course_deg": "track_deg",
+            "kinematics.speed_mps": "speed_mps",
+            "kinematics.vertical_rate_mps": "vertical_velocity_mps",
+            "uncertainty.circular_error_m": {
+              "arith": "mul",
+              "args": [
+                {
+                  "const": 0.59
+                },
+                {
+                  "arith": "add",
+                  "args": [
+                    "uncertainty.along_track_m",
+                    "uncertainty.cross_track_m"
+                  ]
+                }
+              ]
+            },
+            "uncertainty.vertical_error_m": "uncertainty.alt_m",
+            "classification.cot_type": {
+              "path": "mission.platform_type_code",
+              "table": {
+                "1": "a-f-A-M-F-R",
+                "2": "a-f-A-M-F-R",
+                "3": "a-f-A-M-F-R",
+                "4": "a-f-A-M-H",
+                "5": "a-f-A-M-F-Q",
+                "6": "a-f-A-M-H",
+                "7": "a-f-A-M-F-R",
+                "8": "a-f-A-M-F-P",
+                "9": "a-f-A-M-F-Q",
+                "10": "a-f-P-S",
+                "11": "a-f-A-M-F-R",
+                "12": "a-f-A-M-F-R",
+                "13": "a-f-G-E-S",
+                "14": "a-f-G-E-S",
+                "15": "a-f-G-E-S-R",
+                "16": "a-f-A-M-F-Q",
+                "17": "a-f-A-M-F-Q",
+                "18": "a-f-A-M-F-Q",
+                "19": "a-f-A-M-F-Q",
+                "20": "a-f-A-M-F-Q",
+                "21": "a-f-A-M-F-Q",
+                "22": "a-f-A-M-F-Q",
+                "23": "a-f-A-M-F-R",
+                "24": "a-f-A-M-F-Q",
+                "25": "a-f-A-M-F-R",
+                "26": "a-f-A-M-F-Q",
+                "27": "a-f-A-M-F-R",
+                "29": "a-f-A-M-F-R",
+                "30": "a-f-A-M-F-R",
+                "31": "a-f-A-M-F-Q",
+                "32": "a-f-A-M-F-R",
+                "33": "a-f-G-E-V-A",
+                "34": "a-f-A-M-F-Q",
+                "36": "a-f-A-M-F-Q",
+                "37": "a-f-A-M-F-Q",
+                "38": "a-f-A-M-F-Q",
+                "39": "a-f-A-M-F-R"
+              },
+              "table_default": "a-f-A"
+            },
+            "classification.affiliation": {
+              "const": "friend"
+            },
+            "track_type": {
+              "path": "packet.exercise_indicator_code",
+              "table": {
+                "0": "tactical",
+                "1": "simulated_training",
+                "2": "simulated_training",
+                "128": "live_training",
+                "129": "simulated_training",
+                "130": "simulated_training"
+              }
+            },
+            "platform.class": {
+              "path": "mission.platform_type",
+              "null_if": [
+                "Unidentified",
+                "Other",
+                "Available for Future Use"
+              ]
+            },
+            "platform.flag": "packet.nationality"
+          }
+        }
+      ]
+    },
+    "tracker": {
+      "algorithm": "gnn",
+      "measurement_sigma_m": 25.0,
+      "process_noise_mps2": 2.0,
+      "initial_speed_sigma_mps": 15.0,
+      "confirm_hits": 3,
+      "domain": "ground",
+      "key_prefix": "G",
+      "auto_timing": {},
+      "detection_probability": 0.5,
+      "clutter_density": 2e-07,
+      "birth_density": 3e-09,
+      "profile": "gmti-wide-area"
+    }
+  }
+}

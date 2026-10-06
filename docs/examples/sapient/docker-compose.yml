@@ -1,0 +1,31 @@
+# SAPIENT demo: mosquitto (MQTT broker) + redis + nats, wired to a local
+# opentrack binary and a local sapient-sim binary.
+#
+# Usage:
+#   docker compose -f docs/examples/sapient/docker-compose.yml up -d
+#   ./scripts/demo-sapient-acoustic.sh
+#
+# OpenTrack UI: http://localhost:8090. Sign-in is on: sign in as the first admin
+# (admin@opentrack.local) with the temporary password in
+# data-sapient-acoustic/initial-admin.txt, then choose a new one.
+# Five SAPIENT acoustic sources appear in Sources; OpenTrack positions their
+# ranged detections and retains the original bearing evidence.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+
+  nats:
+    image: nats:2
+    command: ["-js"]
+    ports:
+      - "4222:4222"

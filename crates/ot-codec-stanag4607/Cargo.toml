@@ -1,0 +1,17 @@
+[package]
+name = "ot-codec-stanag4607"
+description = "STANAG 4607 (Edition 3) GMTI decoder: packets, segments and flattened target records"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

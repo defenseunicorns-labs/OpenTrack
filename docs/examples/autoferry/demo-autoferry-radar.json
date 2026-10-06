@@ -1,0 +1,48 @@
+{
+  "id": "demo-autoferry-radar",
+  "name": "Autoferry demo: radar (MHT tracker)",
+  "description": "Replay (scripts/benchmark/replay/autoferry-replay.py): raw Autoferry detections, one frame per scan, formed into tracks by the tracker stage. Simulated training data.",
+  "reports": "detections",
+  "transport": {
+    "type": "udp",
+    "bind": "127.0.0.1:47003"
+  },
+  "unauthenticated": "accepted",
+  "pipeline": {
+    "codec": {
+      "type": "json",
+      "records": "plots"
+    },
+    "mapping": {
+      "schema_version": 2,
+      "rules": [
+        {
+          "name": "plot",
+          "key": "id",
+          "fields": {
+            "position.latitude": "lat",
+            "position.longitude": "lon",
+            "observed_at": {
+              "path": "t",
+              "transforms": [
+                "time"
+              ]
+            },
+            "uncertainty.circular_error_m": "cep",
+            "track_type": {
+              "const": "simulated_training"
+            }
+          }
+        }
+      ]
+    },
+    "tracker": {
+      "algorithm": "mht",
+      "measurement_sigma_m": 6.0,
+      "domain": "surface",
+      "key_prefix": "R",
+      "cluster_m": 12.0,
+      "clutter_density": 4e-06
+    }
+  }
+}

@@ -1,0 +1,935 @@
+/* OpenTrack page layout, following stareSDK's DESIGN-CONTRACT.md. Colours, fonts, radii and
+   spacing come only from stareSDK tokens; reusable components come only from stareSDK. */
+
+body {
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+/* Page anatomy (stareSDK DESIGN-CONTRACT.md): PageHeader, a Tabs bar, then a scrolling column of
+   CollapsiblePanels; details open in a right SideNav, whose width the page gives up through
+   --assistant-width (maintained by DockProvider). */
+.page {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-primary);
+  font-family: var(--font-sans);
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* The contract's page spacing, as OpenStare. */
+  padding: var(--space-lg);
+  margin-right: var(--assistant-width, 0px);
+}
+
+.panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+/* Inside a CollapsiblePanel or a drawer. */
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  min-height: 28px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* A heading inside a panel body: the field-label style. */
+/* A section heading with its actions at the right (Settings → General → Plugins). */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.subhead {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* SideNav contents: a header row (title, actions, close) over a scrolling body. */
+.drawer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  font-family: var(--font-sans);
+}
+
+.drawer-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 40px;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-glass-border);
+}
+
+.drawer-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Two columns that wrap when the space (page or drawer) is narrow. */
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: var(--space-md);
+  align-items: start;
+}
+
+.dep {
+  display: grid;
+  grid-template-columns: 124px auto minmax(0, 1fr);
+  gap: var(--space-sm);
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--color-glass-border);
+}
+
+.dep:first-of-type {
+  border-top: 0;
+}
+
+.dep .name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  display: block;
+  margin: 2px 0 6px;
+  color: var(--status-warning);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.notice svg {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 2px;
+}
+
+.card-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px 12px;
+}
+
+.error-text {
+  color: var(--color-destructive);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field.wide {
+  grid-column: 1 / -1;
+}
+
+.lookup {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.lookup .field {
+  flex: 1;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 0 0 8px;
+}
+
+.facts dt {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px var(--space-sm);
+  padding: 6px 0;
+  border-top: 1px solid var(--color-glass-border);
+}
+
+.history li.ended {
+  opacity: 0.6;
+}
+
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.frame {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 160px;
+  overflow: auto;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+/* Overview metrics: a strip of figures, then charts that wrap to one column when narrow. */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-lg);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 64px;
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: var(--space-md) var(--space-lg);
+}
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs, 4px);
+  min-width: 0;
+}
+
+/* The workspace row (stareSDK DESIGN-CONTRACT §2): context on the left, the selected item on
+   the right, wrapping to one column when narrow. */
+.workspace {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: var(--space-md);
+  align-items: start;
+}
+
+/* A page whose panels take the height left over (Registry, Correlation, Sources, Track
+   Database): an open panel with FILL_PANEL grows, and its body (.panel-body.fill, or .panel-fill
+   without padding) gives the space to its table, which scrolls. A short window scrolls the page
+   instead of squeezing the table below its minimum. */
+.fill-page {
+  min-height: 100%;
+}
+
+.panel-body.fill,
+.panel-fill {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.panel-fill {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The table's rows never size the panel: it takes the body's height and scrolls inside. */
+.panel-body.fill > .ui-data-table,
+.panel-fill > .ui-data-table {
+  flex: 1 1 0;
+  min-height: 120px;
+  contain: size;
+}
+
+/* Anything beside the table (a toolbar, a note, a decision's evidence) keeps its own height. */
+.panel-body.fill > :not(.ui-data-table),
+.panel-fill > :not(.ui-data-table) {
+  flex-shrink: 0;
+}
+
+/* Panels after a filled page's first screen (Track Database's log), a scroll below it. */
+.after-fill {
+  margin-top: var(--space-sm);
+}
+
+/* A denser page (Track Database, on operator direction): panels 8px apart instead of 16. */
+.panels.tight,
+.panels.tight .workspace {
+  gap: var(--space-sm);
+}
+
+/* Fixed-height panel bodies in the workspace row, so both sides line up. */
+.workspace-body {
+  height: 440px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* A filling workspace row (Track Database): both panels stretch to the row, which takes its
+   share of the page; their bodies take the panel's height but never less than a usable map. */
+.workspace.fill {
+  align-items: stretch;
+}
+
+.workspace.fill .workspace-body {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 320px;
+}
+
+.workspace-body.map {
+  overflow: hidden;
+  padding: 0;
+}
+
+.track-map {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+}
+
+.track-map__canvas {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-md);
+}
+
+.track-map__controls {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-sm);
+  right: var(--space-sm);
+}
+
+/* The display options panel over the map: stareSDK controls in label/control rows. */
+.track-map__menu {
+  position: absolute;
+  z-index: 3;
+  top: var(--space-sm);
+  /* Beside the palette (an xs button, 28px, plus the palette's padding). */
+  right: calc(var(--space-sm) + 48px);
+  display: flex;
+  width: min(260px, calc(100% - 16px));
+  padding: var(--space-md);
+  flex-direction: column;
+  gap: var(--space-sm);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-deep);
+}
+
+.track-map__menu .subhead {
+  margin-bottom: 2px;
+}
+
+.track-map__row {
+  display: flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.track-map__row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* The baseball card: symbol and name over the card's tabs. */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.card-head img {
+  flex-shrink: 0;
+  display: block;
+}
+
+.card-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.card-name strong {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbol-cell {
+  display: block;
+  height: 18px;
+  width: auto;
+}
+
+/* A compact search box for a panel's title row. */
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 180px;
+}
+
+.search svg {
+  position: absolute;
+  left: 8px;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.search svg + * {
+  width: 100%;
+}
+
+/* A source's pipeline: the flowchart beside the selected stage's detail, stacked when narrow. */
+.pipeline {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: var(--space-md);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .pipeline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Where a field is published: badges and notes that wrap. */
+.dest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+/* The schema draft form: one grid row per field, notes and problems under it. */
+.field-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.2fr) 120px 80px 170px minmax(160px, 2fr) 28px;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.field-row.head span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-sub {
+  padding-left: 2px;
+  font-size: 11px;
+}
+
+/* Pipeline designer (a modal): stage flowchart, the stage's form, the live preview. */
+.designer {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) minmax(320px, 420px);
+  gap: var(--space-lg);
+  align-items: start;
+  min-height: 60vh;
+}
+
+/* The live preview fills the modal's height (its max, less the title bar and padding) and its
+   samples scroll inside it; it stays in view if a long stage form scrolls the modal. */
+.designer-preview {
+  position: sticky;
+  top: 0;
+  height: calc(100vh - 160px - 2 * var(--space-lg));
+  min-height: 0;
+}
+
+.stage-samples {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-sm) 0;
+  border-top: 1px solid var(--color-glass-border);
+}
+
+.stage-sample-head {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.stage-sample-json {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Several records of one frame. */
+.stage-sample-json + .stage-sample-json {
+  border-top: 1px dashed var(--color-glass-border);
+  padding-top: 4px;
+}
+
+@media (max-width: 1300px) {
+  .designer {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .designer-preview {
+    grid-column: 1 / -1;
+    position: static;
+    height: 70vh;
+  }
+}
+
+.value-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.value-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.value-row > input {
+  flex: 1;
+  min-width: 140px;
+}
+
+.value-row.three {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+}
+
+.map-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.map-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-md);
+}
+
+.stage-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: var(--space-sm);
+  align-items: start;
+}
+
+/* The Map editor: the Source → Destination table beside the selected row's settings. */
+.map-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-md);
+  align-items: start;
+}
+
+.map-table > .map-field {
+  width: 320px;
+}
+
+.map-table .value-row.three {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Correlation: suggestions beside the settings, one column when narrow. */
+.correlation-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
+  gap: var(--space-sm);
+  /* Suggestions stretch to the settings beside them (a closed panel keeps its title's height). */
+  align-items: stretch;
+}
+
+.correlation-top .panel-body.fill {
+  min-height: 280px;
+}
+
+@media (max-width: 1100px) {
+  .correlation-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.correlation-settings {
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+/* A decision's evidence, as stored. */
+.evidence {
+  margin: 0;
+  padding: var(--space-sm);
+  max-height: 260px;
+  overflow: auto;
+  font-size: 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-sm);
+}
+
+/* Several small number inputs in one line (M of N within T). */
+.num-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 4px);
+  flex-wrap: nowrap;
+}
+
+.num-row > * {
+  flex: 0 0 auto;
+}
+
+/* Classification banner (Settings), drawn as OpenStare draws it: fixed bars
+   top and bottom above everything. The colours are the operator's marking. */
+.classification-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 19px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  user-select: none;
+  pointer-events: none;
+}
+.classification-bar.top { top: 0; }
+.classification-bar.bottom { bottom: 0; }
+.page.with-banner { padding-top: 19px; padding-bottom: 19px; }
+/* OT_AUTH=off: a red bar that cannot be missed, above the bottom classification bar. */
+.auth-off-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 9998;
+  padding: 4px 16px;
+  border-radius: 4px;
+  background: #c8102e;
+  color: #ffffff;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+  box-shadow: var(--shadow-standard);
+}
+.classification-preview {
+  display: inline-block;
+  padding: 2px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-radius: 2px;
+}
+
+/* Banner settings, laid out as OpenStare's (the preset and preview colours are
+   operator classification colours, not chrome). */
+.banner-settings { display: flex; flex-direction: column; gap: 12px; }
+.banner-toggle { display: flex; align-items: center; gap: 12px; }
+.banner-toggle > div { flex: 1; }
+.field-caps { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-text-secondary); margin-bottom: 4px; }
+.banner-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+.banner-preset { padding: 4px 10px; border-radius: 3px; border: 1px solid var(--color-glass-border); font-family: var(--font-sans); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; cursor: pointer; }
+.banner-preset.selected { border: 2px solid var(--color-accent); }
+.banner-colours { display: flex; gap: 24px; }
+.banner-colours > div { flex: 1; }
+.banner-colour { display: flex; align-items: center; gap: 8px; }
+.banner-colour input[type='color'] { width: 36px; height: 36px; padding: 2px; background: none; border: 1px solid var(--color-glass-border); border-radius: 4px; cursor: pointer; }
+.banner-preview { height: 24px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-family: var(--font-sans); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+
+/* A small info bubble next to a field (hover or focus for the explanation). */
+.info-tip { display: inline-flex; align-items: center; vertical-align: middle; margin-left: 4px; color: var(--color-text-secondary); cursor: help; font-size: 14px; text-transform: none; letter-spacing: normal; }
+.info-tip:hover, .info-tip:focus-visible { color: var(--color-text-primary); outline: none; }
+.info-pop {
+  position: fixed;
+  /* Above stareSDK's Modal (5000), so tips inside a modal show; below the banners (9998–9999). */
+  z-index: 5100;
+  pointer-events: none;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-glass-bg);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-standard);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* A Settings row: a fixed label column, the controls starting at its edge
+   (never stretched), both centred on one line. */
+.settings-row { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: var(--space-md); align-items: center; min-height: 28px; }
+.settings-row-control { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-sm); min-width: 0; }
+/* A form label with its ⓘ. */
+.row-label { display: flex; align-items: center; gap: 2px; min-height: 24px; }
+.row-label > label { margin-bottom: 0 !important; }
+
+/* The entity editor: a two-column form (label, control) and buildable key/value tables,
+   in OpenStare's form style (11px uppercase labels, compact 28px controls). */
+.entity-editor { gap: var(--space-md); }
+.entity-form { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 6px var(--space-md); align-items: center; }
+.entity-form-row, .kv-row { display: contents; }
+.entity-form-label { display: flex; align-items: center; gap: 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-text-secondary); }
+.entity-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); margin-bottom: calc(-1 * var(--space-sm)); }
+.kv-table { display: grid; gap: 6px var(--space-sm); align-items: center; }
+.kv-identifiers { grid-template-columns: 112px minmax(0, 1fr) minmax(0, 1fr) 28px; }
+.kv-attributes { grid-template-columns: minmax(0, 1fr) 104px minmax(0, 1.4fr) 28px; }
+.kv-head { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-text-secondary); }
+.kv-empty { grid-column: 1 / -1; }
+.kv-links { grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1.3fr) 28px; }
+/* Title-row tools that give way (a narrower search) before the title does. */
+.title-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.title-tools .search { flex: 0 1 180px; min-width: 96px; }
+/* The group editor: the symbol preview, and the member list. */
+.group-head { display: flex; align-items: center; gap: var(--space-md); }
+.group-members { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto 28px; gap: 6px var(--space-sm); align-items: center; }
+.group-member { display: contents; }
+/* Track management: the bar above the tracks table, the tick column, the merge dialog's choices. */
+.selection-bar { display: flex; align-items: center; gap: var(--space-sm); min-height: 32px; padding: var(--space-sm) var(--space-md) 0; margin-bottom: var(--space-sm); flex-wrap: wrap; }
+.tick { width: 14px; height: 14px; accent-color: var(--color-accent); cursor: pointer; }
+.radio-row { display: flex; align-items: center; gap: var(--space-sm); cursor: pointer; }
+/* The entity editor's publish override, in its title bar. */
+.publish-pick { display: inline-flex; align-items: center; gap: 4px; }
+
+/* A multi-line field that matches stareSDK's Input. */
+.plain-textarea {
+  width: 100%;
+  max-width: 360px;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font: 12px var(--font-mono, monospace);
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background: var(--surface-layer-2);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 4px;
+  resize: vertical;
+}
+.plain-textarea:disabled {
+  opacity: 0.5;
+}
+
+/* Sign-in and warning pages, laid out as OpenStare's. */
+.auth-screen { position: fixed; inset: 0; background: var(--color-bg-primary); display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: var(--font-sans); padding: 0 16px; }
+.auth-column { width: 400px; max-width: 100%; display: flex; flex-direction: column; gap: var(--space-lg); }
+.auth-column.wide { width: 70vw; max-width: 800px; }
+.auth-wordmark { font-size: 28px; font-weight: 600; color: var(--color-accent); text-align: center; letter-spacing: 0.25em; font-family: var(--font-header); }
+.auth-subtitle { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.15em; text-align: center; margin-bottom: var(--space-md); }
+.auth-card { background: var(--color-glass-bg); border: 1px solid var(--color-glass-border); border-radius: 8px; box-shadow: var(--shadow-standard); padding: var(--space-xl); display: flex; flex-direction: column; gap: var(--space-md); }
+.auth-card.warn { max-height: 70vh; }
+.auth-field { display: flex; flex-direction: column; gap: var(--space-xs); }
+.auth-field > label:not([class]) { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.08em; }
+.auth-error { font-size: 12px; color: var(--color-destructive); }
+.purge-warning { margin: 0; line-height: 1.5; }
+.auth-error-tag { font-weight: 600; }
+.warn-text { font-size: 13px; line-height: 1.6; color: var(--color-text-primary); white-space: pre-wrap; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.warn-actions { display: flex; gap: var(--space-md); flex-shrink: 0; }
+.user-chip-head { padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; border-bottom: 1px solid var(--color-glass-border); margin-bottom: 2px; font-size: 12px; }
+.user-chip-name { font-weight: 600; color: var(--color-text-primary); }
+.token-once { font-family: var(--font-mono); font-size: 12px; word-break: break-all; padding: 8px; border: 1px solid var(--color-glass-border); border-radius: 4px; background: var(--surface-layer-2, transparent); user-select: all; }
+.map-rows { display: flex; flex-direction: column; gap: var(--space-xs); }
+/* Settings → Security labels: the classification order, dragged into place. */
+.label-order { display: flex; flex-direction: column; gap: var(--space-sm); max-width: 420px; }
+.label-rank { width: 1.5em; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The filter builder's rows: field, test, value, remove. */
+.condition-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.condition-match {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* The symbol designer's preview: the symbol over its 2525D SIDC and CoT type. */
+.symbol-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-md);
+}
+
+.symbol-designer {
+  gap: var(--space-md);
+}

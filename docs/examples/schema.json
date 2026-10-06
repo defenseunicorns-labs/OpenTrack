@@ -1,0 +1,47 @@
+{
+  "notes": "Extension fields used by the aisstream and adsb.lol examples",
+  "fields": [
+    {
+      "key": "beam_m",
+      "type": "number",
+      "unit": "m",
+      "description": "Vessel beam from AIS dimensions C+D"
+    },
+    {
+      "key": "category",
+      "type": "string",
+      "description": "ADS-B emitter category (A1-C7)"
+    },
+    {
+      "key": "destination",
+      "type": "string",
+      "description": "AIS voyage destination"
+    },
+    {
+      "key": "imo",
+      "type": "string",
+      "description": "IMO number as broadcast (also carried as an imo identifier)"
+    },
+    {
+      "key": "length_m",
+      "type": "number",
+      "unit": "m",
+      "description": "Vessel length from AIS dimensions A+B"
+    },
+    {
+      "key": "nav_status",
+      "type": "integer",
+      "description": "AIS navigational status code (0-15)"
+    },
+    {
+      "key": "registration",
+      "type": "string",
+      "description": "Aircraft registration"
+    },
+    {
+      "key": "squawk",
+      "type": "string",
+      "description": "Mode A transponder code"
+    }
+  ]
+}

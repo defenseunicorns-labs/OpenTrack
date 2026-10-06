@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0B0F14" />
+    <style>
+      html, body { margin: 0; padding: 0 }
+      html[data-theme="light"], html[data-theme="light"] body { background: #F8F7F6 }
+      html[data-theme="dark"], html[data-theme="dark"] body { background: #0B0F14 }
+    </style>
+    <!-- Fonts are self-hosted via @fontsource (imported in src/main.tsx) for airgap deployment. -->
+    <title>OpenTrack</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

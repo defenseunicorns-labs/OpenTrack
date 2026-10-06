@@ -1,0 +1,13 @@
+[package]
+name = "opentrack-plugin"
+description = "Write OpenTrack plugins (codecs, trackers, pairing scorers) in Rust, as WebAssembly components"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+# OpenTrack's own observation type: what trackers and scorers read and write.
+ot-core = { path = "../../../crates/ot-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wit-bindgen = "0.62"

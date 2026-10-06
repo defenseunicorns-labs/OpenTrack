@@ -1,0 +1,5 @@
+#!/bin/sh
+# bench.py with the benchmark's Python environment (scripts/benchmark/setup.sh makes it).
+here="$(dirname "$0")"
+[ -x "$here/.venv/bin/python" ] || { echo "run $here/setup.sh first" >&2; exit 1; }
+exec "$here/.venv/bin/python" "$here/bench.py" "$@"

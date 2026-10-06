@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Sign a release image with the OpenSSL FIPS provider (SC-13, POA&M P-17):
+# cosign makes the payload it would sign, OpenSSL signs it (ECDSA P-256,
+# SHA-256) inside the validated module, and cosign attaches the signature, so
+# `cosign verify --key cosign.pub --insecure-ignore-tlog=true <image>` checks
+# it as usual. cosign's own cryptography is not used for signing.
+# Usage: scripts/release/sign-image <image@sha256:digest>
+# Env: OT_SIGNING_KEY (encrypted PKCS#8 PEM), OT_SIGNING_KEY_PASSWORD_FILE,
+#      OT_SIGNING_PUB (default: cosign.pub at the repository root).
+set -euo pipefail
+ref="${1:?usage: sign-image <image@sha256:digest>}"
+case "$ref" in *@sha256:*) ;; *) echo "sign a digest, not a tag: $ref" >&2; exit 1;; esac
+key="${OT_SIGNING_KEY:?OT_SIGNING_KEY: the private key (PEM)}"
+pass="${OT_SIGNING_KEY_PASSWORD_FILE:?OT_SIGNING_KEY_PASSWORD_FILE}"
+root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+pub="${OT_SIGNING_PUB:-$root/cosign.pub}"
+work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+cosign generate "$ref" >"$work/payload.json" 2>/dev/null
+(
+  source "$(dirname "$0")/fips-openssl.sh"
+  openssl dgst -sha256 -sign "$key" -passin "file:$pass" -out "$work/sig.der" "$work/payload.json"
+  # Check it with the public key before anything is attached.
+  openssl dgst -sha256 -verify "$pub" -signature "$work/sig.der" "$work/payload.json" >/dev/null
+)
+base64 -w0 "$work/sig.der" >"$work/sig.b64"
+cosign attach signature --payload "$work/payload.json" --signature "$work/sig.b64" "$ref"
+cosign verify --key "$pub" --insecure-ignore-tlog=true "$ref" >/dev/null
+echo "signed and verified: $ref" >&2

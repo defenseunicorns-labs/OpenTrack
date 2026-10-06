@@ -1,0 +1,20 @@
+# OpenSSL in FIPS mode (OPENSSL_CONF points here in the image). Only the
+# validated FIPS provider does cryptography; `base` adds encoders and
+# decoders (key and certificate parsing), which are not cryptography.
+openssl_conf = openssl_init
+
+.include /etc/opentrack/fipsmodule.cnf
+
+[openssl_init]
+providers = provider_sect
+alg_section = algorithm_sect
+
+[provider_sect]
+fips = fips_sect
+base = base_sect
+
+[base_sect]
+activate = 1
+
+[algorithm_sect]
+default_properties = fips=yes

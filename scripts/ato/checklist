@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Build the STIG checklists (.ckl, STIG Viewer 2 format, which STIG Viewer 3
+and eMASS import) for the accreditation package (docs/security/ato/README.md).
+
+The evaluations are the source of truth, reviewed like code:
+docs/security/ato/evaluations/<benchmark>.json, one entry per rule:
+{"vid", "status", "finding_details", "comments"}. This script fetches the DISA
+benchmark (public), checks that every rule is evaluated and nothing else is,
+and writes checklists/<benchmark>.ckl and checklists/summary.md.
+
+Usage: scripts/ato/checklist            (every benchmark in BENCHMARKS)
+       scripts/ato/checklist --offline DIR  (benchmark zips already in DIR)
+Standard library only.
+"""
+
+import argparse
+import collections
+import io
+import json
+import pathlib
+import re
+import sys
+import urllib.request
+import uuid
+import xml.etree.ElementTree as ET
+import zipfile
+from xml.sax.saxutils import escape
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+ATO = ROOT / "docs/security/ato"
+DISA = "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/"
+NS = {"x": "http://checklists.nist.gov/xccdf/1.1"}
+STATUSES = ("NotAFinding", "Open", "Not_Applicable", "Not_Reviewed")
+
+# name: (DISA zip, XCCDF file inside it)
+BENCHMARKS = {
+    "asd-v6r4": ("U_ASD_V6R4_STIG.zip", "U_ASD_STIG_V6R4_Manual-xccdf.xml"),
+    "container-platform-srg-v2r4": (
+        "U_Container_Platform_V2R4_SRG.zip",
+        "U_Container_Platform_SRG_V2R4_Manual-xccdf.xml",
+    ),
+}
+
+
+def find_xccdf(zbytes, name):
+    """The XCCDF file in a DISA zip (which may nest another zip)."""
+    z = zipfile.ZipFile(io.BytesIO(zbytes))
+    for n in z.namelist():
+        if n.endswith(name):
+            return z.read(n)
+    for n in z.namelist():
+        if n.endswith(".zip"):
+            try:
+                return find_xccdf(z.read(n), name)
+            except KeyError:
+                pass
+    raise KeyError(name)
+
+
+def load_benchmark(zip_name, xccdf_name, offline):
+    if offline:
+        data = (pathlib.Path(offline) / zip_name).read_bytes()
+    else:
+        with urllib.request.urlopen(DISA + zip_name, timeout=60) as r:
+            data = r.read()
+    root = ET.fromstring(find_xccdf(data, xccdf_name))
+    info = {
+        "title": root.findtext("x:title", namespaces=NS),
+        "stigid": root.get("id"),
+        "version": root.findtext("x:version", namespaces=NS),
+        "releaseinfo": root.findtext("x:plain-text[@id='release-info']", namespaces=NS),
+        "description": root.findtext("x:description", namespaces=NS) or "",
+        "filename": xccdf_name,
+        "notice": "terms-of-use",
+        "source": "STIG.DOD.MIL",
+        "classification": "UNCLASSIFIED",
+    }
+    rules = []
+    for g in root.findall("x:Group", NS):
+        r = g.find("x:Rule", NS)
+        desc = r.findtext("x:description", default="", namespaces=NS)
+        tag = lambda t: (re.search(f"<{t}>(.*?)</{t}>", desc, re.S) or [None, ""])[1].strip()
+        rules.append(
+            {
+                "Vuln_Num": g.get("id"),
+                "Severity": r.get("severity"),
+                "Group_Title": g.findtext("x:title", namespaces=NS),
+                "Rule_ID": r.get("id"),
+                "Rule_Ver": r.findtext("x:version", namespaces=NS),
+                "Rule_Title": r.findtext("x:title", namespaces=NS),
+                "Vuln_Discuss": tag("VulnDiscussion"),
+                "IA_Controls": tag("IAControls"),
+                "Check_Content": r.findtext("x:check/x:check-content", default="", namespaces=NS).strip(),
+                "Fix_Text": r.findtext("x:fixtext", default="", namespaces=NS).strip(),
+                "False_Positives": tag("FalsePositives"),
+                "False_Negatives": tag("FalseNegatives"),
+                "Documentable": tag("Documentable") or "false",
+                "Mitigations": tag("Mitigations"),
+                "Potential_Impact": tag("PotentialImpacts"),
+                "Third_Party_Tools": tag("ThirdPartyTools"),
+                "Mitigation_Control": tag("MitigationControl"),
+                "Responsibility": tag("Responsibility"),
+                "Security_Override_Guidance": tag("SeverityOverrideGuidance"),
+                "Check_Content_Ref": (r.find("x:check/x:check-content-ref", NS).get("name")
+                                      if r.find("x:check/x:check-content-ref", NS) is not None else ""),
+                "Weight": r.get("weight", "10.0"),
+                "Class": "Unclass",
+                "STIGRef": f"{info['title']} :: Version {info['version']}, {info['releaseinfo']}",
+                "TargetKey": (r.find("x:reference/{http://purl.org/dc/elements/1.1/}identifier", NS).text
+                              if r.find("x:reference/{http://purl.org/dc/elements/1.1/}identifier", NS) is not None else ""),
+                "STIG_UUID": "",
+                "LEGACY_ID": [i.text for i in r.findall("x:ident", NS) if "legacy" in i.get("system", "")],
+                "CCI_REF": [i.text for i in r.findall("x:ident", NS) if i.get("system", "").endswith("cci")],
+            }
+        )
+    return info, rules
+
+
+def ckl(info, rules, evals, stig_uuid):
+    e = lambda s: escape(s or "", {'"': "&quot;"})
+    out = ['<?xml version="1.0" encoding="UTF-8"?>', "<!--DISA STIG Viewer :: 2.18-->", "<CHECKLIST>"]
+    out.append(
+        "<ASSET><ROLE>None</ROLE><ASSET_TYPE>Computing</ASSET_TYPE><MARKING>CUI</MARKING>"
+        "<HOST_NAME>OpenTrack</HOST_NAME><HOST_IP></HOST_IP><HOST_MAC></HOST_MAC><HOST_FQDN></HOST_FQDN>"
+        "<TARGET_COMMENT>OpenTrack (generic package; the site records its own host)</TARGET_COMMENT>"
+        "<TECH_AREA>Application Review</TECH_AREA><TARGET_KEY></TARGET_KEY>"
+        "<WEB_OR_DATABASE>false</WEB_OR_DATABASE><WEB_DB_SITE></WEB_DB_SITE><WEB_DB_INSTANCE></WEB_DB_INSTANCE></ASSET>"
+    )
+    out.append("<STIGS><iSTIG><STIG_INFO>")
+    for k in ("version", "classification", "customname", "stigid", "description", "filename",
+              "releaseinfo", "title", "uuid", "notice", "source"):
+        v = {"customname": "", "uuid": stig_uuid}.get(k, info.get(k, ""))
+        out.append(f"<SI_DATA><SID_NAME>{k}</SID_NAME>" + (f"<SID_DATA>{e(v)}</SID_DATA>" if v else "") + "</SI_DATA>")
+    out.append("</STIG_INFO>")
+    for r in rules:
+        ev = evals[r["Vuln_Num"]]
+        out.append("<VULN>")
+        for k, v in r.items():
+            if k == "STIG_UUID":
+                v = stig_uuid
+            for item in v if isinstance(v, list) else [v]:
+                out.append(f"<STIG_DATA><VULN_ATTRIBUTE>{k}</VULN_ATTRIBUTE><ATTRIBUTE_DATA>{e(item)}</ATTRIBUTE_DATA></STIG_DATA>")
+        out.append(f"<STATUS>{ev['status']}</STATUS><FINDING_DETAILS>{e(ev['finding_details'])}</FINDING_DETAILS>"
+                   f"<COMMENTS>{e(ev.get('comments', ''))}</COMMENTS><SEVERITY_OVERRIDE></SEVERITY_OVERRIDE>"
+                   "<SEVERITY_JUSTIFICATION></SEVERITY_JUSTIFICATION>")
+        out.append("</VULN>")
+    out.append("</iSTIG></STIGS></CHECKLIST>")
+    return "\n".join(out) + "\n"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--offline", help="directory holding the DISA zips")
+    args = ap.parse_args()
+    summary = ["# Checklist summary", "",
+               "Generated by `scripts/ato/checklist` from `evaluations/`. Statuses as STIG Viewer names them.", "",
+               "| Benchmark | Release | Rules | Not a finding | Open | Not applicable | Not reviewed (site) |",
+               "|---|---|---|---|---|---|---|"]
+    opens = []
+    ok = True
+    (ATO / "checklists").mkdir(parents=True, exist_ok=True)
+    for name, (zip_name, xccdf) in BENCHMARKS.items():
+        info, rules = load_benchmark(zip_name, xccdf, args.offline)
+        evals = {e["vid"]: e for e in json.loads((ATO / "evaluations" / f"{name}.json").read_text())}
+        vids = {r["Vuln_Num"] for r in rules}
+        missing, extra = vids - evals.keys(), evals.keys() - vids
+        bad = [v for v, e in evals.items() if e.get("status") not in STATUSES or not e.get("finding_details")]
+        for label, items in (("not evaluated", missing), ("not in the benchmark", extra), ("bad status or no details", bad)):
+            if items:
+                ok = False
+                print(f"{name}: {len(items)} {label}: {', '.join(sorted(items)[:10])}", file=sys.stderr)
+        if not ok:
+            continue
+        stig_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"opentrack:{name}"))
+        (ATO / "checklists" / f"{name}.ckl").write_text(ckl(info, rules, evals, stig_uuid))
+        c = collections.Counter(evals[r["Vuln_Num"]]["status"] for r in rules)
+        summary.append(f"| {info['title']} | V{info['version']} {info['releaseinfo']} | {len(rules)} | "
+                       f"{c['NotAFinding']} | {c['Open']} | {c['Not_Applicable']} | {c['Not_Reviewed']} |")
+        for r in rules:
+            ev = evals[r["Vuln_Num"]]
+            if ev["status"] == "Open":
+                opens.append(f"| {r['Vuln_Num']} | {r['Severity']} | {name} | {r['Rule_Title']} | {ev.get('comments', '')} |")
+        print(f"{name}: {len(rules)} rules -> checklists/{name}.ckl ({dict(c)})")
+    if not ok:
+        sys.exit(1)
+    summary += ["", "## Open", "", "Every open item is on the POA&M (`../poam.md`).", "",
+                "| Vuln | Severity | Benchmark | Rule | Remediation |", "|---|---|---|---|---|"] + (opens or ["| (none) | | | | |"])
+    (ATO / "checklists" / "summary.md").write_text("\n".join(summary) + "\n")
+
+
+if __name__ == "__main__":
+    main()

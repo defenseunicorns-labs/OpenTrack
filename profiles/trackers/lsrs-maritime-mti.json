@@ -1,0 +1,26 @@
+{
+  "name": "lsrs-maritime-mti",
+  "label": "LSRS maritime MTI (AN/APS-149 class)",
+  "description": "Maritime surface MTI: slow surface targets over sea clutter, long lives, gentle manoeuvres.",
+  "sensor": {
+    "kind": "maritime_mti",
+    "platform": "LSRS (P-3, P-8)",
+    "format": "STANAG 4607",
+    "domain": "surface"
+  },
+  "basis": "A nominal starting point for this class of sensor from public descriptions, not tuned on its own recordings: score it on yours with scripts/benchmark (bench run --profile) and adjust. Clutter density as gmti-wide-area (2e-7); gmti-high-clutter shows the stricter choice.",
+  "tracker": {
+    "algorithm": "gnn",
+    "measurement_sigma_m": 30.0,
+    "process_noise_mps2": 0.3,
+    "initial_speed_sigma_mps": 8.0,
+    "confirm_hits": 3,
+    "domain": "surface",
+    "key_prefix": "LS",
+    "auto_timing": {},
+    "detection_probability": 0.6,
+    "clutter_density": 2e-07,
+    "birth_density": 1e-09,
+    "target_lifetime_secs": 3600.0
+  }
+}

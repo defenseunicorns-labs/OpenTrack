@@ -1,0 +1,22 @@
+[package]
+name = "ot-nats"
+description = "OpenTrack NATS output: JetStream publisher for system tracks"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-nats.workspace = true
+aws-lc-rs.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

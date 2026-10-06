@@ -1,0 +1,74 @@
+# Two OpenTrack sites sharing one picture (docs/multi-node.md), on one
+# machine for trying it out. Each site has its own Redis, NATS and OpenTrack;
+# `opentrack bridge` carries the sync messages between the two NATS servers,
+# as a networking package would between real sites.
+#
+#   docker compose -f docs/examples/two-sites/docker-compose.yml up --build
+#
+# Then, on each site, turn sharing on and trust the other: in Settings, or
+# with an admin's API token:
+#
+#   A=$(docker compose -f ... exec opentrack-a opentrack user token admin@example.org --name setup)
+#   curl -X PUT localhost:8091/api/v1/settings -H "authorization: Bearer $A" \
+#        -H 'content-type: application/json' -d '{"sync": {"enabled": true, "peers": ["BBB"]}}'
+#
+# and the same on site B (port 8092, opentrack-b, peers ["AAA"]).
+#
+# Then pin each site's public key on the other (Settings -> Nodes -> Pin key,
+# or through the API, with $B an admin token made on site B likewise):
+# messages are refused until the key is pinned.
+#
+#   KA=$(curl -s localhost:8091/api/v1/sync/keys -H "authorization: Bearer $A" | jq -r .public_key)
+#   KB=$(curl -s localhost:8092/api/v1/sync/keys -H "authorization: Bearer $B" | jq -r .public_key)
+#   curl -X PUT localhost:8091/api/v1/sync/keys/BBB -H "authorization: Bearer $A" \
+#        -H 'content-type: application/json' -d "{\"public_key\": \"$KB\"}"
+#   curl -X PUT localhost:8092/api/v1/sync/keys/AAA -H "authorization: Bearer $B" \
+#        -H 'content-type: application/json' -d "{\"public_key\": \"$KA\"}"
+#
+# Site A is http://localhost:8091, site B http://localhost:8092. Their first
+# admin is admin@example.org with the password in OT_EXAMPLE_PASSWORD.
+x-site: &site
+  build: ../../..
+  image: opentrack:dev
+  restart: unless-stopped
+  command: ["all"]
+
+services:
+  redis-a: { image: "redis:7" }
+  nats-a: { image: "nats:2", command: ["-js"] }
+  opentrack-a:
+    <<: *site
+    depends_on: [redis-a, nats-a]
+    ports: ["8091:8090"]
+    environment:
+      OT_SITE_CODE: AAA
+      OT_REDIS_URL: redis://redis-a:6379
+      OT_NATS_URL: nats://nats-a:4222
+      OT_ADMIN_EMAIL: admin@example.org
+      OT_ADMIN_PASSWORD: ${OT_EXAMPLE_PASSWORD:?set OT_EXAMPLE_PASSWORD}
+    volumes: ["site-a:/data"]
+
+  redis-b: { image: "redis:7" }
+  nats-b: { image: "nats:2", command: ["-js"] }
+  opentrack-b:
+    <<: *site
+    depends_on: [redis-b, nats-b]
+    ports: ["8092:8090"]
+    environment:
+      OT_SITE_CODE: BBB
+      OT_REDIS_URL: redis://redis-b:6379
+      OT_NATS_URL: nats://nats-b:4222
+      OT_ADMIN_EMAIL: admin@example.org
+      OT_ADMIN_PASSWORD: ${OT_EXAMPLE_PASSWORD:?set OT_EXAMPLE_PASSWORD}
+    volumes: ["site-b:/data"]
+
+  # Between the sites. Add --loss, --delay-ms, --rate-kbps or --partition to
+  # see how the picture copes with a poor link.
+  bridge:
+    <<: *site
+    depends_on: [nats-a, nats-b]
+    command: ["bridge", "--node", "nats://nats-a:4222", "--node", "nats://nats-b:4222"]
+
+volumes:
+  site-a:
+  site-b:

@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Scan an OpenTrack image for known vulnerabilities with Trivy and Grype (run
+# as containers, so nothing is installed), for the accreditation package
+# (docs/security/ato/README.md). Writes, per image:
+#   <out>/<version>/trivy.json, grype.json  the scanners' full reports
+#   <out>/<version>/scan.md                 the summary the POA&M cites
+# Usage: scripts/ato/scan ghcr.io/kineticlogic-io/opentrack:v0.4.2 [out-dir]
+set -euo pipefail
+image="${1:?usage: scripts/ato/scan <image> [out-dir]}"
+out_root="${2:-docs/security/ato/scans}"
+version="${image##*:}"
+out="$out_root/$version"
+mkdir -p "$out"
+sock=/var/run/docker.sock
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/opentrack-scan"
+mkdir -p "$cache/trivy" "$cache/grype"
+
+docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image"
+digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || echo "$image")"
+
+echo "trivy: $image" >&2
+docker run --rm -v "$sock:$sock" -v "$cache/trivy:/root/.cache" aquasec/trivy:latest \
+  image --quiet --scanners vuln --format json "$image" >"$out/trivy.json"
+trivy_version="$(docker run --rm aquasec/trivy:latest --version | head -1)"
+
+echo "grype: $image" >&2
+docker run --rm -v "$sock:$sock" -v "$cache/grype:/root/.cache" anchore/grype:latest \
+  "$image" -o json -q >"$out/grype.json"
+grype_version="$(docker run --rm anchore/grype:latest version 2>/dev/null | awk '/^Version:/ {print $2}')"
+
+python3 - "$out" "$image" "$digest" "$trivy_version" "$grype_version" <<'PY'
+import json, sys, datetime, collections
+out, image, digest, tv, gv = sys.argv[1:]
+order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "UNKNOWN"]
+findings = {}  # (id, package) -> dict
+t = json.load(open(f"{out}/trivy.json"))
+for res in t.get("Results") or []:
+    for v in res.get("Vulnerabilities") or []:
+        k = (v["VulnerabilityID"], v["PkgName"])
+        f = findings.setdefault(k, dict(id=k[0], pkg=k[1], version=v.get("InstalledVersion", ""),
+                                        fixed=v.get("FixedVersion", ""), severity=v.get("Severity", "UNKNOWN").upper(),
+                                        target=res.get("Target", ""), by=set()))
+        f["by"].add("trivy")
+g = json.load(open(f"{out}/grype.json"))
+for m in g.get("matches") or []:
+    v, a = m["vulnerability"], m["artifact"]
+    k = (v["id"], a["name"])
+    fixed = ", ".join(v.get("fix", {}).get("versions") or [])
+    f = findings.setdefault(k, dict(id=k[0], pkg=k[1], version=a.get("version", ""), fixed=fixed,
+                                    severity=v.get("severity", "Unknown").upper(), target=a.get("type", ""), by=set()))
+    f["by"].add("grype")
+    f["fixed"] = f["fixed"] or fixed
+rows = sorted(findings.values(), key=lambda f: (order.index(f["severity"]) if f["severity"] in order else 9, f["id"]))
+count = collections.Counter(f["severity"] for f in rows)
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+with open(f"{out}/scan.md", "w") as md:
+    md.write(f"# Vulnerability scan: `{image}`\n\n")
+    md.write(f"- Image: `{digest}`\n- Scanned: {now}\n- Scanners: {tv}; Grype {gv} (databases current at scan time)\n")
+    md.write("- Full reports: `trivy.json`, `grype.json` beside this file\n\n")
+    md.write("| Severity | Findings |\n|---|---|\n")
+    for s in order:
+        if count[s]:
+            md.write(f"| {s.title()} | {count[s]} |\n")
+    if not rows:
+        md.write("| (none) | 0 |\n")
+    md.write("\nA finding reported by both scanners is listed once. Every Critical and High finding is on the\n")
+    md.write("POA&M (`../../poam.md`) unless it is fixed in the next release.\n\n")
+    if rows:
+        md.write("| ID | Severity | Package | Installed | Fixed in | Where | Scanner |\n|---|---|---|---|---|---|---|\n")
+        for f in rows:
+            md.write(f"| {f['id']} | {f['severity'].title()} | {f['pkg']} | {f['version']} | {f['fixed'] or 'no fix'} | {f['target']} | {', '.join(sorted(f['by']))} |\n")
+print(f"{out}/scan.md: " + ", ".join(f"{s.lower()} {count[s]}" for s in order if count[s]) if rows else f"{out}/scan.md: no findings")
+PY

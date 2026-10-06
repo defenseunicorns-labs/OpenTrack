@@ -1,0 +1,78 @@
+/// The OpenTrack plugin interface. One plugin may provide any of three
+/// kinds; its manifest (`describe`) says which.
+///
+/// - codec: a frame's bytes to JSON records a source's mapping reads
+/// - tracker: plots (observations) in, tracks (observations with a key) out,
+///   as a source's tracker stage
+/// - scorer: whether a report and a system track are the same object, as
+///   evidence for the engine's pairing test (the engine decides and records)
+///
+/// Values cross as JSON text: observations in OpenTrack's schema
+/// (docs/plugins.md), options as the source or settings give them, so the
+/// schema can grow without a new interface version. Times are milliseconds
+/// since the Unix epoch.
+///
+/// The same interface is served over a socket by an external plugin (see
+/// docs/plugins.md), for code that cannot run as WebAssembly.
+package opentrack:plugin@0.1.0;
+
+/// What OpenTrack gives a plugin.
+interface host {
+    enum level { debug, info, warn, error }
+    /// A line in OpenTrack's log, tagged with the plugin's name.
+    log: func(level: level, message: string);
+}
+
+/// Every plugin.
+interface meta {
+    /// The manifest, as JSON:
+    /// {"name", "version", "description", "kinds": ["codec" | "tracker" | "scorer"],
+    ///  "options": [{"name", "label", "help", "type": "bool" | "number" | "choice" | "text", ...}],
+    ///  "framing": <how to split a byte stream into frames, codecs only>}
+    describe: func() -> string;
+}
+
+interface codec {
+    /// One stream's decoder: state lives here between frames.
+    resource decoder {
+        /// The JSON records in one frame.
+        decode: func(frame: list<u8>, received-at-ms: s64) -> result<list<string>, string>;
+        /// What the stream has shown about the sensor, as JSON
+        /// ({"revisit_secs", "revisit_source"}), once known.
+        hints: func() -> option<string>;
+    }
+    open-decoder: func(options: string) -> result<decoder, string>;
+}
+
+interface tracker {
+    /// One source's tracker.
+    resource tracker {
+        /// A plot (an observation), at the time it arrived.
+        push: func(plot: string, received-at-ms: s64);
+        /// Tracks to report now (observations; `source_track_key` names the
+        /// track). Called after every frame and about once a second; `force`
+        /// at the end of a stream (run everything still held).
+        run: func(now-ms: s64, force: bool) -> result<list<string>, string>;
+    }
+    open-tracker: func(options: string) -> result<tracker, string>;
+}
+
+interface scorer {
+    resource scorer {
+        /// Compare a report with candidate system tracks nearby. Each
+        /// candidate is {"view": <the system track's observation>,
+        /// "kinematic": <OpenTrack's own comparison>}. One result per
+        /// candidate, in order: {"ln_lr": <ln likelihood ratio, same object
+        /// against another>, "pass": <inside the gate>, "evidence": {...}}.
+        score: func(report: string, candidates: list<string>) -> result<list<string>, string>;
+    }
+    open-scorer: func(options: string) -> result<scorer, string>;
+}
+
+world plugin {
+    import host;
+    export meta;
+    export codec;
+    export tracker;
+    export scorer;
+}

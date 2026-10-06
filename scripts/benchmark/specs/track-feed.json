@@ -1,0 +1,33 @@
+{
+  "id": "feed",
+  "name": "Benchmark track feed",
+  "description": "A cooperative track feed (AIS, ADS-B, GPS...) as JSON: one report per message. Identifiers are added by the scenario builder.",
+  "transport": {"type": "udp", "bind": "127.0.0.1:47100"},
+  "unauthenticated": "accepted",
+  "pipeline": {
+    "codec": {"type": "json"},
+    "mapping": {
+      "schema_version": 2,
+      "rules": [
+        {
+          "name": "report",
+          "key": "id",
+          "fields": {
+            "position.latitude": "lat",
+            "position.longitude": "lon",
+            "position.altitude_hae_m": "alt",
+            "observed_at": {"path": "t", "transforms": ["time"]},
+            "uncertainty.circular_error_m": "cep",
+            "name": "name",
+            "callsign": "name",
+            "kinematics.course_deg": "course",
+            "kinematics.speed_mps": "speed",
+            "classification.domain": "domain",
+            "track_type": {"const": "simulated_training"},
+            "state": "state"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenTrack: open, explainable track management</title>
+<meta name="description" content="OpenTrack fuses AIS, ADS-B, TAK, SAPIENT, GMTI, radar, lidar and ESM feeds into one correlated track picture, and every decision comes with its evidence. Open source, MIT licensed.">
+<meta property="og:title" content="OpenTrack">
+<meta property="og:description" content="Open, explainable track management: many feeds in, one correlated picture out.">
+<meta property="og:image" content="assets/screenshots/tracks.jpg">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #0b1014; --surface: #121a20; --surface-2: #172129; --ink: #e3e8ec; --muted: #8c99a4;
+  --line: #24313a; --accent: #1fbf75; --accent-ink: #04140c; --code: #0f161b;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 var(--sans); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img, video { max-width: 100%; height: auto; display: block; }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 0 20px; }
+nav { position: sticky; top: 0; z-index: 10; background: rgba(11, 16, 20, .85); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; align-items: center; gap: 24px; height: 56px; }
+.brand { font-weight: 600; letter-spacing: .14em; color: var(--accent); }
+nav .links { display: flex; gap: 20px; margin-left: auto; font-size: 14px; }
+nav .links a { color: var(--muted); }
+nav .links a:hover { color: var(--ink); text-decoration: none; }
+@media (max-width: 720px) { nav .links a.opt { display: none; } }
+
+.hero { padding: 72px 0 40px; text-align: center; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+h1 { font-size: clamp(32px, 5vw, 54px); line-height: 1.1; margin: 16px auto 18px; max-width: 18ch; letter-spacing: -.02em; text-wrap: balance; }
+.lede { color: var(--muted); font-size: clamp(17px, 2vw, 20px); max-width: 62ch; margin: 0 auto; text-wrap: pretty; }
+.cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 32px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 6px; font-weight: 500; border: 1px solid var(--line); color: var(--ink); background: var(--surface); }
+.btn:hover { text-decoration: none; border-color: var(--muted); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.shot { margin: 48px auto 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, .5); }
+
+section { padding: 72px 0; border-top: 1px solid var(--line); }
+h2 { font-size: clamp(24px, 3vw, 32px); margin: 0 0 10px; letter-spacing: -.01em; text-wrap: balance; }
+.sub { color: var(--muted); max-width: 70ch; margin: 0 0 36px; }
+.grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 22px; }
+.card h3 { margin: 0 0 8px; font-size: 17px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+.videos { display: grid; gap: 28px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); }
+figure { margin: 0; display: grid; gap: 10px; align-content: start; }
+figure video, figure img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; border-radius: 8px; border: 1px solid var(--line); }
+figcaption strong { display: block; font-size: 16px; }
+figcaption span { color: var(--muted); font-size: 14px; }
+.result { display: inline-block; margin: 4px 0; font: 13px/1.4 var(--mono); background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; color: var(--ink); }
+
+.gallery { display: grid; gap: 24px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); }
+.gallery img { aspect-ratio: auto; object-fit: contain; }
+
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 18px; overflow-x: auto; font: 14px/1.6 var(--mono); color: var(--ink); margin: 0; }
+pre .c { color: var(--muted); }
+.two { display: grid; gap: 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); align-items: start; }
+ul.ticks { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+ul.ticks li { padding-left: 26px; position: relative; color: var(--muted); }
+ul.ticks li::before { content: ""; position: absolute; left: 4px; top: .55em; width: 10px; height: 6px; border-left: 2px solid var(--accent); border-bottom: 2px solid var(--accent); transform: rotate(-45deg); }
+ul.ticks b { color: var(--ink); font-weight: 500; }
+
+.contact { background: linear-gradient(180deg, var(--surface), var(--bg)); text-align: center; }
+.contact .lede { margin-bottom: 28px; }
+footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <span class="brand">OPENTRACK</span>
+    <div class="links">
+      <a class="opt" href="#features">Features</a>
+      <a class="opt" href="#demos">Demos</a>
+      <a class="opt" href="#start">Quick start</a>
+      <a href="#contact">Consulting</a>
+      <a href="https://github.com/kineticlogic-io/OpenTrack">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Open source · MIT licensed</div>
+    <h1>Many feeds in. One explainable track picture out.</h1>
+    <p class="lede">OpenTrack is a track management server. It ingests AIS, ADS-B, TAK, SAPIENT, STANAG 4607 GMTI, radar, lidar and ESM feeds, fuses them into one correlated picture, and publishes it to NATS and TAK. Every merge and pairing keeps the evidence behind it, and an operator can undo any of them.</p>
+    <div class="cta">
+      <a class="btn primary" href="#start">Get started</a>
+      <a class="btn" href="https://github.com/kineticlogic-io/OpenTrack">View on GitHub</a>
+    </div>
+    <img class="shot" src="assets/screenshots/tracks.jpg" alt="OpenTrack's track management page: a world map of live military aircraft from ADS-B, a selected track's card, and the track table" width="2000" height="1250">
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2>A correlation layer between your sensors and your platforms</h2>
+    <p class="sub">OpenTrack sits between data-link gateways and sensor feeds on one side and displays and C2 platforms on the other. It complements both rather than replacing either.</p>
+    <div class="grid">
+      <div class="card"><h3>Onboard any feed without code</h3><p>Pick a transport (TCP, UDP multicast, HTTP, WebSocket, MQTT, gRPC) and a codec. OpenTrack probes the feed, infers its schema and suggests a mapping, and a live preview shows the result at every pipeline stage.</p></div>
+      <div class="card"><h3>Tracking and correlation</h3><p>GNN and MHT trackers turn raw plots into tracks. The correlator pairs tracks across sources using kinematics and identity, and logs the evidence for every comparison.</p></div>
+      <div class="card"><h3>More than points</h3><p>Lines of bearing, areas of uncertainty, ELINT ellipses and acoustic bearings are correlated with tracks, using cross-fixes and single-sensor motion analysis.</p></div>
+      <div class="card"><h3>Track management</h3><p>Designate, pair, merge, split, group and delete, following the OTH-GOLD track database model. Every decision is attributed and can be undone. Includes a MIL-STD-2525D symbol designer.</p></div>
+      <div class="card"><h3>Several nodes, one picture</h3><p>Ships, shore sites and drone swarms sync with no leader node. Each object keeps one ID across a network split and rejoin, within a bandwidth budget you set.</p></div>
+      <div class="card"><h3>Built for accreditation</h3><p>FIPS 140-3 cryptography, ASD STIG controls, a hash-chained audit log, OpenTelemetry export, signed images and an accreditation document set.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="demos">
+  <div class="wrap">
+    <h2>See it work</h2>
+    <p class="sub">Each video is a test run through the real engine and scored against ground truth: recorded sensor data from a ferry in Trondheim, and synthetic ESM and acoustic scenarios.</p>
+    <div class="videos">
+      <figure>
+        <video src="assets/video/scenario2-tracks.mp4" poster="assets/video/scenario2-tracks.jpg" controls muted loop playsinline preload="none"></video>
+        <figcaption>
+          <strong>Lidar and radar tracks paired with vessels</strong>
+          <span class="result">4/4 paired correctly · 0 wrong · 0 clutter paired</span>
+          <span>Recorded data from the NTNU Autoferry dataset. A radar track turns blue once it agrees with the vessel. When the lidar tracker splits one 30 m vessel into several tracks, OpenTrack keeps them apart rather than guessing.</span>
+        </figcaption>
+      </figure>
+      <figure>
+        <video src="assets/video/scenario2-detections.mp4" poster="assets/video/scenario2-detections.jpg" controls muted loop playsinline preload="none"></video>
+        <figcaption>
+          <strong>Raw detections associated, clutter rejected</strong>
+          <span class="result">457/531 to the right vessel · 0 wrong · 0/318 clutter</span>
+          <span>Each plot flashes with a line to the track it joined. Land and quay clutter never joins a vessel.</span>
+        </figcaption>
+      </figure>
+      <figure>
+        <video src="assets/video/esm-overview.mp4" poster="assets/video/esm-overview.jpg" controls muted loop playsinline preload="none"></video>
+        <figcaption>
+          <strong>Finding ships from bearings alone</strong>
+          <span class="result">98.9% of bearings to the right track · 10/10 dark ships tracked</span>
+          <span>Twenty radar-emitting ships, ten of them with no AIS. Four ESM sensors report only bearings, and OpenTrack locates the dark ships by crossing lines from several sensors.</span>
+        </figcaption>
+      </figure>
+      <figure>
+        <video src="assets/video/esm-ghosts.mp4" poster="assets/video/esm-ghosts.jpg" controls muted loop playsinline preload="none"></video>
+        <figcaption>
+          <strong>Ghost-fix rejection</strong>
+          <span class="result">ghost fixes: 13.3% off → 1.4% on</span>
+          <span>Anonymous bearings cross where no ship is. Consistency and outlier tests, plus a second fix on a different geometry, remove almost all of these ghosts.</span>
+        </figcaption>
+      </figure>
+      <figure>
+        <video src="assets/video/esm-patrol.mp4" poster="assets/video/esm-patrol.jpg" controls muted loop playsinline preload="none"></video>
+        <figcaption>
+          <strong>One aircraft, three sensors, one track</strong>
+          <span class="result">ESM-only track at 4:45 · final error 20 m · one track number throughout</span>
+          <span>A patrol aircraft's ESM finds a fast boat with no AIS, ELINT confirms it and video closes on it. The aircraft steers on OpenTrack's own picture.</span>
+        </figcaption>
+      </figure>
+      <figure>
+        <video src="assets/video/acoustic-sparse.mp4" poster="assets/video/acoustic-sparse.jpg" controls muted loop playsinline preload="none"></video>
+        <figcaption>
+          <strong>Acoustic arrays against small drones</strong>
+          <span class="result">6 tracks → 1 per drone · 100% covered · 12 m RMS</span>
+          <span>Three SAPIENT acoustic arrays each start their own track on each drone. As evidence builds, the tracks of each drone merge into one.</span>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="screens">
+  <div class="wrap">
+    <h2>The operator's view</h2>
+    <p class="sub">A web UI for onboarding feeds, watching the pipeline and managing the picture. It also runs headless when there's no one to watch it.</p>
+    <div class="gallery">
+      <figure>
+        <img src="assets/screenshots/pipeline.jpg" alt="A source's pipeline: transport, JSON decode, field mapping, identity join, entity, affiliation, throttle and correlation" width="2000" height="1250">
+        <figcaption><strong>Pipeline designer</strong><span>Each feed is a pipeline of stages: decode, map, join identity, set affiliation, throttle, track and correlate. You configure them; nothing is compiled in.</span></figcaption>
+      </figure>
+      <figure>
+        <img src="assets/screenshots/overview.jpg" alt="System status and throughput charts for ingest, correlation and output" width="2000" height="1250">
+        <figcaption><strong>System overview</strong><span>Health, algorithm versions and throughput across ingest, correlation, output and TAK.</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap two">
+    <div>
+      <h2>Quick start</h2>
+      <p class="sub" style="margin-bottom:20px">Run it with Docker, open <code>localhost:8090</code>, and add a feed from the UI or from one of the worked examples.</p>
+<pre><span class="c"># clone and configure the first admin</span>
+git clone https://github.com/kineticlogic-io/OpenTrack.git
+cd OpenTrack
+cat &gt; .env &lt;&lt;'EOF'
+OT_ADMIN_EMAIL=you@example.com
+OT_ADMIN_PASSWORD=Choose-A-Long-Passw0rd!
+OT_NATS_URL=nats://nats:4222
+EOF
+
+<span class="c"># OpenTrack, Redis and a local NATS</span>
+docker compose --profile dev-nats up --build
+
+<span class="c"># add live military aircraft from adsb.lol</span>
+curl -X POST -H 'content-type: application/json' \
+  --data @docs/examples/adsb-lol.json \
+  localhost:8090/api/v1/sources</pre>
+    </div>
+    <div>
+      <h2>What's inside</h2>
+      <ul class="ticks" style="margin-top:20px">
+        <li><b>Rust server</b>: one binary, with roles you can split across processes</li>
+        <li><b>SQLite, Redis and NATS JetStream</b>, all on one host: 16,000 tracks at 1 Hz</li>
+        <li><b>Codecs:</b> JSON, XML, CoT, protobuf, SAPIENT (BSI Flex 335), STANAG 4607</li>
+        <li><b>Outputs:</b> NATS JetStream and TAK (CoT), with OpenTelemetry for operations</li>
+        <li><b>Plugins</b> in Rust, Python or WASM: codecs, trackers, pairing scorers</li>
+        <li><b>SAML SSO</b>, roles, mutual TLS and signed multi-node sync</li>
+        <li><b>A benchmark</b> that scores every change against truth (GOSPA, IDF1)</li>
+      </ul>
+      <p style="margin-top:24px"><a href="https://github.com/kineticlogic-io/OpenTrack/blob/main/docs/guides/admin.md">Administrator guide →</a><br>
+      <a href="https://github.com/kineticlogic-io/OpenTrack/blob/main/docs/reference.md">Reference →</a></p>
+    </div>
+  </div>
+</section>
+
+<section id="contact" class="contact">
+  <div class="wrap">
+    <h2>Consulting and support</h2>
+    <p class="lede">OpenTrack is built by kineticlogic.io. We help teams integrate it: custom codecs and data links, multi-node deployments, tuning correlation for your sensors, and accreditation support. To start a conversation, email us.</p>
+    <div class="cta">
+      <a class="btn primary" href="mailto:parker@kineticlogic.io?subject=OpenTrack">parker@kineticlogic.io</a>
+      <a class="btn" href="https://github.com/kineticlogic-io">kineticlogic.io on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>OpenTrack · <a href="https://github.com/kineticlogic-io/OpenTrack/blob/main/LICENSE">MIT License</a> · © 2026 kineticlogic.io</span>
+    <span>Autoferry data: NTNU, CC0. Videos show synthetic scenarios except where noted.</span>
+  </div>
+</footer>
+
+</body>
+</html>

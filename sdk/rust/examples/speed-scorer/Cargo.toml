@@ -1,0 +1,12 @@
+[package]
+name = "speed-scorer"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+opentrack-plugin = { path = "../../opentrack-plugin" }

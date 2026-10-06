@@ -1,0 +1,20 @@
+{
+  "name": "marine-radar-x",
+  "label": "Marine navigation radar (X-band)",
+  "description": "A ship or shore X-band radar: a few seconds a revolution, fine range, several plots on a large hull.",
+  "sensor": {
+    "kind": "surface_radar",
+    "band": "X",
+    "revisit_secs": 2.5,
+    "domain": "surface"
+  },
+  "basis": "Benchmark, Autoferry radar (Trondheim, milliAmpere ferry): the settings of docs/examples/autoferry, MHT.",
+  "tracker": {
+    "algorithm": "mht",
+    "measurement_sigma_m": 6.0,
+    "domain": "surface",
+    "key_prefix": "R",
+    "cluster_m": 12.0,
+    "clutter_density": 4e-06
+  }
+}

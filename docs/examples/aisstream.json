@@ -1,0 +1,942 @@
+{
+  "id": "aisstream",
+  "name": "aisstream.io (worldwide AIS)",
+  "description": "Worked example: WebSocket with subscribe-on-connect, AIS static join, registry lookup by MMSI, military-only filter, throttling.",
+  "transport": {
+    "type": "websocket",
+    "url": "wss://stream.aisstream.io/v0/stream",
+    "subscribe": {
+      "APIKey": "${env:AISSTREAM_API_KEY}",
+      "BoundingBoxes": [
+        [
+          [
+            -90,
+            -180
+          ],
+          [
+            90,
+            180
+          ]
+        ]
+      ],
+      "FilterMessageTypes": [
+        "PositionReport",
+        "StandardClassBPositionReport",
+        "ExtendedClassBPositionReport",
+        "ShipStaticData",
+        "StaticDataReport"
+      ]
+    },
+    "error_path": "error",
+    "ping_secs": 20
+  },
+  "pipeline": {
+    "codec": {
+      "type": "json"
+    },
+    "mapping": {
+      "schema_version": 2,
+      "reject": [
+        {
+          "reason": "distress beacon",
+          "when": {
+            "value": {
+              "first": [
+                "Message.PositionReport.UserID",
+                "Message.StandardClassBPositionReport.UserID",
+                "Message.ExtendedClassBPositionReport.UserID",
+                "Message.ShipStaticData.UserID",
+                "Message.StaticDataReport.UserID",
+                "MetaData.MMSI"
+              ],
+              "transforms": [
+                "string"
+              ]
+            },
+            "matches": "^97[024]\\d{6}$"
+          }
+        },
+        {
+          "reason": "malformed MMSI",
+          "when": {
+            "not": {
+              "value": {
+                "first": [
+                  "Message.PositionReport.UserID",
+                  "Message.StandardClassBPositionReport.UserID",
+                  "Message.ExtendedClassBPositionReport.UserID",
+                  "Message.ShipStaticData.UserID",
+                  "Message.StaticDataReport.UserID",
+                  "MetaData.MMSI"
+                ],
+                "transforms": [
+                  "string"
+                ]
+              },
+              "matches": "^\\d{9}$"
+            }
+          }
+        },
+        {
+          "reason": "placeholder MMSI",
+          "when": {
+            "value": {
+              "first": [
+                "Message.PositionReport.UserID",
+                "Message.StandardClassBPositionReport.UserID",
+                "Message.ExtendedClassBPositionReport.UserID",
+                "Message.ShipStaticData.UserID",
+                "Message.StaticDataReport.UserID",
+                "MetaData.MMSI"
+              ],
+              "transforms": [
+                "string"
+              ]
+            },
+            "in": [
+              "123456789",
+              "000000000",
+              "111111111"
+            ]
+          }
+        },
+        {
+          "reason": "unallocated MID",
+          "when": {
+            "not": {
+              "value": {
+                "first": [
+                  "Message.PositionReport.UserID",
+                  "Message.StandardClassBPositionReport.UserID",
+                  "Message.ExtendedClassBPositionReport.UserID",
+                  "Message.ShipStaticData.UserID",
+                  "Message.StaticDataReport.UserID",
+                  "MetaData.MMSI"
+                ],
+                "transforms": [
+                  "string",
+                  "regex:^(?:111(\\d{3})|00(\\d{3})|98(\\d{3})|99(\\d{3})|0(\\d{3})|8(\\d{3})|(\\d{3}))",
+                  "number"
+                ]
+              },
+              "gte": 201,
+              "lte": 775
+            }
+          }
+        },
+        {
+          "reason": "denylisted MMSI",
+          "when": {
+            "value": {
+              "first": [
+                "Message.PositionReport.UserID",
+                "Message.StandardClassBPositionReport.UserID",
+                "Message.ExtendedClassBPositionReport.UserID",
+                "Message.ShipStaticData.UserID",
+                "Message.StaticDataReport.UserID",
+                "MetaData.MMSI"
+              ],
+              "transforms": [
+                "string"
+              ]
+            },
+            "in": [
+              "219031279",
+              "222123126",
+              "227000000"
+            ]
+          }
+        }
+      ],
+      "rules": [
+        {
+          "name": "static",
+          "kind": "static",
+          "when": {
+            "path": "MessageType",
+            "in": [
+              "ShipStaticData",
+              "ExtendedClassBPositionReport"
+            ]
+          },
+          "let": {
+            "_body": {
+              "path": "Message",
+              "key": "MessageType"
+            }
+          },
+          "key": {
+            "first": [
+              "Message.PositionReport.UserID",
+              "Message.StandardClassBPositionReport.UserID",
+              "Message.ExtendedClassBPositionReport.UserID",
+              "Message.ShipStaticData.UserID",
+              "Message.StaticDataReport.UserID",
+              "MetaData.MMSI"
+            ],
+            "transforms": [
+              "string"
+            ]
+          },
+          "fields": {
+            "name": {
+              "path": "_body.Name",
+              "transforms": [
+                "string",
+                "replace:@: ",
+                "trim",
+                "nonempty"
+              ]
+            },
+            "callsign": {
+              "path": "_body.CallSign",
+              "transforms": [
+                "string",
+                "replace:@: ",
+                "trim",
+                "nonempty"
+              ]
+            },
+            "platform.type_code": {
+              "path": "_body.Type",
+              "null_if": [
+                0
+              ],
+              "transforms": [
+                "string"
+              ]
+            },
+            "classification.cot_type": {
+              "path": "_body.Type",
+              "table": {
+                "30": "a-u-S-X-F",
+                "31": "a-u-S-X-M-T-O",
+                "32": "a-u-S-X-M-T-O",
+                "33": "a-u-S-X-F-D-R",
+                "34": "a-u-S-X",
+                "35": "a-u-S-C",
+                "36": "a-u-S-X-R",
+                "37": "a-u-S-X-R",
+                "50": "a-u-S-N-S",
+                "51": "a-u-S-N-N-R",
+                "52": "a-u-S-X-M-T-U",
+                "53": "a-u-S-N-S",
+                "54": "a-u-S-N-S",
+                "55": "a-u-S-X-L",
+                "58": "a-u-S-N-M",
+                "59": "a-u-S-N",
+                "20": "a-u-S-X",
+                "21": "a-u-S-X",
+                "22": "a-u-S-X",
+                "23": "a-u-S-X",
+                "24": "a-u-S-X",
+                "25": "a-u-S-X",
+                "26": "a-u-S-X",
+                "27": "a-u-S-X",
+                "28": "a-u-S-X",
+                "29": "a-u-S-X",
+                "40": "a-u-S-X",
+                "41": "a-u-S-X",
+                "42": "a-u-S-X",
+                "43": "a-u-S-X",
+                "44": "a-u-S-X",
+                "45": "a-u-S-X",
+                "46": "a-u-S-X",
+                "47": "a-u-S-X",
+                "48": "a-u-S-X",
+                "49": "a-u-S-X",
+                "60": "a-u-S-X-M-P",
+                "61": "a-u-S-X-M-P",
+                "62": "a-u-S-X-M-P",
+                "63": "a-u-S-X-M-P",
+                "64": "a-u-S-X-M-P",
+                "65": "a-u-S-X-M-P",
+                "66": "a-u-S-X-M-P",
+                "67": "a-u-S-X-M-P",
+                "68": "a-u-S-X-M-P",
+                "69": "a-u-S-X-M-P",
+                "70": "a-u-S-X-M-C",
+                "71": "a-u-S-X-M-C",
+                "72": "a-u-S-X-M-C",
+                "73": "a-u-S-X-M-C",
+                "74": "a-u-S-X-M-C",
+                "75": "a-u-S-X-M-C",
+                "76": "a-u-S-X-M-C",
+                "77": "a-u-S-X-M-C",
+                "78": "a-u-S-X-M-C",
+                "79": "a-u-S-X-M-C",
+                "80": "a-u-S-X-M-O",
+                "81": "a-u-S-X-M-O",
+                "82": "a-u-S-X-M-O",
+                "83": "a-u-S-X-M-O",
+                "84": "a-u-S-X-M-O",
+                "85": "a-u-S-X-M-O",
+                "86": "a-u-S-X-M-O",
+                "87": "a-u-S-X-M-O",
+                "88": "a-u-S-X-M-O",
+                "89": "a-u-S-X-M-O"
+              }
+            },
+            "ext.imo": {
+              "path": "_body.ImoNumber",
+              "null_if": [
+                0
+              ]
+            },
+            "ext.destination": {
+              "path": "_body.Destination",
+              "transforms": [
+                "string",
+                "replace:@: ",
+                "trim",
+                "nonempty"
+              ]
+            },
+            "ext.length_m": {
+              "arith": "add",
+              "args": [
+                "_body.Dimension.A",
+                "_body.Dimension.B"
+              ]
+            },
+            "ext.beam_m": {
+              "arith": "add",
+              "args": [
+                "_body.Dimension.C",
+                "_body.Dimension.D"
+              ]
+            }
+          },
+          "identifiers": [
+            {
+              "scheme": "imo",
+              "value": {
+                "path": "_body.ImoNumber",
+                "null_if": [
+                  0
+                ],
+                "transforms": [
+                  "string"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "static-24",
+          "kind": "static",
+          "when": {
+            "path": "MessageType",
+            "eq": "StaticDataReport"
+          },
+          "key": {
+            "first": [
+              "Message.PositionReport.UserID",
+              "Message.StandardClassBPositionReport.UserID",
+              "Message.ExtendedClassBPositionReport.UserID",
+              "Message.ShipStaticData.UserID",
+              "Message.StaticDataReport.UserID",
+              "MetaData.MMSI"
+            ],
+            "transforms": [
+              "string"
+            ]
+          },
+          "fields": {
+            "name": {
+              "cases": [
+                {
+                  "when": {
+                    "path": "Message.StaticDataReport.ReportA.Valid",
+                    "eq": true
+                  },
+                  "then": {
+                    "path": "Message.StaticDataReport.ReportA.Name",
+                    "transforms": [
+                      "string",
+                      "replace:@: ",
+                      "trim",
+                      "nonempty"
+                    ]
+                  }
+                }
+              ]
+            },
+            "callsign": {
+              "cases": [
+                {
+                  "when": {
+                    "path": "Message.StaticDataReport.ReportB.Valid",
+                    "eq": true
+                  },
+                  "then": {
+                    "path": "Message.StaticDataReport.ReportB.CallSign",
+                    "transforms": [
+                      "string",
+                      "replace:@: ",
+                      "trim",
+                      "nonempty"
+                    ]
+                  }
+                }
+              ]
+            },
+            "platform.type_code": {
+              "cases": [
+                {
+                  "when": {
+                    "path": "Message.StaticDataReport.ReportB.Valid",
+                    "eq": true
+                  },
+                  "then": {
+                    "path": "Message.StaticDataReport.ReportB.ShipType",
+                    "null_if": [
+                      0
+                    ],
+                    "transforms": [
+                      "string"
+                    ]
+                  }
+                }
+              ]
+            },
+            "classification.cot_type": {
+              "cases": [
+                {
+                  "when": {
+                    "path": "Message.StaticDataReport.ReportB.Valid",
+                    "eq": true
+                  },
+                  "then": {
+                    "path": "Message.StaticDataReport.ReportB.ShipType",
+                    "table": {
+                      "30": "a-u-S-X-F",
+                      "31": "a-u-S-X-M-T-O",
+                      "32": "a-u-S-X-M-T-O",
+                      "33": "a-u-S-X-F-D-R",
+                      "34": "a-u-S-X",
+                      "35": "a-u-S-C",
+                      "36": "a-u-S-X-R",
+                      "37": "a-u-S-X-R",
+                      "50": "a-u-S-N-S",
+                      "51": "a-u-S-N-N-R",
+                      "52": "a-u-S-X-M-T-U",
+                      "53": "a-u-S-N-S",
+                      "54": "a-u-S-N-S",
+                      "55": "a-u-S-X-L",
+                      "58": "a-u-S-N-M",
+                      "59": "a-u-S-N",
+                      "20": "a-u-S-X",
+                      "21": "a-u-S-X",
+                      "22": "a-u-S-X",
+                      "23": "a-u-S-X",
+                      "24": "a-u-S-X",
+                      "25": "a-u-S-X",
+                      "26": "a-u-S-X",
+                      "27": "a-u-S-X",
+                      "28": "a-u-S-X",
+                      "29": "a-u-S-X",
+                      "40": "a-u-S-X",
+                      "41": "a-u-S-X",
+                      "42": "a-u-S-X",
+                      "43": "a-u-S-X",
+                      "44": "a-u-S-X",
+                      "45": "a-u-S-X",
+                      "46": "a-u-S-X",
+                      "47": "a-u-S-X",
+                      "48": "a-u-S-X",
+                      "49": "a-u-S-X",
+                      "60": "a-u-S-X-M-P",
+                      "61": "a-u-S-X-M-P",
+                      "62": "a-u-S-X-M-P",
+                      "63": "a-u-S-X-M-P",
+                      "64": "a-u-S-X-M-P",
+                      "65": "a-u-S-X-M-P",
+                      "66": "a-u-S-X-M-P",
+                      "67": "a-u-S-X-M-P",
+                      "68": "a-u-S-X-M-P",
+                      "69": "a-u-S-X-M-P",
+                      "70": "a-u-S-X-M-C",
+                      "71": "a-u-S-X-M-C",
+                      "72": "a-u-S-X-M-C",
+                      "73": "a-u-S-X-M-C",
+                      "74": "a-u-S-X-M-C",
+                      "75": "a-u-S-X-M-C",
+                      "76": "a-u-S-X-M-C",
+                      "77": "a-u-S-X-M-C",
+                      "78": "a-u-S-X-M-C",
+                      "79": "a-u-S-X-M-C",
+                      "80": "a-u-S-X-M-O",
+                      "81": "a-u-S-X-M-O",
+                      "82": "a-u-S-X-M-O",
+                      "83": "a-u-S-X-M-O",
+                      "84": "a-u-S-X-M-O",
+                      "85": "a-u-S-X-M-O",
+                      "86": "a-u-S-X-M-O",
+                      "87": "a-u-S-X-M-O",
+                      "88": "a-u-S-X-M-O",
+                      "89": "a-u-S-X-M-O"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "position",
+          "when": {
+            "all": [
+              {
+                "path": "MessageType",
+                "in": [
+                  "PositionReport",
+                  "StandardClassBPositionReport",
+                  "ExtendedClassBPositionReport"
+                ]
+              },
+              {
+                "not": {
+                  "value": {
+                    "path": "Message",
+                    "key": "MessageType"
+                  },
+                  "exists": false
+                }
+              }
+            ]
+          },
+          "let": {
+            "_body": {
+              "path": "Message",
+              "key": "MessageType"
+            }
+          },
+          "key": {
+            "first": [
+              "Message.PositionReport.UserID",
+              "Message.StandardClassBPositionReport.UserID",
+              "Message.ExtendedClassBPositionReport.UserID",
+              "Message.ShipStaticData.UserID",
+              "Message.StaticDataReport.UserID",
+              "MetaData.MMSI"
+            ],
+            "transforms": [
+              "string"
+            ]
+          },
+          "identifiers": [
+            {
+              "scheme": "mmsi",
+              "value": {
+                "first": [
+                  "Message.PositionReport.UserID",
+                  "Message.StandardClassBPositionReport.UserID",
+                  "Message.ExtendedClassBPositionReport.UserID",
+                  "Message.ShipStaticData.UserID",
+                  "Message.StaticDataReport.UserID",
+                  "MetaData.MMSI"
+                ],
+                "transforms": [
+                  "string"
+                ]
+              }
+            }
+          ],
+          "fields": {
+            "position.latitude": {
+              "path": "_body.Latitude",
+              "range": [
+                -90,
+                90
+              ]
+            },
+            "position.longitude": {
+              "path": "_body.Longitude",
+              "range": [
+                -180,
+                180
+              ]
+            },
+            "observed_at": {
+              "path": "MetaData.time_utc",
+              "transforms": [
+                "time"
+              ]
+            },
+            "kinematics.course_deg": {
+              "path": "_body.Cog",
+              "range": [
+                0,
+                359.9999
+              ]
+            },
+            "kinematics.speed_mps": {
+              "path": "_body.Sog",
+              "transforms": [
+                "knots_to_mps"
+              ],
+              "range": [
+                0,
+                52.6269
+              ]
+            },
+            "kinematics.heading_deg": {
+              "path": "_body.TrueHeading",
+              "null_if": [
+                511
+              ],
+              "range": [
+                0,
+                359.9999
+              ]
+            },
+            "name": {
+              "first": [
+                {
+                  "path": "_body.Name",
+                  "transforms": [
+                    "string",
+                    "replace:@: ",
+                    "trim",
+                    "nonempty"
+                  ]
+                },
+                {
+                  "path": "MetaData.ShipName",
+                  "transforms": [
+                    "string",
+                    "replace:@: ",
+                    "trim",
+                    "nonempty"
+                  ]
+                }
+              ]
+            },
+            "platform.type_code": {
+              "path": "_body.Type",
+              "null_if": [
+                0
+              ],
+              "transforms": [
+                "string"
+              ]
+            },
+            "classification.cot_type": {
+              "path": "_body.Type",
+              "table": {
+                "30": "a-u-S-X-F",
+                "31": "a-u-S-X-M-T-O",
+                "32": "a-u-S-X-M-T-O",
+                "33": "a-u-S-X-F-D-R",
+                "34": "a-u-S-X",
+                "35": "a-u-S-C",
+                "36": "a-u-S-X-R",
+                "37": "a-u-S-X-R",
+                "50": "a-u-S-N-S",
+                "51": "a-u-S-N-N-R",
+                "52": "a-u-S-X-M-T-U",
+                "53": "a-u-S-N-S",
+                "54": "a-u-S-N-S",
+                "55": "a-u-S-X-L",
+                "58": "a-u-S-N-M",
+                "59": "a-u-S-N",
+                "20": "a-u-S-X",
+                "21": "a-u-S-X",
+                "22": "a-u-S-X",
+                "23": "a-u-S-X",
+                "24": "a-u-S-X",
+                "25": "a-u-S-X",
+                "26": "a-u-S-X",
+                "27": "a-u-S-X",
+                "28": "a-u-S-X",
+                "29": "a-u-S-X",
+                "40": "a-u-S-X",
+                "41": "a-u-S-X",
+                "42": "a-u-S-X",
+                "43": "a-u-S-X",
+                "44": "a-u-S-X",
+                "45": "a-u-S-X",
+                "46": "a-u-S-X",
+                "47": "a-u-S-X",
+                "48": "a-u-S-X",
+                "49": "a-u-S-X",
+                "60": "a-u-S-X-M-P",
+                "61": "a-u-S-X-M-P",
+                "62": "a-u-S-X-M-P",
+                "63": "a-u-S-X-M-P",
+                "64": "a-u-S-X-M-P",
+                "65": "a-u-S-X-M-P",
+                "66": "a-u-S-X-M-P",
+                "67": "a-u-S-X-M-P",
+                "68": "a-u-S-X-M-P",
+                "69": "a-u-S-X-M-P",
+                "70": "a-u-S-X-M-C",
+                "71": "a-u-S-X-M-C",
+                "72": "a-u-S-X-M-C",
+                "73": "a-u-S-X-M-C",
+                "74": "a-u-S-X-M-C",
+                "75": "a-u-S-X-M-C",
+                "76": "a-u-S-X-M-C",
+                "77": "a-u-S-X-M-C",
+                "78": "a-u-S-X-M-C",
+                "79": "a-u-S-X-M-C",
+                "80": "a-u-S-X-M-O",
+                "81": "a-u-S-X-M-O",
+                "82": "a-u-S-X-M-O",
+                "83": "a-u-S-X-M-O",
+                "84": "a-u-S-X-M-O",
+                "85": "a-u-S-X-M-O",
+                "86": "a-u-S-X-M-O",
+                "87": "a-u-S-X-M-O",
+                "88": "a-u-S-X-M-O",
+                "89": "a-u-S-X-M-O"
+              }
+            },
+            "classification.domain": {
+              "const": "surface"
+            },
+            "provenance.source_code": {
+              "const": "aisstream.io"
+            },
+            "provenance.confidence": {
+              "cases": [
+                {
+                  "when": {
+                    "all": [
+                      {
+                        "path": "_body.PositionAccuracy",
+                        "eq": true
+                      },
+                      {
+                        "path": "_body.Raim",
+                        "eq": true
+                      }
+                    ]
+                  },
+                  "then": {
+                    "const": 0.95
+                  }
+                },
+                {
+                  "when": {
+                    "path": "_body.PositionAccuracy",
+                    "eq": true
+                  },
+                  "then": {
+                    "const": 0.9
+                  }
+                },
+                {
+                  "when": {
+                    "path": "_body.Raim",
+                    "eq": true
+                  },
+                  "then": {
+                    "const": 0.75
+                  }
+                }
+              ],
+              "default": 0.7
+            },
+            "ext.nav_status": "_body.NavigationalStatus"
+          }
+        }
+      ]
+    },
+    "registry": {
+      "broadcast_name": "name",
+      "generic_tokens": [
+        "ARGENTINE",
+        "AUSTRALIAN",
+        "AUXILIARY",
+        "BELGIAN",
+        "BOAT",
+        "BRAZILIAN",
+        "BULGARIAN",
+        "CANADIAN",
+        "CDN",
+        "CG",
+        "CGC",
+        "DANISH",
+        "DE",
+        "DEU",
+        "DNK",
+        "DUTCH",
+        "ESP",
+        "ESPS",
+        "ESTONIAN",
+        "FGS",
+        "FINNISH",
+        "FRA",
+        "FRENCH",
+        "GBR",
+        "GERMAN",
+        "GOV",
+        "GOVERNMENT",
+        "GOVT",
+        "GREEK",
+        "HDMS",
+        "HMAS",
+        "HMCS",
+        "HMS",
+        "HNLMS",
+        "HNOMS",
+        "HSWMS",
+        "IDN",
+        "INDIAN",
+        "INDONESIAN",
+        "ITALIAN",
+        "ITS",
+        "JAPANESE",
+        "KNM",
+        "KOREAN",
+        "LATVIAN",
+        "LITHUANIAN",
+        "MILITARY",
+        "NATO",
+        "NAVAL",
+        "NAVY",
+        "NL",
+        "NLD",
+        "NORWEGIAN",
+        "NRP",
+        "OF",
+        "POLISH",
+        "PORTUGUESE",
+        "PRT",
+        "ROMANIAN",
+        "SHIP",
+        "SPANISH",
+        "SUB",
+        "SUBMARINE",
+        "SVN",
+        "SWEDISH",
+        "THE",
+        "TURKISH",
+        "US",
+        "USA",
+        "USAV",
+        "USCGC",
+        "USCGS",
+        "USNS",
+        "USS",
+        "VAN",
+        "VESSEL",
+        "WARSHIP"
+      ],
+      "markers": [
+        "GOV",
+        "GOVERNMENT",
+        "GOVT",
+        "MILITARY",
+        "NAVAL",
+        "NAVY",
+        "SUBMARINE",
+        "USNS",
+        "USS",
+        "WARSHIP"
+      ],
+      "military_cot": "^[^-]*-[^-]*-(U|S-C)(-|$)",
+      "links": [
+        { "entity": "name", "track": "name" },
+        { "entity": "cot_type", "track": "classification.cot_type" },
+        { "entity": "name", "track": "callsign" },
+        { "entity": "name", "track": "platform.name" },
+        { "entity": "flag", "track": "platform.flag" },
+        { "entity": "hull_code", "track": "platform.hull" },
+        { "entity": "class_name", "track": "platform.class" },
+        { "entity": "destination", "track": "ext.destination", "direction": "to_entity" }
+      ]
+    },
+    "affiliation": {
+      "country": "platform.flag",
+      "friendly": [
+        "AL",
+        "AR",
+        "AU",
+        "BE",
+        "BG",
+        "BH",
+        "BR",
+        "CA",
+        "CO",
+        "CZ",
+        "DE",
+        "DK",
+        "EE",
+        "EG",
+        "ES",
+        "FI",
+        "FR",
+        "GB",
+        "GR",
+        "HR",
+        "HU",
+        "IL",
+        "IS",
+        "IT",
+        "JO",
+        "JP",
+        "KE",
+        "KR",
+        "KW",
+        "LT",
+        "LU",
+        "LV",
+        "MA",
+        "ME",
+        "MK",
+        "NL",
+        "NO",
+        "NZ",
+        "PH",
+        "PK",
+        "PL",
+        "PT",
+        "QA",
+        "RO",
+        "SE",
+        "SI",
+        "SK",
+        "TH",
+        "TN",
+        "TR",
+        "TW",
+        "UA",
+        "US"
+      ],
+      "hostile": [
+        "BY",
+        "CN",
+        "CU",
+        "IR",
+        "KP",
+        "RU",
+        "SY",
+        "VE"
+      ],
+      "otherwise": "unknown",
+      "unknown_country": "unknown"
+    },
+    "filter": {
+      "keep_if": {
+        "any": [
+          {
+            "path": "ext.registry.entity_id",
+            "exists": true
+          },
+          {
+            "path": "classification.cot_type",
+            "matches": "^[^-]*-[^-]*-(U|S-C)(-|$)"
+          }
+        ]
+      }
+    },
+    "throttle": {
+      "min_interval_secs": 30,
+      "heartbeat_secs": 600,
+      "min_move_m": 50
+    }
+  }
+}
