@@ -5,6 +5,12 @@
 The first open-source release, under the MIT License. 1.0 carries everything up to 0.4.7, plus the
 changes below.
 
+### Security
+
+- **A new release signing key.** `cosign.pub` is a new ECDSA P-256 key, made in the OpenSSL FIPS
+  provider, that verifies every release from 1.0.0 on. `cosign-2026-09.pub` is removed, along with
+  the private-era images it verified.
+
 ### Changed
 
 - **OpenTrack is open source under the MIT License** (`LICENSE`). Third-party components keep

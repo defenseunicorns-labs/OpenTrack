@@ -30,7 +30,7 @@ from a tagged commit.
 | Forked crates | `third_party/samael` (SAML), `third_party/rumqttc` (MQTT without `ring`), each with an `OPENTRACK.md` saying what differs from upstream and when to drop the fork | Pull requests; reviewed at each release against upstream |
 | Supply-chain policy | `deny.toml` | Pull requests; every advisory exception has a reason |
 | CI and release workflows | `.github/workflows/ci.yml`, `release.yml`; actions pinned by commit SHA | Pull requests |
-| Signing | `cosign.pub` (and `cosign-2026-09.pub` for releases up to 0.4.4), `scripts/release/`; the private key and password are repository secrets, with the maintainer's offline backup | [supply-chain.md](supply-chain.md) |
+| Signing | `cosign.pub`, `scripts/release/`; the private key and password are repository secrets, with the maintainer's offline backup | [supply-chain.md](supply-chain.md) |
 | Branch protection | `scripts/github/protect-main.sh` | Re-run after any change to it |
 | Deployment samples | `docker-compose.yml`, `docs/examples/sapient/docker-compose.yml`, `docs/examples/` | Pull requests |
 | Documentation | `README.md`, `CHANGELOG.md`, `SECURITY.md`, `docs/` (guides, security documents) | Pull requests, in the same pull request as the behaviour they describe |

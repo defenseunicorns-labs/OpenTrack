@@ -82,8 +82,9 @@ docker buildx imagetools inspect ghcr.io/kineticlogic-io/opentrack@<digest> --fo
 ```
 
 **The key:**
-- The public key is `cosign.pub` in the repository. Releases up to 0.4.4 were signed with an
-  earlier key made by cosign itself: verify those with `cosign-2026-09.pub`.
+- The public key is `cosign.pub` in the repository. It was made on 2026-10-06 for the first
+  open-source release and verifies every release from 1.0.0 on. The keys that signed the private-era
+  images (0.4.x and earlier) were retired along with those images.
 - The private key was made inside the FIPS provider (`scripts/release/new-signing-key`) and is
   kept as encrypted PKCS#8 (AES-256-CBC, PBKDF2-HMAC-SHA-256). It and its password are the
   repository secrets `RELEASE_SIGNING_KEY` and `RELEASE_SIGNING_PASSWORD`; the maintainer keeps a
