@@ -101,7 +101,7 @@ fmt, clippy, the tests and the UI build). Report security issues as described in
 
 OpenTrack is built by [kineticlogic.io](https://github.com/kineticlogic-io). For integration work,
 custom codecs and data links, deployment and accreditation support, or a consultation, email
-**[parker@kineticlogic.io](mailto:parker@kineticlogic.io)**.
+**[admin@kineticlogic.io](mailto:admin@kineticlogic.io)**.
 
 ## License
 

@@ -23,7 +23,7 @@ repository can read those.
 
 - **On GitHub:** use **Report a vulnerability** on the repository's **Security** tab (private
   vulnerability reporting).
-- **By email:** write to [parker@kineticlogic.io](mailto:parker@kineticlogic.io) with "OpenTrack
+- **By email:** write to [admin@kineticlogic.io](mailto:admin@kineticlogic.io) with "OpenTrack
   security" in the subject.
 - **From a site running OpenTrack:** report through your own organisation's channel as usual; your
   ISSO or administrator forwards product vulnerabilities to the maintainer the same way.
