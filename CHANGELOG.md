@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.0.0, 2026-10-06
+
+The first open-source release, under the MIT License. 1.0 carries everything up to 0.4.7, plus the
+changes below.
 
 ### Changed
 

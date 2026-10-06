@@ -14,8 +14,8 @@ field id behind each field. The standard's text is not reproduced here.
 
 This crate implements **STANAG 4607 Edition 3, *NATO Ground Moving Target
 Indicator Format (GMTIF)*, published as AEDP-7 (2013)**. The
-standard is distributed through the
-[NSG Standards Registry](https://nsgreg.nga.mil/), which also lists its
+standard is distributed through the NSG Standards Registry
+([STANAG 4607 entry](https://nsgreg.nga.mil/doc/view?i=5568)), which also lists its
 successor, AEDP-4607 Edition A (2024), and the implementation guide
 AEDP-4607.1. Get the standard from the registry. This repository holds only
 an independent implementation: field names, data types and code values, with

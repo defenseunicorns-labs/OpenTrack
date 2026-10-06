@@ -37,6 +37,6 @@ OpenTrack implements several published interface standards: STANAG 4607 (GMTI), 
 335), Cursor-on-Target, and field names from the OTH-GOLD track database model. These are
 independent implementations, and the repository does not reproduce the standards' text. To get a
 standard, go to its publisher. STANAG 4607 is available from the
-[NSG Standards Registry](https://nsgreg.nga.mil/) (see `crates/ot-codec-stanag4607/README.md`).
+[NSG Standards Registry](https://nsgreg.nga.mil/doc/view?i=5568) (see `crates/ot-codec-stanag4607/README.md`).
 SAPIENT message definitions come from the [`sapient-rs`](https://crates.io/crates/sapient-rs)
 crate (MIT OR Apache-2.0).

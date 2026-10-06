@@ -87,9 +87,10 @@ setups and upgrades.
 
 ## Status
 
-OpenTrack is **alpha**. The API, the published message (`opentrack.track.v2`), the plugin interface
-and the database schema may still change between releases. Back up `data/opentrack.db` before
-upgrading. Migrations run on start.
+OpenTrack **1.0** is the first open-source release. Versions follow [semantic versioning](https://semver.org/).
+Within 1.x, the REST API, the published message (`opentrack.track.v2`) and the plugin interface
+(`opentrack:plugin@0.1.0`) change only in backward-compatible ways. Database migrations run on start,
+but back up `data/opentrack.db` before you upgrade anyway.
 
 ## Contributing
 

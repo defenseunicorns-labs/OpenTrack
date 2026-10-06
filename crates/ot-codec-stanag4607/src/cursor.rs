@@ -7,7 +7,7 @@
 //! buffer length.
 //!
 //! Source: STANAG 4607 Ed. 3 (AEDP-7, 2013), from the NSG Standards
-//! Registry, https://nsgreg.nga.mil/ (see this crate's README, "Source").
+//! Registry, https://nsgreg.nga.mil/doc/view?i=5568 (see this crate's README, "Source").
 
 use crate::Error;
 

@@ -1,12 +1,12 @@
 name: release
 
 # A published GitHub release builds the image, attaches BuildKit's SLSA
-# provenance and SBOM to it, pushes it to the (private) GitHub container
+# provenance and SBOM to it, pushes it to the GitHub container
 # registry, signs it with the project's cosign key, and adds the SBOMs and
 # the image digest to the release. See docs/security/supply-chain.md.
 #
-# The signature goes to no public transparency log (the repository is
-# private): .github/cosign/signing-config.json names none. Verify with the
+# The signature goes to no public transparency log:
+# .github/cosign/signing-config.json names none. Verify with the
 # committed public key, cosign.pub.
 
 on:
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build, sign and attach to (e.g. v0.4.0)
+        description: Release tag to build, sign and attach to (e.g. v1.0.0)
         required: true
 
 permissions:

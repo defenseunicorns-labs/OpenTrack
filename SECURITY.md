@@ -7,14 +7,14 @@ the control mapping, FIPS, the supply chain, and the accreditation package.
 
 ## Supported versions
 
-OpenTrack is alpha. Security fixes go into the latest release line only.
+Security fixes go into the latest release line only.
 
 | Version | Security fixes |
 |---|---|
-| 0.4.x, the latest release | Yes |
-| Anything older | No: upgrade to the latest 0.4.x |
+| 1.0.x, the latest release | Yes |
+| Anything older | No: upgrade to the latest 1.0.x |
 
-A fix is released as the next 0.4.x version. It is not backported to earlier releases.
+A fix is released as the next 1.0.x version. It is not backported to earlier releases.
 
 ## Reporting a vulnerability
 
