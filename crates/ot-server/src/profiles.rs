@@ -148,7 +148,7 @@ mod tests {
         let (mut out, mut problems) = (Vec::new(), Vec::new());
         read_dir(&dir, true, &mut out, &mut problems);
         assert!(problems.is_empty(), "{problems:#?}");
-        assert!(out.len() >= 9, "{}", out.len());
+        assert!(out.len() >= 7, "{}", out.len());
         let kinds: std::collections::BTreeSet<&str> = out
             .iter()
             .filter_map(|l| l.profile.sensor["kind"].as_str())

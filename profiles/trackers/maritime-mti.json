@@ -1,10 +1,9 @@
 {
-  "name": "lsrs-maritime-mti",
-  "label": "LSRS maritime MTI (AN/APS-149 class)",
+  "name": "maritime-mti",
+  "label": "Maritime surface MTI (generic)",
   "description": "Maritime surface MTI: slow surface targets over sea clutter, long lives, gentle manoeuvres.",
   "sensor": {
     "kind": "maritime_mti",
-    "platform": "LSRS (P-3, P-8)",
     "format": "STANAG 4607",
     "domain": "surface"
   },
@@ -16,11 +15,11 @@
     "initial_speed_sigma_mps": 8.0,
     "confirm_hits": 3,
     "domain": "surface",
-    "key_prefix": "LS",
+    "key_prefix": "M",
     "auto_timing": {},
     "detection_probability": 0.6,
-    "clutter_density": 2e-07,
-    "birth_density": 1e-09,
+    "clutter_density": 2E-7,
+    "birth_density": 1E-9,
     "target_lifetime_secs": 3600.0
   }
 }

@@ -899,7 +899,7 @@ pub(crate) mod tests {
         }
         // A tracker profile imported here, and the session key beside the db.
         let shipped: Value = serde_json::from_str(
-            &std::fs::read_to_string(c.profiles_dir.join("astor-dmti.json")).unwrap(),
+            &std::fs::read_to_string(c.profiles_dir.join("gmti-wide-area.json")).unwrap(),
         )
         .unwrap();
         let mut mine = shipped.clone();

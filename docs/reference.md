@@ -11,8 +11,9 @@ against clutter and how often it goes unseen, which confirms and drops it; its r
 position error ellipse and the full position and velocity covariance. For GMTI the tracker times
 itself by the revisit rate it measures in the stream. A tracker's tracks carry no identity: unknown
 affiliation and at most a domain. **Tracker profiles** (`profiles/trackers/`) hold a sensor's
-tracker settings as a JSON file: wide-area and heavy-clutter GMTI, Global Hawk, Lynx, ASTOR and LSRS
-class MTI, marine, coastal and air surveillance radars, and lidar. A source's tracker stage loads
+tracker settings as a JSON file: wide-area and heavy-clutter GMTI, maritime surface MTI, marine,
+coastal and air surveillance radars, and lidar. The shipped profiles describe sensor kinds, not
+named platforms. A source's tracker stage loads
 one; a tuned tracker is saved, imported or downloaded as one.
 
 **Track correlation.** The engine keeps every source's own tracks (source tracks) and pairs them
