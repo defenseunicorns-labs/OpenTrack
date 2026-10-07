@@ -98,12 +98,6 @@ Issues and pull requests are welcome. Run `scripts/check.sh` before you open a p
 fmt, clippy, the tests and the UI build). Report security issues as described in
 [SECURITY.md](SECURITY.md), not in public issues.
 
-## Consulting and support
-
-OpenTrack is built by [kineticlogic.io](https://github.com/kineticlogic-io). For integration work,
-custom codecs and data links, deployment and accreditation support, or a consultation, email
-**[admin@kineticlogic.io](mailto:admin@kineticlogic.io)**.
-
 ## License
 
 [MIT](LICENSE). Third-party components keep their own licenses. See
