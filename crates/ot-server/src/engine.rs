@@ -3027,7 +3027,6 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     pub(super) fn obs(at: DateTime<Utc>, name: &str, domain: Domain) -> Observation {
         serde_json::from_value(serde_json::json!({
@@ -3039,8 +3038,15 @@ mod tests {
         .unwrap()
     }
 
+    /// Noon UTC yesterday: recent, so that report times stay inside what
+    /// the sync wire carries (a 32-bit millisecond offset from the send
+    /// time, about 24.8 days), and fixed for the length of a test run.
     pub(super) fn t0() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 9, 24, 12, 0, 0).unwrap()
+        let today = Utc::now().date_naive();
+        (today - chrono::Days::new(1))
+            .and_hms_opt(12, 0, 0)
+            .expect("noon exists")
+            .and_utc()
     }
 
     #[test]

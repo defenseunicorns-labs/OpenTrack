@@ -265,9 +265,29 @@ fn metres_u16(v: f64) -> u16 {
     }
 }
 
+/// A report's time offset from the message's, when it fits the wire's 32
+/// bits (about 24.8 days either side).
+fn time_offset(time_ms: i64, base_ms: u64) -> Option<i32> {
+    time_ms
+        .checked_sub(i64::try_from(base_ms).ok()?)
+        .and_then(|d| i32::try_from(d).ok())
+}
+
+/// Whether a report can travel in a message sent at `base_ms`: its time
+/// must be within about 24.8 days of the send time. [`encode_reports`]
+/// leaves out a report that cannot, rather than send a wrong time.
+pub fn report_time_fits(r: &Report, base_ms: u64) -> bool {
+    time_offset(r.time_ms, base_ms).is_some()
+}
+
 fn write_report(w: &mut W, r: &Report, base_ms: u64) {
     w.uid(r.uid);
-    let dt = (r.time_ms - base_ms as i64).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
+    // Callers keep only reports that fit; a clamp is the last resort.
+    let dt = time_offset(r.time_ms, base_ms).unwrap_or(if r.time_ms < base_ms as i64 {
+        i32::MIN
+    } else {
+        i32::MAX
+    });
     w.i32(dt);
     w.i32((r.lat * 1e7).round() as i32);
     w.i32((r.lon * 1e7).round() as i32);
@@ -469,9 +489,15 @@ pub fn sender(bytes: &[u8]) -> Result<SiteCode, WireError> {
 }
 
 /// Reports in as few messages as fit in [`MAX_UNSIGNED`] bytes each (so
-/// in [`MAX_MESSAGE`] once signed).
+/// in [`MAX_MESSAGE`] once signed). A report whose time is too far from
+/// `hlc` for the wire ([`report_time_fits`]) is left out.
 pub fn encode_reports(site: SiteCode, hlc: Hlc, reports: &[Report]) -> Vec<Vec<u8>> {
-    chunks(reports, HEADER + 1, 255, |r| {
+    let reports: Vec<Report> = reports
+        .iter()
+        .filter(|r| report_time_fits(r, hlc.ms()))
+        .cloned()
+        .collect();
+    chunks(&reports, HEADER + 1, 255, |r| {
         let mut w = W(Vec::new());
         write_report(&mut w, r, hlc.ms());
         w.0.len()
@@ -678,6 +704,27 @@ mod tests {
         r.course_deg = None;
         let m = Message::new(site("BBB"), NOW, Body::Reports(vec![r]));
         assert_eq!(Message::decode(&m.encode()).unwrap(), m);
+    }
+
+    #[test]
+    fn a_report_too_old_for_the_wire_is_left_out_not_misdated() {
+        let base = NOW.ms() as i64;
+        let mut at_edge = report(1);
+        at_edge.time_ms = base + i64::from(i32::MIN);
+        let mut too_old = report(2);
+        too_old.time_ms = base + i64::from(i32::MIN) - 1;
+        let mut too_new = report(3);
+        too_new.time_ms = base + i64::from(i32::MAX) + 1;
+        assert!(report_time_fits(&at_edge, NOW.ms()));
+        assert!(!report_time_fits(&too_old, NOW.ms()));
+        assert!(!report_time_fits(&too_new, NOW.ms()));
+
+        let msgs = encode_reports(site("BBB"), NOW, &[too_old, at_edge.clone(), too_new]);
+        assert_eq!(msgs.len(), 1);
+        match Message::decode(&msgs[0]).unwrap().body {
+            Body::Reports(r) => assert_eq!(r, vec![at_edge]),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

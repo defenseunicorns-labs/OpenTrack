@@ -727,6 +727,15 @@ impl Engine {
             ot_sync::Hlc::new(Utc::now().timestamp_millis() as u64, 0),
         );
         let (reports, attrs) = self.within_budget(out.reports, out.attrs);
+        let stale: Vec<_> = reports
+            .iter()
+            .filter(|r| !ot_sync::wire::report_time_fits(r, hlc.ms()))
+            .map(|r| r.uid.to_string())
+            .collect();
+        if !stale.is_empty() {
+            tracing::warn!(tracks = ?stale,
+                "not reporting to other nodes: the estimate is more than 24 days from now");
+        }
         let mut msgs = ot_sync::wire::encode_reports(site, hlc, &reports);
         // As many UIDs as fit in a message once signed.
         let most = (ot_sync::wire::MAX_UNSIGNED - ot_sync::wire::HEADER - 2) / 7;
