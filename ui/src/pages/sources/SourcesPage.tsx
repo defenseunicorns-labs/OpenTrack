@@ -4,16 +4,16 @@ import { Badge, Button, CollapsiblePanel, DataTable, type DataTableColumn } from
 import { api, type SourceRow } from '../../api/client'
 import { ago, errorMessage, fmtCount } from '../../lib/format'
 import { SOURCE_STATES_INFO, sourceState } from '../../lib/sourceState'
-import { AddSourceWizard } from './AddSourceWizard'
-import { SourceDetail } from './SourceDetail'
+import { NewSource } from './NewSource'
 import { UnauthenticatedBadge } from './SenderAuth'
 import { useCan } from '../../auth/context'
 import { InfoTip } from '../../components/InfoTip'
 import { FILL_PANEL, usePanelOpen } from '../../lib/panelOpen'
 import { FILL_TABLE, useFillHeight } from '../../lib/fillHeight'
 
-// React Flow loads only with the Sources page's topology.
+// React Flow loads only with the Sources page's topology and the source editor.
 const Topology = lazy(() => import('./Topology'))
+const SourceEditor = lazy(() => import('./SourceEditor'))
 
 const REFRESH_MS = 5000
 
@@ -65,8 +65,6 @@ export default function SourcesPage({ selected, onSelect }: { selected: string; 
   const [sources, setSources] = useState<SourceRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
-  // The drawer keeps showing the last source while it slides closed.
-  const [shownId, setShownId] = useState(selected)
   const [listOpen, setListOpen] = usePanelOpen('ot.panel.sources')
   const [listFill, listHeight] = useFillHeight()
 
@@ -80,34 +78,27 @@ export default function SourcesPage({ selected, onSelect }: { selected: string; 
     )
   }, [])
 
+  // The list refreshes while it is shown; the editor keeps its own source fresh.
   useEffect(() => {
+    if (selected) return
     load()
     const t = setInterval(load, REFRESH_MS)
     return () => clearInterval(t)
-  }, [load])
+  }, [load, selected])
 
-  const select = (id: string) => {
-    if (id) setShownId(id)
-    onSelect(id)
-  }
-
-  if (adding) {
+  if (selected) {
     return (
-      <div className="panels">
-        <AddSourceWizard
-          onCancel={() => setAdding(false)}
-          onDone={(id) => {
-            setAdding(false)
-            load()
-            select(id)
-          }}
+      <Suspense fallback={<span className="muted">LOADING…</span>}>
+        <SourceEditor
+          key={selected}
+          id={selected}
+          onClose={() => onSelect('')}
+          onDeleted={() => onSelect('')}
         />
-      </div>
+      </Suspense>
     )
   }
 
-  const shown = sources?.find((s) => s.id === (selected || shownId)) ?? null
-  const open = !!selected && !!shown
   return (
     <div className="panels fill-page">
       <CollapsiblePanel
@@ -123,7 +114,7 @@ export default function SourcesPage({ selected, onSelect }: { selected: string; 
       >
         <div className="panel-body">
           <Suspense fallback={<span className="muted">LOADING…</span>}>
-            {sources ? <Topology sources={sources} onSelect={select} /> : <span className="muted">LOADING…</span>}
+            {sources ? <Topology sources={sources} onSelect={onSelect} /> : <span className="muted">LOADING…</span>}
           </Suspense>
         </div>
       </CollapsiblePanel>
@@ -143,7 +134,7 @@ export default function SourcesPage({ selected, onSelect }: { selected: string; 
       >
         <div className="panel-body fill" ref={listFill}>
           <div className="toolbar">
-            <span className="muted">Feeds OpenTrack ingests. Select one to see its status, transport, pipeline and history.</span>
+            <span className="muted">Feeds OpenTrack ingests. Select one to open it.</span>
             <span className="spacer" />
             <Button size="sm" icon={<TbPlus />} disabled={!canAdmin} onClick={() => setAdding(true)}>
               Add source
@@ -155,25 +146,19 @@ export default function SourcesPage({ selected, onSelect }: { selected: string; 
             columns={COLUMNS}
             rows={sources ?? []}
             rowKey={(s) => s.id}
-            selectedKey={open ? shown?.id : null}
-            onRowClick={(s) => select(s.id)}
+            onRowClick={(s) => onSelect(s.id)}
             maxHeight={listHeight ?? 'none'}
             style={FILL_TABLE}
             empty={sources ? 'No sources yet. Add one to start onboarding a feed.' : 'LOADING…'}
           />
         </div>
       </CollapsiblePanel>
-      {shown && (
-        <SourceDetail
-          key={shown.id}
-          source={shown}
-          open={open}
-          onClose={() => select('')}
-          onChanged={load}
-          onDeleted={() => {
-            load()
-            onSelect('')
-            setShownId('')
+      {adding && (
+        <NewSource
+          onClose={() => setAdding(false)}
+          onCreated={(id) => {
+            setAdding(false)
+            onSelect(id)
           }}
         />
       )}

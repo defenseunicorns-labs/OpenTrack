@@ -1,14 +1,15 @@
 /**
- * The pipeline designer's live preview: the first stored records (samples) as they are after one
- * stage, from the dry run's trace (`POST /sources/validate` with `trace`).
+ * A source step's samples: the first stored records as they are after that step, from the dry
+ * run's trace (`POST /sources/validate` with `trace`).
  */
 import type { PreviewResult, PreviewTrace, TraceFrameView } from '../api/client'
 
 /** Records the designer follows through the pipeline. */
 export const TRACED_SAMPLES = 5
 
-/** Stage names for "dropped by …", by the stage ids of `pipelineStages`. */
+/** Step names for "dropped by …", by step type (a step's id starts with its type). */
 export const STAGE_LABEL: Record<string, string> = {
+  input: 'Input',
   transport: 'Transport',
   decode: 'Decode',
   reject: 'Reject',
@@ -51,9 +52,16 @@ function frameView(f: TraceFrameView | undefined, title: string): SampleView {
   return { title, blocks: [block], notes }
 }
 
+/** A step's name for a note: its type's, numbered like its id (`Filter 2`). */
+function label(stageId: string): string {
+  const m = /^(.*?)(?:-(\d+))?$/.exec(stageId)
+  const name = STAGE_LABEL[m?.[1] ?? stageId]
+  return name ? `${name}${m?.[2] ? ` ${m[2]}` : ''}` : stageId
+}
+
 function note(stageId: string, reason: string): string {
   if (reason.startsWith('rejected:')) return reason
-  return `dropped by ${STAGE_LABEL[stageId] ?? stageId}: ${reason}`
+  return `dropped by ${label(stageId)}: ${reason}`
 }
 
 /**
@@ -62,9 +70,9 @@ function note(stageId: string, reason: string): string {
  * dropped at or before the stage says where and why, and one a stage held back (a tracker
  * waiting for the rest of a scan) says so.
  */
-export function samplesAt(trace: PreviewTrace | undefined, stageId: string): SampleView[] {
+export function samplesAt(trace: PreviewTrace | undefined, stageId: string, path?: string[]): SampleView[] {
   const samples = (trace?.samples ?? []).slice(0, TRACED_SAMPLES)
-  if (stageId === 'transport') {
+  if (stageId === 'transport' || stageId === 'input') {
     const byFrame = new Map<number, number[]>()
     samples.forEach((s, i) => byFrame.set(s.frame, [...(byFrame.get(s.frame) ?? []), i + 1]))
     return [...byFrame].map(([frame, ns]) =>
@@ -74,20 +82,22 @@ export function samplesAt(trace: PreviewTrace | undefined, stageId: string): Sam
   return samples.map((s, i) => {
     const title = `#${i + 1}`
     const at = s.stages.findIndex((x) => x.id === stageId)
-    if (at < 0) return { title, blocks: [], notes: ['This stage was not in the pipeline the preview ran.'] }
+    if (at < 0) return { title, blocks: [], notes: ['This step was not in the flow the preview ran.'] }
     const notes: string[] = []
-    for (const x of s.stages.slice(0, at + 1)) {
+    // Only the steps on the way here: a drop on another branch is not this step's.
+    const before = s.stages.slice(0, at + 1).filter((x) => !path || path.includes(x.id) || x === s.stages[at])
+    for (const x of before) {
       for (const r of x.dropped ?? []) notes.push(note(x.id, r))
       // Not a drop: said only at the stage that did it.
-      if (x === s.stages[at]) for (const n of x.notes ?? []) notes.push(`${STAGE_LABEL[x.id] ?? x.id}: ${n}`)
+      if (x === s.stages[at]) for (const n of x.notes ?? []) notes.push(`${label(x.id)}: ${n}`)
       if (x.held) {
         notes.push(
-          `held by ${STAGE_LABEL[x.id] ?? x.id}: waiting for the rest of its scan (the preview ran it at the end of the samples, or when a later frame completed it)`,
+          `held by ${label(x.id)}: waiting for the rest of its scan (the preview ran it at the end of the samples, or when a later frame completed it)`,
         )
       }
     }
     const blocks = s.stages[at].items.map(pretty)
-    if (!blocks.length && !notes.length) notes.push('Nothing came out of this stage.')
+    if (!blocks.length && !notes.length) notes.push('Nothing came out of this step.')
     return { title, blocks, notes }
   })
 }
@@ -106,12 +116,21 @@ export const MAX_TRACED_SAMPLES = 10
  * on), and those of them the filter dropped. With no filter in the pipeline yet, what the last
  * stage before where it goes passed on, and nothing dropped.
  */
-export function filterInput(trace: PreviewTrace | undefined): { observations: unknown[]; dropped: unknown[] } {
+export function filterInput(
+  trace: PreviewTrace | undefined,
+  id = 'filter',
+  parent?: string,
+): { observations: unknown[]; dropped: unknown[] } {
   const observations: unknown[] = []
   const dropped: unknown[] = []
   for (const s of trace?.samples ?? []) {
-    const at = s.stages.findIndex((x) => x.id === 'filter')
-    const before = at > 0 ? s.stages[at - 1] : [...s.stages].reverse().find((x) => ['affiliation', 'registry', 'join', 'map'].includes(x.id))
+    const at = s.stages.findIndex((x) => x.id === id)
+    // What reaches it: the step that feeds it.
+    const before = parent
+      ? s.stages.find((x) => x.id === parent)
+      : at > 0
+        ? s.stages[at - 1]
+        : [...s.stages].reverse().find((x) => ['affiliation', 'registry', 'join', 'map'].includes(x.id))
     if (!before) continue
     observations.push(...before.items)
     if (at > 0 && s.stages[at].dropped?.length) {

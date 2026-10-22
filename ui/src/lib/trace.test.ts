@@ -74,7 +74,7 @@ describe('samplesAt', () => {
     const filter = samplesAt(trace, 'filter')
     expect(filter[2].notes).toEqual(['dropped by Filter: drop_if matched'])
     // Not a stage of this sample's (older) trace.
-    expect(filter[3].notes[0]).toMatch(/not in the pipeline/)
+    expect(filter[3].notes[0]).toMatch(/not in the flow/)
   })
 
   it('says when a stage holds a sample, and when nothing came out', () => {
@@ -84,7 +84,7 @@ describe('samplesAt', () => {
     const publish = samplesAt(trace, 'publish')
     expect(publish[0].notes.some((n) => n.startsWith('held by Tracker'))).toBe(true)
     const one: PreviewTrace = { frames: trace.frames, samples: [{ frame: 0, stages: [{ id: 'map', items: [] }] }] }
-    expect(samplesAt(one, 'map')[0].notes).toEqual(['Nothing came out of this stage.'])
+    expect(samplesAt(one, 'map')[0].notes).toEqual(['Nothing came out of this step.'])
   })
 
   it('shows at most five samples, and none without a trace', () => {

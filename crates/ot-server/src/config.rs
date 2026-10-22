@@ -219,7 +219,14 @@ impl Common {
         if let Some(dir) = self.sqlite.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
-        Ok(ot_store::Db::open(&self.sqlite)?)
+        let mut db = ot_store::Db::open(&self.sqlite)?;
+        // Once a process: sources from before flows move their raw output
+        // to a NATS topic step.
+        static MIGRATED: std::sync::Once = std::sync::Once::new();
+        let mut result = Ok(());
+        MIGRATED.call_once(|| result = crate::sources::migrate_raw_outputs(&mut db));
+        result?;
+        Ok(db)
     }
 
     /// Keep one connection open for every later `open_db` of this (and

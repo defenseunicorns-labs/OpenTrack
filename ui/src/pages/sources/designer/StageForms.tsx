@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { TbPlus, TbTrash, TbX } from 'react-icons/tb'
 import { Button, FieldSelect, Input, Label, Toggle } from '@kineticlogic/staresdk'
 import { api, type EmitterMotion, type PluginInfo, type SecurityLabel } from '../../../api/client'
-import { DECODE_CODECS, DEFAULT_GRADES, DEFAULT_LINKS, describeCondition, describeValue, entityLinks, transportCodec, type EntityLink, type ValueSpec } from '../../../lib/pipeline'
+import { DEFAULT_GRADES, DEFAULT_LINKS, describeCondition, describeValue, entityLinks, type EntityLink, type ValueSpec } from '../../../lib/pipeline'
 import { JsonField } from './JsonField'
 import { ConditionBuilder } from './ConditionBuilder'
 import type { SampleField } from '../../../lib/conditions'
@@ -32,69 +32,6 @@ function Row({ label, children, hint }: { label: string; children: React.ReactNo
       <div className="stack" style={{ gap: 2 }}>
         {children}
       </div>
-    </div>
-  )
-}
-
-/** How frames become records. */
-export function DecodeForm({ value, onChange }: Props) {
-  const type = String(value.type ?? 'json')
-  const fixed = transportCodec(value)
-  if (fixed)
-    return (
-      <div className="stack">
-        <Row
-          label="Format"
-          hint="This codec is chosen on the source's Transport tab (Codec), with its .proto files and message or its plugin and options; change it there. Picking a format here would replace them."
-        >
-          <span className="mono">{fixed.name ? `${fixed.type} · ${fixed.name}` : fixed.type}</span>
-        </Row>
-      </div>
-    )
-  return (
-    <div className="stack">
-      <Row
-        label="Format"
-        hint="How each frame becomes records. json: a JSON object or array. cot_xml: one record per Cursor-on-Target <event>. xml: one record per element with the name set below. Protobuf and codec plugins are chosen on the source's Transport tab (Codec)."
-      >
-        <FieldSelect
-          ariaLabel="Codec"
-          fields={DECODE_CODECS.map((name) => ({ name }))}
-          value={type}
-          onChange={(t) => onChange(t === 'xml' ? { type: t, record_element: '' } : { type: t ?? 'json' })}
-          style={{ width: 160 }}
-        />
-      </Row>
-      {type === 'json' && (
-        <>
-          <Row label="Records at" hint="Path to the array of records in each frame (adsb.lol: ac). Empty: the frame is the record, or each element of an array.">
-            <Input
-              style={INPUT}
-              aria-label="Records path"
-              value={String(value.records ?? '')}
-              onChange={(e) => onChange({ ...value, records: e.target.value || undefined })}
-              spellCheck={false}
-            />
-          </Row>
-          <Row label="Frame fields" hint="Frame-level fields copied into every record under _frame (e.g. now), comma-separated.">
-            <Input
-              style={INPUT}
-              aria-label="Frame context fields"
-              value={((value.context as string[]) ?? []).join(', ')}
-              onChange={(e) => {
-                const c = words(e.target.value)
-                onChange({ ...value, context: c.length ? c : undefined })
-              }}
-              spellCheck={false}
-            />
-          </Row>
-        </>
-      )}
-      {type === 'xml' && (
-        <Row label="Record element" hint="One record per element with this name.">
-          <Input style={INPUT} aria-label="Record element" value={String(value.record_element ?? '')} onChange={(e) => onChange({ ...value, record_element: e.target.value })} spellCheck={false} />
-        </Row>
-      )}
     </div>
   )
 }

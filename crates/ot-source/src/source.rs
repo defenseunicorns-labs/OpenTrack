@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::flow::Step;
 use crate::pipeline::PipelineSpec;
 use crate::transport::TransportConfig;
 
@@ -185,6 +186,9 @@ pub enum SourceError {
     Tracker(String),
     #[error("mapping targets schema version {wanted}, but it is {found}")]
     SchemaVersion { wanted: u32, found: String },
+    /// The flow's shape, or a step's own setting.
+    #[error("{0}")]
+    Flow(String),
     #[error("rule {rule:?} maps ext.{key}, which schema version {version} does not define")]
     UndeclaredExtension {
         rule: String,
@@ -228,56 +232,64 @@ impl SourceSpec {
     /// schema checks): see [`Self::problems`] for all of them.
     pub fn validate(&self) -> Result<(), SourceError> {
         match self.checks(None).into_iter().next() {
-            Some((_, _, e)) => Err(e),
+            Some(c) => Err(c.error),
             None => Ok(()),
         }
     }
 
-    /// Everything that stops this source running, each with the pipeline
-    /// stage (and, where there is one, the setting) it belongs to. Empty:
-    /// the source is complete and may be enabled. A problem of kind
+    /// Everything that stops this source running, each on the step of its
+    /// flow it belongs to (and, where there is one, the setting). Empty: the
+    /// source is complete and may be enabled. A problem of kind
     /// [`ProblemKind::Invalid`] also stops it being saved; the rest leave
     /// it a draft.
     pub fn problems(&self, schema: Option<&crate::schema::ExtensionSchema>) -> Vec<Problem> {
         self.checks(Some(schema))
             .into_iter()
-            .map(|(stage, field, e)| Problem {
-                kind: match e {
-                    SourceError::BadId(_) | SourceError::NoName => ProblemKind::Invalid,
-                    _ => ProblemKind::Incomplete,
+            .map(|c| Problem {
+                kind: if c.invalid {
+                    ProblemKind::Invalid
+                } else {
+                    ProblemKind::Incomplete
                 },
-                stage,
-                field: field.map(str::to_owned),
-                message: e.to_string(),
+                node: c.node,
+                field: c.field.map(str::to_owned),
+                message: c.error.to_string(),
             })
             .collect()
     }
 
-    /// Every check, in order, each failure with its stage and setting.
+    /// Every check, in order, each failure with its step and setting.
     /// `schema`: `None` skips the extension schema checks; `Some(None)`
-    /// means the mapping's schema version is not published.
-    fn checks(
-        &self,
-        schema: Option<Option<&crate::schema::ExtensionSchema>>,
-    ) -> Vec<(Option<Stage>, Option<&'static str>, SourceError)> {
+    /// means the mappings' schema version is not published.
+    fn checks(&self, schema: Option<Option<&crate::schema::ExtensionSchema>>) -> Vec<Check> {
         let mut out = Vec::new();
+        let input = || Some(crate::flow::INPUT.to_owned());
+        let push = |out: &mut Vec<Check>,
+                    node: Option<String>,
+                    field: Option<&'static str>,
+                    error: SourceError| {
+            let invalid = matches!(error, SourceError::BadId(_) | SourceError::NoName);
+            out.push(Check {
+                node,
+                field,
+                error,
+                invalid,
+            });
+        };
         if let Some(label) = &self.security
             && let Err(e) = label.validate()
         {
-            out.push((
-                Some(Stage::Output),
-                Some("security"),
-                SourceError::Tracker(e),
-            ));
+            push(&mut out, None, Some("security"), SourceError::Tracker(e));
         }
         if let Some(m) = &self.emitter_motion
             && let Err(e) = m.check()
         {
-            out.push((
-                Some(Stage::Output),
+            push(
+                &mut out,
+                None,
                 Some("emitter_motion"),
                 SourceError::Tracker(e),
-            ));
+            );
         }
         let id_ok = !self.id.is_empty()
             && self.id.len() <= 64
@@ -286,18 +298,45 @@ impl SourceSpec {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
         if !id_ok {
-            out.push((None, Some("id"), SourceError::BadId(self.id.clone())));
+            push(
+                &mut out,
+                None,
+                Some("id"),
+                SourceError::BadId(self.id.clone()),
+            );
         }
         if self.name.trim().is_empty() {
-            out.push((None, Some("name"), SourceError::NoName));
+            push(&mut out, None, Some("name"), SourceError::NoName);
         }
-        for e in self.pipeline.mapping.problems() {
-            out.push((Some(Stage::Map), None, e.into()));
+        // The flow's shape, then each step's own settings.
+        for p in self.pipeline.shape_problems() {
+            out.push(Check {
+                node: p.node,
+                field: None,
+                error: SourceError::Flow(p.message),
+                invalid: p.invalid,
+            });
         }
-        if let Some(t) = &self.pipeline.tracker
-            && let Err(e) = t.validate()
-        {
-            out.push((Some(Stage::Tracker), None, SourceError::Tracker(e)));
+        for n in &self.pipeline.nodes {
+            let node = || Some(n.id.clone());
+            match &n.step {
+                Step::Map(m) => {
+                    for e in m.mapping.problems() {
+                        push(&mut out, node(), None, e.into());
+                    }
+                }
+                Step::Tracker(t) => {
+                    if let Err(e) = t.validate() {
+                        push(&mut out, node(), None, SourceError::Tracker(e));
+                    }
+                }
+                Step::Nats(nats) => {
+                    if let Err(e) = check_subject(&nats.subject) {
+                        push(&mut out, node(), Some("subject"), SourceError::Flow(e));
+                    }
+                }
+                _ => {}
+            }
         }
         let grpc = matches!(
             self.transport,
@@ -315,32 +354,35 @@ impl SourceSpec {
         if (plugin || (protobuf && !grpc))
             && let Err(e) = crate::codec::Codec::new(self.pipeline.codec.clone())
         {
-            out.push((
-                Some(Stage::Decode),
-                None,
+            push(
+                &mut out,
+                input(),
+                Some("codec"),
                 SourceError::Tracker(e.to_string()),
-            ));
+            );
         }
         let missing = self.transport.missing();
         for (field, what) in &missing {
-            out.push((
-                Some(Stage::Source),
+            push(
+                &mut out,
+                input(),
                 Some(*field),
                 SourceError::Transport(format!("{what} is not set")),
-            ));
+            );
         }
         if let Err(e) = self.transport.check() {
-            out.push((Some(Stage::Source), None, SourceError::Transport(e)));
+            push(&mut out, input(), None, SourceError::Transport(e));
         }
         // gRPC carries protobuf: the method must fit the codec's message.
         if grpc {
             match crate::transport::ProtoContext::of(&self.pipeline.codec) {
-                Err(e) => out.push((Some(Stage::Decode), None, SourceError::Transport(e))),
-                Ok(None) => out.push((
-                    Some(Stage::Decode),
-                    None,
+                Err(e) => push(&mut out, input(), Some("codec"), SourceError::Transport(e)),
+                Ok(None) => push(
+                    &mut out,
+                    input(),
+                    Some("codec"),
                     SourceError::Transport("a gRPC source decodes with the protobuf codec".into()),
-                )),
+                ),
                 Ok(Some(_)) if !missing.is_empty() => {}
                 Ok(Some(proto)) => {
                     let fit = match &self.transport {
@@ -353,7 +395,7 @@ impl SourceSpec {
                         _ => Ok(()),
                     };
                     if let Err(e) = fit {
-                        out.push((Some(Stage::Source), None, SourceError::Transport(e)));
+                        push(&mut out, input(), None, SourceError::Transport(e));
                     }
                 }
             }
@@ -362,39 +404,52 @@ impl SourceSpec {
         | TransportConfig::TcpServer { framing, .. } = &self.transport
             && let Err(e) = crate::frame::Framer::new(framing.clone())
         {
-            out.push((Some(Stage::Source), Some("framing"), e.into()));
+            push(&mut out, input(), Some("framing"), e.into());
         }
         // Last, so that a broken setting is reported before its security.
         if let Some(e) = self.authentication_problem() {
-            out.push((
-                Some(Stage::Source),
+            push(
+                &mut out,
+                input(),
                 Some("unauthenticated"),
                 SourceError::Unauthenticated(e),
-            ));
+            );
         }
         if let Some(schema) = schema {
-            let wanted = self.pipeline.mapping.schema_version;
+            let wanted = self.pipeline.schema_version();
+            let maps: Vec<&crate::flow::FlowNode> = self
+                .pipeline
+                .nodes
+                .iter()
+                .filter(|n| matches!(n.step, Step::Map(_)))
+                .collect();
             match schema.filter(|s| s.version == wanted) {
-                None => out.push((
-                    Some(Stage::Map),
+                None if !maps.is_empty() => push(
+                    &mut out,
+                    Some(maps[0].id.clone()),
                     Some("schema_version"),
                     SourceError::SchemaVersion {
                         wanted,
                         found: "not published".into(),
                     },
-                )),
+                ),
+                None => {}
                 Some(schema) => {
-                    for (key, rules) in crate::schema::mapped_ext_keys(&self.pipeline.mapping) {
-                        if schema.field(&key).is_none() {
-                            out.push((
-                                Some(Stage::Map),
-                                None,
-                                SourceError::UndeclaredExtension {
-                                    rule: rules[0].clone(),
-                                    key,
-                                    version: wanted,
-                                },
-                            ));
+                    for n in maps {
+                        let Step::Map(m) = &n.step else { continue };
+                        for (key, rules) in crate::schema::mapped_ext_keys(&m.mapping) {
+                            if schema.field(&key).is_none() {
+                                push(
+                                    &mut out,
+                                    Some(n.id.clone()),
+                                    None,
+                                    SourceError::UndeclaredExtension {
+                                        rule: rules[0].clone(),
+                                        key,
+                                        version: wanted,
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -404,13 +459,41 @@ impl SourceSpec {
     }
 }
 
+/// One failed check: the step and setting it concerns, and whether it also
+/// stops a save.
+struct Check {
+    node: Option<String>,
+    field: Option<&'static str>,
+    error: SourceError,
+    invalid: bool,
+}
+
+/// A NATS subject a NATS topic step may publish on: concrete (no wildcards),
+/// dot-separated tokens without spaces. (The server also keeps it outside
+/// the system tracks' subjects.)
+pub fn check_subject(subject: &str) -> Result<(), String> {
+    if subject.trim().is_empty() {
+        return Err("the subject is not set".into());
+    }
+    let ok = subject
+        .split('.')
+        .all(|t| !t.is_empty() && t != "*" && t != ">" && !t.chars().any(char::is_whitespace));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "{subject:?} is not a NATS subject to publish on (dot-separated tokens, no wildcards or spaces)"
+        ))
+    }
+}
+
 /// One reason a source may not run (see [`SourceSpec::problems`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Problem {
     pub kind: ProblemKind,
-    /// The pipeline stage it belongs to; `None` for the source as a whole
-    /// (its id and name).
-    pub stage: Option<Stage>,
+    /// The step of the flow it belongs to (`input` for the transport and
+    /// codec); `None` for the source as a whole.
+    pub node: Option<String>,
     /// The setting, where there is one (for example `host`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
@@ -424,26 +507,6 @@ pub enum ProblemKind {
     Invalid,
     /// The source saves as a draft, which cannot be enabled.
     Incomplete,
-}
-
-/// A source's pipeline stages, in the order a frame meets them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Stage {
-    /// The transport and its framing.
-    Source,
-    /// The codec.
-    Decode,
-    Map,
-    StaticJoin,
-    Registry,
-    Affiliation,
-    Filter,
-    Tracker,
-    Throttle,
-    /// What the source reports and how: tracks or detections, security
-    /// label, priority.
-    Output,
 }
 
 #[cfg(test)]
@@ -505,13 +568,13 @@ mod tests {
     }
 
     #[test]
-    fn problems_name_their_stage_and_a_draft_is_only_incomplete() {
+    fn problems_name_their_step_and_a_draft_is_only_incomplete() {
         let ok: SourceSpec = serde_json::from_value(spec("cot")).unwrap();
         assert_eq!(
             ok.problems(None),
             vec![Problem {
                 kind: ProblemKind::Incomplete,
-                stage: Some(Stage::Map),
+                node: Some("map".into()),
                 field: Some("schema_version".into()),
                 message: "mapping targets schema version 1, but it is not published".into(),
             }]
@@ -527,16 +590,20 @@ mod tests {
         let found: Vec<_> = draft
             .problems(None)
             .into_iter()
-            .map(|p| (p.kind, p.stage, p.field))
+            .map(|p| (p.kind, p.node, p.field))
             .collect();
         let incomplete = ProblemKind::Incomplete;
         assert_eq!(
             found,
             vec![
-                (incomplete, Some(Stage::Map), None),
-                (incomplete, Some(Stage::Source), Some("host".into())),
-                (incomplete, Some(Stage::Source), Some("port".into())),
-                (incomplete, Some(Stage::Map), Some("schema_version".into())),
+                (incomplete, Some("map".into()), None),
+                (incomplete, Some("input".into()), Some("host".into())),
+                (incomplete, Some("input".into()), Some("port".into())),
+                (
+                    incomplete,
+                    Some("map".into()),
+                    Some("schema_version".into())
+                ),
             ]
         );
         assert!(matches!(draft.validate(), Err(SourceError::Mapping(_))));
@@ -552,7 +619,7 @@ mod tests {
         let found: Vec<_> = s
             .problems(None)
             .into_iter()
-            .map(|p| (p.kind, p.stage, p.message))
+            .map(|p| (p.kind, p.node, p.message))
             .collect();
         assert_eq!(
             found[0],
@@ -563,7 +630,10 @@ mod tests {
             )
         );
         assert_eq!(
-            found.iter().filter(|p| p.1 == Some(Stage::Map)).count(),
+            found
+                .iter()
+                .filter(|p| p.1.as_deref() == Some("map"))
+                .count(),
             5,
             "unknown field, no position (twice), duplicate rule, schema: {found:?}"
         );

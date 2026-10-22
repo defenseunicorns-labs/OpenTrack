@@ -9,17 +9,6 @@ import { ProtoSchema } from './ProtoSchema'
 type Transport = SourceSpec['transport']
 type Codec = SourceSpec['pipeline']['codec']
 
-const TRANSPORTS: Record<string, { label: string; initial: Transport }> = {
-  http_poll: { label: 'HTTP poll', initial: { type: 'http_poll', url: '', interval_secs: 5 } },
-  websocket: { label: 'WebSocket client', initial: { type: 'websocket', url: '' } },
-  tcp_client: { label: 'TCP client', initial: { type: 'tcp_client', host: '', port: 0, framing: { type: 'lines' } } },
-  tcp_server: { label: 'TCP server (listen)', initial: { type: 'tcp_server', bind: '0.0.0.0:8087', framing: { type: 'lines' } } },
-  udp: { label: 'UDP (unicast or multicast)', initial: { type: 'udp', bind: '0.0.0.0:6969' } },
-  mqtt: { label: 'MQTT subscribe', initial: { type: 'mqtt', url: '', topics: [] } },
-  grpc_client: { label: 'gRPC client (call the producer)', initial: { type: 'grpc_client', url: '', method: '' } },
-  grpc_server: { label: 'gRPC server (producers call)', initial: { type: 'grpc_server', bind: '0.0.0.0:50051' } },
-}
-
 const QOS: Record<string, { label: string }> = {
   '0': { label: '0 · at most once' },
   '1': { label: '1 · at least once' },
@@ -40,14 +29,6 @@ const ENDIANS: Record<string, { label: string }> = {
 
 /** Methods offered for an HTTP poll; any other the spec holds is offered too. */
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH']
-
-const CODECS: Record<string, { label: string; initial: Codec }> = {
-  json: { label: 'JSON', initial: { type: 'json' } },
-  cot_xml: { label: 'Cursor-on-Target XML', initial: { type: 'cot_xml' } },
-  xml: { label: 'XML (generic)', initial: { type: 'xml', record_element: 'record' } },
-  protobuf: { label: 'Protobuf (.proto)', initial: { type: 'protobuf', files: {}, message: '' } },
-  plugin: { label: 'Plugin', initial: { type: 'plugin', plugin: '', options: {} } },
-}
 
 /** A field's label with its ⓘ explanation beside it. */
 function FieldLabel({ label, help, htmlFor }: { label: string; help?: React.ReactNode; htmlFor?: string }) {
@@ -278,13 +259,19 @@ function TlsSettings({ transport, onTransport }: { transport: Transport; onTrans
   )
 }
 
-/** Transport and codec settings for a source. */
+/**
+ * A source's settings for one step: `source`, its transport's (connection, TLS, framing); `decode`,
+ * its codec's (record path, .proto files, plugin options). Which transport and codec it has is the
+ * step itself, chosen on the canvas.
+ */
 export function TransportForm({
+  part,
   transport,
   codec,
   onTransport,
   onCodec,
 }: {
+  part: 'source' | 'decode'
   transport: Transport
   codec: Codec
   onTransport: (t: Transport) => void
@@ -297,9 +284,9 @@ export function TransportForm({
   }
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   useEffect(() => {
-    if (codec.type !== 'plugin') return
+    if (part !== 'decode' || codec.type !== 'plugin') return
     api.plugins().then(setPlugins, () => setPlugins([]))
-  }, [codec.type])
+  }, [part, codec.type])
   const plugin = plugins.find((p) => p.name === codec.plugin)
   const pluginOptions = (codec.options as Record<string, unknown> | undefined) ?? {}
   const choosePlugin = (name: string) => {
@@ -311,45 +298,20 @@ export function TransportForm({
       onTransport({ ...transport, framing: structuredClone(p.framing) })
     }
   }
-  // CoT arrives as back-to-back XML events, often over several lines: framed by `</event>`, not by
-  // lines. Choosing CoT XML (or a stream transport for it) switches the default lines framing.
-  const streamed = (t: Transport) => t.type === 'tcp_client' || t.type === 'tcp_server'
-  const cotFraming = (t: Transport, codecType: unknown): Transport =>
-    codecType === 'cot_xml' && streamed(t) && (t.framing as { type?: string } | undefined)?.type === 'lines'
-      ? { ...t, framing: { type: 'end_tag', tag: '</event>' } }
-      : t
-  const chooseCodec = (id: string) => {
-    onCodec(structuredClone(CODECS[id].initial))
-    const next = cotFraming(transport, id)
-    if (next !== transport) onTransport(next)
-  }
   const [proto, setProto] = useState<ProtoDescription | null>(null)
   const grpc = transport.type === 'grpc_client' || transport.type === 'grpc_server'
+  // The gRPC methods come from the Decode step's .proto files.
+  const protoFiles = codec.type === 'protobuf' ? (codec.files as Record<string, string> | undefined) : undefined
+  useEffect(() => {
+    if (part !== 'source' || !grpc || !protoFiles || Object.keys(protoFiles).length === 0) return
+    api.describeProtobuf(protoFiles).then(setProto, () => setProto(null))
+  }, [part, grpc, protoFiles])
   const framing = (transport.framing as Record<string, unknown> | undefined) ?? { type: 'lines' }
   const setFraming = (k: string, v: unknown) => set('framing', { ...framing, [k]: v })
 
   return (
     <div className="form-grid">
-      <div className="field">
-        <FieldLabel
-          label="Transport"
-          help="How frames come off the wire. Client transports connect out to the feed; server, UDP and gRPC server listen for it. A dropped connection or failed run is restarted with backoff. Changing it resets its settings."
-        />
-        <Select
-          ariaLabel="Transport"
-          options={TRANSPORTS}
-          value={transport.type}
-          onChange={(id) => onTransport(cotFraming(structuredClone(TRANSPORTS[id].initial), codec.type))}
-        />
-      </div>
-      <div className="field">
-        <FieldLabel
-          label="Codec"
-          help="How each frame becomes records. JSON: an object, or each element of an array. Cursor-on-Target: one record per <event>. XML: one record per record element. Protobuf: one message per frame, decoded with the producer's .proto files. Plugin: a codec plugin from Settings › Plugins."
-        />
-        <Select ariaLabel="Codec" options={CODECS} value={codec.type} onChange={chooseCodec} />
-      </div>
-      {codec.type === 'json' && (
+      {part === 'decode' && codec.type === 'json' && (
         <Text
           label="Record array path"
           help="Path to the array of records inside each frame, e.g. ac or data.items. Blank: the frame is the record, or each element if the frame is an array. The probe suggests one when frames wrap their records."
@@ -362,7 +324,20 @@ export function TransportForm({
           }}
         />
       )}
-      {codec.type === 'plugin' && (
+      {part === 'decode' && codec.type === 'json' && (
+        <ListSetting
+          label="Frame fields"
+          value={codec.context}
+          onChange={(v) => {
+            const next: Codec = { ...codec, context: v }
+            if (!v.length) delete next.context
+            onCodec(next)
+          }}
+          placeholder="optional, comma separated, e.g. now"
+          help="Frame-level fields copied into every record under _frame, e.g. now."
+        />
+      )}
+      {part === 'decode' && codec.type === 'plugin' && (
         <>
           <div className="field">
             <FieldLabel
@@ -384,11 +359,11 @@ export function TransportForm({
           />
         </>
       )}
-      {codec.type === 'protobuf' && <ProtoSchema codec={codec} onCodec={onCodec} onDescription={setProto} />}
-      {grpc && codec.type !== 'protobuf' && (
-        <div className="field wide notice">gRPC carries protobuf: choose the Protobuf codec and add the producer&apos;s .proto files.</div>
+      {part === 'decode' && codec.type === 'protobuf' && <ProtoSchema codec={codec} onCodec={onCodec} onDescription={setProto} />}
+      {part === 'decode' && grpc && codec.type !== 'protobuf' && (
+        <div className="field wide notice">gRPC carries protobuf: use a Protobuf decode step, with the producer&apos;s .proto files.</div>
       )}
-      {transport.type === 'grpc_client' && (
+      {part === 'source' && transport.type === 'grpc_client' && (
         <>
           <Text
             label="URL"
@@ -450,7 +425,7 @@ export function TransportForm({
           />
         </>
       )}
-      {transport.type === 'grpc_server' && (
+      {part === 'source' && transport.type === 'grpc_server' && (
         <>
           <Text
             label="Bind address"
@@ -502,7 +477,7 @@ export function TransportForm({
           />
         </>
       )}
-      {codec.type === 'xml' && (
+      {part === 'decode' && codec.type === 'xml' && (
         <Text
           label="Record element"
           value={codec.record_element}
@@ -511,7 +486,7 @@ export function TransportForm({
         />
       )}
 
-      {(transport.type === 'http_poll' || transport.type === 'websocket') && (
+      {part === 'source' && (transport.type === 'http_poll' || transport.type === 'websocket') && (
         <Text
           label="URL"
           wide
@@ -525,7 +500,7 @@ export function TransportForm({
           }
         />
       )}
-      {transport.type === 'http_poll' && (
+      {part === 'source' && transport.type === 'http_poll' && (
         <>
           <Text
             label="Interval (s)"
@@ -571,7 +546,7 @@ export function TransportForm({
           />
         </>
       )}
-      {transport.type === 'websocket' && (
+      {part === 'source' && transport.type === 'websocket' && (
         <>
           <Text
             label="In-band error path"
@@ -602,7 +577,7 @@ export function TransportForm({
           />
         </>
       )}
-      {transport.type === 'tcp_client' && (
+      {part === 'source' && transport.type === 'tcp_client' && (
         <>
           <Text
             label="Host"
@@ -620,7 +595,7 @@ export function TransportForm({
           />
         </>
       )}
-      {(transport.type === 'tcp_server' || transport.type === 'udp') && (
+      {part === 'source' && (transport.type === 'tcp_server' || transport.type === 'udp') && (
         <Text
           label="Bind address"
           value={transport.bind}
@@ -633,7 +608,7 @@ export function TransportForm({
           }
         />
       )}
-      {transport.type === 'udp' && (
+      {part === 'source' && transport.type === 'udp' && (
         <>
           <Text
             label="Multicast group"
@@ -651,7 +626,7 @@ export function TransportForm({
           />
         </>
       )}
-      {transport.type === 'mqtt' && (
+      {part === 'source' && transport.type === 'mqtt' && (
         <>
           <Text
             label="Broker URL"
@@ -706,8 +681,39 @@ export function TransportForm({
           </div>
         </>
       )}
-      {TLS_TRANSPORTS.includes(transport.type) && <TlsSettings transport={transport} onTransport={onTransport} />}
-      {(transport.type === 'tcp_client' || transport.type === 'tcp_server') && (
+      {part === 'source' && transport.type === 'file' && (
+        <>
+          <Text
+            label="Path"
+            wide
+            value={transport.path}
+            onChange={(v) => set('path', v)}
+            placeholder="recorded/feed.ndjson"
+            help="Recorded data to replay: a file, or every file in a directory, by name. A relative path is under the data directory; a file source reads only there. Mappings read the file name as _frame.file."
+          />
+          <Text
+            label="Extension"
+            value={transport.extension}
+            onChange={(v) => set('extension', v)}
+            placeholder="optional, e.g. ndjson"
+            help="In a directory, only the files with this extension. Blank: every file."
+          />
+          <Text
+            label="Frames per second"
+            type="number"
+            value={transport.frames_per_second}
+            onChange={(v) => set('frames_per_second', num(v))}
+            placeholder="blank: as fast as taken"
+            help="Pace the replay, in frames per second. Blank: as fast as the pipeline takes them."
+          />
+          <div className="field">
+            <FieldLabel label="Repeat" help="Start again from the first file after the last." />
+            <Toggle size="sm" value={transport.repeat === true} onChange={(on) => set('repeat', on || undefined)} aria-label="Repeat" />
+          </div>
+        </>
+      )}
+      {part === 'source' && TLS_TRANSPORTS.includes(transport.type) && <TlsSettings transport={transport} onTransport={onTransport} />}
+      {part === 'source' && (transport.type === 'tcp_client' || transport.type === 'tcp_server') && (
         <>
           <div className="field">
             <FieldLabel

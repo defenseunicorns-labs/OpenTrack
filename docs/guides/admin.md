@@ -347,7 +347,7 @@ pipelines").
 | Variable | Default | |
 |---|---|---|
 | `OT_ENGINE_CONSUMER` | `engine-1` | The engine's consumer name on the observation streams. |
-| `OT_CONFIRM_AFTER` | `3` | Reports a new system track needs before it is confirmed (at least 1). A source's own **Confirm after** (in its publish stage) overrides it for that source's tracks. |
+| `OT_CONFIRM_AFTER` | `3` | Reports a new system track needs before it is confirmed (at least 1). A source's own **Confirm after** (in its Feed settings) overrides it for that source's tracks. |
 | `OT_DROP_AFTER_HOURS` | `6` | Hours without a report before a system track is dropped and deleted downstream. |
 | `OT_CORRELATION` | `kinematics-metadata` | How tracks with no shared identifier pair, until someone saves correlation settings: `identifiers` (never), `kinematics`, or `kinematics-metadata` (kinematics, vetoed by conflicting identifiers or domains). Once correlation settings are saved in the Correlation tab, the saved ones win and this is ignored; the engine logs a warning at start when it is set and the saved approach differs. |
 | `OT_WRITER_CONSUMER` | `writer-1` | The writer's consumer name; unique per writer. |
@@ -475,7 +475,7 @@ FIPS module ([FIPS cryptography](#fips-cryptography)).
 | OCSP responder | TCP, HTTP (or HTTPS) | Outbound | The client certificate's authority information access URL, or `OT_TLS_CLIENT_OCSP_URL` | The revocation status of a client certificate presented to the control plane (with `OT_TLS_CLIENT_CA`) | OCSP requests and responses (RFC 6960); answers are signed by the CA or its delegated responder, so plain HTTP is usual. 5 s limit, no redirects |
 | Admin listener | TCP; HTTP/1.1 and HTTP/2, HTTPS with a certificate | Inbound | `OT_ADMIN_BIND`, none | The admin API routes, and the web UI and the rest of the API ([Admin listener](#admin-listener)); only here while it is set | As the control plane, or `OT_ADMIN_TLS_CERT`/`OT_ADMIN_TLS_KEY` and `OT_ADMIN_TLS_CLIENT_CA`; the same sign-in |
 | Redis | TCP, RESP | Outbound | `redis://127.0.0.1:6379` | Observation streams, the live picture, the outbox, commands between roles | `rediss://`, `OT_REDIS_CA`, mutual TLS with `OT_REDIS_CERT`/`OT_REDIS_KEY`; a password in the URL |
-| NATS | TCP, NATS | Outbound | `nats://127.0.0.1:4222` | Tracks (`tracks.>`, JetStream), contacts (`contacts.>`) and raw output (`opentrack.raw.<source>`); the multi-node sync boundary (`<OT_SYNC_PREFIX>.out.*` and `.in.*`, prefix `ot.sync`) | `tls://`, `OT_NATS_CA`, mutual TLS with `OT_NATS_CERT`/`OT_NATS_KEY`; `.creds`, a token, or a user and password |
+| NATS | TCP, NATS | Outbound | `nats://127.0.0.1:4222` | Tracks (`tracks.>`, JetStream), contacts (`contacts.>`) and sources' NATS topics (their subjects); the multi-node sync boundary (`<OT_SYNC_PREFIX>.out.*` and `.in.*`, prefix `ot.sync`) | `tls://`, `OT_NATS_CA`, mutual TLS with `OT_NATS_CERT`/`OT_NATS_KEY`; `.creds`, a token, or a user and password |
 | OpenTelemetry | TCP; OTLP over gRPC (4317) or HTTP (4318) | Outbound | Off | Logs (the audit record included), traces and metrics to the collector ([OpenTelemetry](#opentelemetry)) | `https://` endpoint, `OTEL_EXPORTER_OTLP_CERTIFICATE`, mutual TLS, headers |
 | TAK Server output | TCP, CoT XML | Outbound | None configured | Tracks to a TAK Server's streaming input ([TAK output](#tak-output)) | TLS (8089) with a client certificate; 8087 is plaintext |
 | TAK multicast output | UDP, CoT XML, IPv4 or IPv6 | Outbound | Group `239.2.3.1`, port `6969`, TTL 1 (IPv6: hop limit) | Tracks to ATAK and WinTAK on the network | None: always plaintext |
@@ -941,15 +941,38 @@ result on the Sources and Correlation tabs.
 
 ### Sources
 
-**Sources → Add source** runs a wizard: transport, framing, codec, then the pipeline designer,
-with a live preview of each stage on sample data. Enable a source to start it. Each save is a
-revision: the source's **History** tab lists them, with who saved each and the spec it saved. Write secrets as
-`${env:NAME}`, resolved when the source starts. Only admins see a source's secrets: for viewers and
-track managers, passwords, tokens, header and metadata values, credentials in URLs and API keys in
-messages show as `••••••` (`${env:…}` references stay visible). See the README, "Sources and pipelines", and `docs/examples/`.
+**Sources → Add source** asks for a name, an id (from the name; it never changes) and a transport,
+and opens the new source in its editor as a **draft**, with its input, an empty Map and the Output
+connected. A source's editor is a workspace of its steps:
+- **The step list** (left): **Records** (Reject, Map), **Observations** (Filter, Entity links,
+  Affiliation, Tracker, Throttle) and **Outputs** (Output, NATS topic). Drag a step onto the
+  workspace, or select it and press Enter to add it in view. Any step but the Output may be used
+  any number of times.
+- **The workspace:** steps go where they are dragged, and are connected by dragging from a step's
+  right edge to another's left. A step takes one input and can feed any number of steps, so a
+  flow can branch. Records come from the input through Reject steps to a **Map**, which turns them
+  into observations; the steps after a Map take observations; the **Output** (system tracks, to
+  correlation, one per source) and **NATS topics** (the mapped data, as JSON, on a subject of your
+  own, without correlation) end a branch. A connection that would feed a step the wrong data, give
+  it a second input or loop back is refused as you draw it. Select a step or a connection and press
+  Delete to remove it; the input stays.
+- **A step's settings** open beside the workspace when it is clicked, with its samples. The
+  input's are the transport and the codec. Problems show on the step they belong to, as you edit.
+- **Feed** (top row): the source's own settings (name, description, whether it reports tracks or
+  detections, publishing alone, confirming, priority, security label, emitter motion), its status
+  and its history.
 
-**Probing a feed.** The wizard's probe connects with the transport as set and captures what
-arrives. Choosing Cursor-on-Target XML on a TCP transport frames by the end tag `</event>` (CoT
+A draft can be saved but not enabled; enable a complete source to start it. **JSON** (top row)
+shows the whole source as JSON, editable. Each save is a revision: **Feed → History** lists them,
+with who saved each and the spec it saved. Write secrets as `${env:NAME}`, resolved when the source
+starts. Only admins see a source's secrets: for viewers and track managers, passwords, tokens,
+header and metadata values, credentials in URLs and API keys in messages show as `••••••`
+(`${env:…}` references stay visible). See [reference.md](../reference.md), "Sources and
+pipelines", and `docs/examples/`.
+
+**Capturing samples.** **Capture samples** (on the input's settings) connects with the transport
+as set and captures what arrives; the codec it detects and a mapping it suggests are offered on
+the input and the Map, applied only when chosen. Choosing Cursor-on-Target XML on a TCP transport frames by the end tag `</event>` (CoT
 events arrive back to back, often over several lines). A probe that connects but captures nothing
 says why it may be: **no bytes arrived** (the feed is idle; the port needs TLS, since a TLS server
 waits silently for a handshake; or the port only takes data in, as a TAK Server input does), or
@@ -959,13 +982,13 @@ streaming port (8089) with TLS and a client certificate it issued; its input por
 **A listening source must authenticate its senders.** `tcp_server` needs TLS with a client CA
 (mutual TLS, a certificate required: not `client_cert_optional`); `grpc_server` needs that or a
 bearer `token`. Otherwise the source is saved and run only with the risk accepted on it,
-`"unauthenticated": "accepted"` (the red **Accept unauthenticated senders** toggle on its Transport
-tab; always needed for `udp`, which cannot carry TLS). The flag is refused where it is not needed
+`"unauthenticated": "accepted"` (the red **Accept unauthenticated senders** toggle in its input's
+settings; always needed for `udp`, which cannot carry TLS). The flag is refused where it is not needed
 (a client transport, or a listener that authenticates), so it only ever marks a real exception;
 each one needs the authorising official's acceptance ([hardening checklist](../security/hardening.md#encrypt-every-link)).
 The source list shows an UNAUTHENTICATED badge on such sources, and the decision log records the
 flag set or cleared. **Upgrading to 0.4.5:** an enabled listener saved before without sender
-authentication or the flag is not started; its state is *not started* and its Status tab says why.
+authentication or the flag is not started; its state is *not started* and its status says why.
 Add a client CA or token, or set the flag, and save. A configuration import is checked the same way.
 
 **UDP multicast.** A `udp` source joins `multicast_group` if one is set, IPv4 (`239.2.3.1`, with
@@ -975,29 +998,29 @@ this node for an IPv4 group, an interface name (`eth0`) or index (`2`) for an IP
 the system's choice. A name is looked up when the source starts, so a missing interface shows as
 the source's error.
 
-The pipeline designer's **Live preview** (right-hand pane) is a dry run of the pipeline as edited,
-not yet saved, over the source's stored samples; **Capture samples** replaces them with up to 20
-frames (or 15 s) of the live feed. Nothing is published. The pane shows the first 5 samples, each
-a decoded record in decode order (the first frame's, then the next frame's if it has fewer), under
-its own header (#1, #2…) as pretty-printed JSON, **as they are after the stage selected on the
-left**:
-- **Transport:** each frame the samples came from, once, as received ("frame 1 (samples
-  #1–#5)"): JSON pretty-printed, other text as it is, binary escaped (`\xNN`) with its length; a
-  frame over 64 KiB shows only its start.
-- **Decode:** the record. A frame that does not decode is a sample of its own, with the error.
-- **Reject:** the record, if kept. **Map:** what the mapping made of it: the observation (before
-  the identity join fills it in, when there is one), or a static rule's identity fields.
-- **Identity join, Entity links, Affiliation, Filter, Tracker, Throttle:** the observation after
-  each. A tracker's report shows under the sample whose plot made it.
-- **Publish:** the message as it would be published for a new system track seeded from the
+A step's **Samples** are a dry run of the source as edited, not yet saved, over its stored samples;
+**Capture samples** replaces them with up to 20 frames (or 15 s) of the live feed. Nothing is
+published. A draft runs as far as it can. The first 5 samples show, each a decoded record in decode
+order (the first frame's, then the next frame's if it has fewer), under its own header (#1, #2…) as
+pretty-printed JSON, **as they leave the selected step**:
+- **Input:** each frame the samples came from, once, as received ("frame 1 (samples #1–#5)"):
+  JSON pretty-printed, other text as it is, binary escaped (`\xNN`) with its length; a frame over
+  64 KiB shows only its start. A frame that does not decode is a sample of its own, with the error.
+- **Reject:** the record, if kept. **Map:** the observation, its identity fields from static rules
+  joined in, or a static rule's identity fields.
+- **Entity links, Affiliation, Filter, Tracker, Throttle:** the observation after each. A tracker's
+  report shows under the sample whose plot made it.
+- **Output:** the message as it would be published for a new system track seeded from the
   observation (the GOLD fields and the output schema's attributes; its UID is correlation's to
-  assign, and correlation decides whether and when it is published).
+  assign, and correlation decides whether and when it is published). **NATS topic:** the JSON it
+  publishes.
 
-Sample #1 is the same record at every stage. A sample dropped on the way says where and why
-("rejected: no_position", "dropped by Filter: drop_if matched"), and a tracker waiting for the rest
-of a scan says it held the sample. The frames' other records are processed too (they count, and
-move the tracker and throttle) but not shown. Above the samples, one line counts what the pipeline
-did with all the stored samples (frames, records, dropped…), with any errors.
+Sample #1 is the same record at every step. A sample dropped on the way to the step says where and
+why ("rejected: no_position", "dropped by Filter 2: drop_if matched"); a drop on another branch is
+that branch's. A tracker waiting for the rest of a scan says it held the sample. The frames' other
+records are processed too (they count, and move trackers and throttles) but not shown. Above the
+samples, one line counts what the flow did with all the stored samples (frames, records,
+dropped…), with any errors.
 
 **Filter** keeps or drops observations by condition, in two parts: **Keep only if** (an
 observation that does not match is dropped) and **Drop if** (one that matches is dropped, even
@@ -1013,7 +1036,7 @@ matched **all** or **any**:
 
 Under the rows a line says the condition in words, and under both, what the filter as edited does
 to the stored samples ("drops 55 (e.g. tms-OTK000058833, …)"). **Edit as JSON** shows the
-condition as the pipeline stores it; a condition the rows cannot show (groups inside groups, a
+condition as the source stores it; a condition the rows cannot show (groups inside groups, a
 transformed value) opens there. For example, to stop a TAK Server source reading back the tracks
 OpenTrack itself sends to that server: **Drop if**, `source_track_key`, starts with, `tms-`.
 
@@ -1034,9 +1057,9 @@ domain, track type or confidence. Saved settings apply while the engine runs and
 
 ### Tracker profiles
 
-A source's tracker stage can load a **tracker profile**, a sensor's tracker settings as a JSON file.
-Profiles shipped with OpenTrack are read from `OT_PROFILES_DIR`; profiles imported or saved in the
-pipeline designer go to `profiles/trackers/` beside the database. Back that directory up with the
+A source's Tracker step can load a **tracker profile**, a sensor's tracker settings as a JSON file.
+Profiles shipped with OpenTrack are read from `OT_PROFILES_DIR`; profiles imported or saved from a
+Tracker step go to `profiles/trackers/` beside the database. Back that directory up with the
 database.
 
 ## Plugins
@@ -1380,7 +1403,7 @@ What it holds (the file's sections):
 | Section | What |
 |---|---|
 | `format`, `version` | `"opentrack-config"`, `2`. Also `opentrack` (the release that wrote it), `site_code`, `exported_at`, `exported_by`, `notice`, `marking` (see [Markings](#markings)). |
-| `sources` | Every source as stored: `id`, `name`, `transport`, `codec`, `enabled`, `priority`, `revision`, `spec` (with its secrets), `raw_subject` (raw output, if consented). |
+| `sources` | Every source as stored: `id`, `name`, `transport`, `codec`, `enabled`, `priority`, `revision`, `spec` (with its secrets, its flow, and any NATS topics), `problems` (a draft's). |
 | `schema_versions` | Every output schema version (`version`, `status`, `published_at_ms`, `notes`, `fields`), the draft too. |
 | `correlation_settings` | The saved correlation settings, security labels included (`null`: never saved). |
 | `app_settings` | The instance settings as saved (site name, banners, position history, nodes), `{}` if never saved. |
@@ -1438,7 +1461,7 @@ included, removed again if the transaction fails), recorded as one `import_confi
   first admin.
 - **API tokens:** set the same `OT_SESSION_SECRET` (or copy `session.key`) for them to work;
   otherwise revoke them and issue new ones.
-- **Raw output** of a source is consented again by the import decision.
+- **Raw output** of a source in a file from before flows becomes a NATS topic step beside its Output.
 - **Track numbers** continue from the file's counter (or this node's, if higher), so no number is
   issued twice. Keep the same `OT_SITE_CODE`; the import notes it if the file came from another
   site.

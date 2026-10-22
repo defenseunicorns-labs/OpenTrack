@@ -281,7 +281,7 @@ fn check(common: &Common, f: &mut ConfigFile) -> Vec<String> {
     for s in &mut f.sources {
         let at = format!("source {}", s.id);
         p.extend(unique(&mut seen, "source", s.id.clone()));
-        let spec: SourceSpec = match serde_json::from_value(s.spec.clone()) {
+        let mut spec: SourceSpec = match serde_json::from_value(s.spec.clone()) {
             Ok(spec) => spec,
             Err(e) => {
                 p.push(format!("{at}: invalid source spec: {e}"));
@@ -296,8 +296,21 @@ fn check(common: &Common, f: &mut ConfigFile) -> Vec<String> {
             p.push(format!("{at}: {e}"));
             continue;
         }
+        // A raw output (from before flows) comes back as a NATS topic step.
+        if let Some(sub) = s.raw_subject.take() {
+            if let Err(e) = crate::api::check_raw_subject(&sub, &common.nats.tracks_subject) {
+                p.push(format!("{at}: raw output: {e}"));
+                continue;
+            }
+            if spec.pipeline.add_output_topic(&sub).is_none() {
+                p.push(format!(
+                    "{at}: raw output: the source has no Output to publish beside"
+                ));
+                continue;
+            }
+        }
         // A draft comes back a draft; an enabled source must be complete.
-        let schema = schemas.get(&spec.pipeline.mapping.schema_version);
+        let schema = schemas.get(&spec.pipeline.schema_version());
         let problems = spec.problems(schema);
         let refused: Vec<_> = problems
             .iter()
@@ -310,11 +323,6 @@ fn check(common: &Common, f: &mut ConfigFile) -> Vec<String> {
         match serde_json::to_value(&problems) {
             Ok(v) => s.problems = v,
             Err(e) => p.push(format!("{at}: {e}")),
-        }
-        if let Some(sub) = &s.raw_subject
-            && let Err(e) = crate::api::check_raw_subject(sub, &common.nats.tracks_subject)
-        {
-            p.push(format!("{at}: raw output: {e}"));
         }
         s.name = spec.name.clone();
         s.transport = spec.transport.kind().into();

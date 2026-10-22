@@ -4,7 +4,7 @@ The detail behind the [README](../README.md): what each part does, how it fits t
 
 ## What it does
 
-**Tracker.** A source that reports anonymous plots (radar, lidar, GMTI) can run a tracker stage in
+**Tracker.** A source that reports anonymous plots (radar, lidar, GMTI) can run a Tracker step in
 its pipeline: GNN (global nearest neighbour) or MHT (multiple hypothesis tracking, fewer false
 tracks in clutter). Each track carries its **existence** probability, from how well its plots fit
 against clutter and how often it goes unseen, which confirms and drops it; its reports carry the
@@ -13,7 +13,7 @@ itself by the revisit rate it measures in the stream. A tracker's tracks carry n
 affiliation and at most a domain. **Tracker profiles** (`profiles/trackers/`) hold a sensor's
 tracker settings as a JSON file: wide-area and heavy-clutter GMTI, maritime surface MTI, marine,
 coastal and air surveillance radars, and lidar. The shipped profiles describe sensor kinds, not
-named platforms. A source's tracker stage loads
+named platforms. A source's Tracker step loads
 one; a tuned tracker is saved, imported or downloaded as one.
 
 **Track correlation.** The engine keeps every source's own tracks (source tracks) and pairs them
@@ -140,8 +140,8 @@ ui/          React + TypeScript (Vite) on stareSDK
 The UI's tabs:
 
 * **Overview**: system status and metrics.
-* **Sources**: topology of every pipeline, the source list, the add-source wizard, and the pipeline
-  designer with a live preview of each stage.
+* **Sources**: every source's flow as a topology, the source list, and each source's editor: a
+  workspace of its steps, each with its settings and a live preview of its samples.
 * **Correlation**: the engine's suggestions to accept or reject, correlation settings (applied while
   running) and every decision with its evidence.
 * **Track Management**: map, track card (GOLD fields, attributes, provenance, **Edit**) and the
@@ -155,10 +155,43 @@ The UI's tabs:
 
 ## Sources and pipelines
 
-A source is a transport (`tcp_client`, `tcp_server`, `udp` with IPv4 or IPv6 multicast, `http_poll`, `websocket`,
-`mqtt`, `grpc_client`, `grpc_server`, `file`, which reads only under the data directory), framing, a codec and a pipeline. Transport metadata reaches the mapping under
-`_frame` (an MQTT topic is `_frame.topic`, `_frame.topic_levels[1]` its second level). Secrets are
-written as `${env:NAME}` and resolved when the source starts.
+A source is an input (a transport: `tcp_client`, `tcp_server`, `udp` with IPv4 or IPv6 multicast,
+`http_poll`, `websocket`, `mqtt`, `grpc_client`, `grpc_server`, `file`, which reads only under the
+data directory; its framing; and a codec) and a **flow** of steps after it, under `pipeline`:
+
+```json
+"pipeline": {
+  "codec": {"type": "json"},
+  "nodes": [
+    {"id": "input", "type": "input"},
+    {"id": "map", "type": "map", "config": {"mapping": {"rules": [ … ]}, "static_join": {"ttl_secs": 604800}}},
+    {"id": "filter", "type": "filter", "config": {"drop_if": { … }}},
+    {"id": "output", "type": "output"},
+    {"id": "raw", "type": "nats", "config": {"subject": "feeds.ais.raw"}}
+  ],
+  "edges": [{"source": "input", "target": "map"}, {"source": "map", "target": "filter"},
+            {"source": "filter", "target": "output"}, {"source": "map", "target": "raw"}]
+}
+```
+
+Steps are `reject` (records), `map` (records to observations), `filter`, `registry` (Entity links),
+`affiliation`, `tracker`, `throttle` (observations), `output` (system tracks, to correlation; at most
+one) and `nats` (published as JSON on its subject, without correlation). Each takes one input, any
+step may feed several, the flow does not loop, and each step takes what the step before passes on.
+A path to the Output with no `registry` step runs the entity lookup with its defaults before the
+Output. A `position` on a step is where the editor draws it. A spec in the older fixed form
+(`mapping`, `filter`, `tracker`… beside `codec`) still reads, as the same stages in a line.
+Transport metadata reaches the mapping under `_frame` (an MQTT topic is `_frame.topic`,
+`_frame.topic_levels[1]` its second level). Secrets are written as `${env:NAME}` and resolved when
+the source starts.
+
+A source that is not complete yet (a setting left empty, no mapping rules, a step leading nowhere,
+an unpublished schema version) saves as a **draft**: its row has `"draft": true` and `problems`,
+each `{kind, node, field?, message}`, where `node` is the step it belongs to (`input` for the
+transport and codec) and `null` for the source as a whole. A draft cannot be enabled. A source
+without a valid id or name, or whose flow cannot run at all (a loop, a step fed the wrong data, two
+inputs into one step, two Outputs), is not saved (`kind: "invalid"`), and an enabled source is saved
+only complete. A refusal is a 422 whose body lists the `problems` beside the `error`.
 
 A source that is not complete yet (a setting left empty, no mapping rules, a mapping problem, an
 unpublished schema version) saves as a **draft**: its row has `"draft": true` and `problems`, each
@@ -181,9 +214,9 @@ bearer `token` for `grpc_server`); one that does not, and every `udp` source, ru
 
 A source reports either **tracks** (a key per object: AIS, ADS-B, TAK, a radar's own tracks) or
 **detections** (`"reports": "detections"`: anonymous plots). Detections update the nearest system
-track another source keeps or, with a tracker stage, become tracks first. A mapping rule of kind
+track another source keeps or, through a Tracker step, become tracks first. A mapping rule of kind
 `static` caches identity fields (AIS static data) that the static join fills into later reports; a
-rule of kind `track` bypasses the tracker. A mapping can send a value straight to the matched entity
+rule of kind `track` passes Tracker steps by. A mapping can send a value straight to the matched entity
 with an `entity.<key>` destination.
 
 **Protobuf over gRPC.** Upload the producer's `.proto` files with the source (the `protobuf`
@@ -201,7 +234,7 @@ from several sensors are cross-fixed into positions that start or update tracks,
 out. See [docs/non-point-contacts.md](non-point-contacts.md).
 
 **Codec plugins** decode formats beyond JSON and XML (`"codec": {"type": "plugin", "plugin":
-"stanag4607", "options": {...}}`), and **tracker plugins** run as a tracker stage (see Plugins
+"stanag4607", "options": {...}}`), and **tracker plugins** run in a Tracker step (see Plugins
 below). **STANAG 4607** GMTI streams over TCP; [docs/examples/stanag4607.json](examples/stanag4607.json)
 turns every dwell target into a detection with a ground error ellipse from the radar geometry, forms
 ground tracks with the GNN tracker timed by the measured revisit rate, and publishes the sensor
@@ -210,7 +243,7 @@ plugin: each `SapientMessage` (over TCP with a 4-byte little-endian length prefi
 message) becomes a JSON record for the mapping; [docs/examples/sapient.json](examples/sapient.json)
 maps detection reports.
 
-Per source, the publish stage sets:
+Per source (its Feed settings):
 
 * **Publish alone**: whether a track only this source reports for is published (default: yes for
   track feeds, no for detections, whose tracks wait for a track feed to report for them too).

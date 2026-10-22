@@ -768,19 +768,20 @@ impl Engine {
                 .filter(|s| s.enabled)
                 .map(|s| {
                     // A tracker stage turns detections into tracks before they get here.
-                    let detections = s.spec.get("reports").and_then(|r| r.as_str())
-                        == Some("detections")
-                        && s.spec
-                            .pointer("/pipeline/tracker")
-                            .is_none_or(Value::is_null);
                     let spec =
                         serde_json::from_value::<ot_source::source::SourceSpec>(s.spec.clone())
                             .ok();
+                    // Plots reach correlation untracked: no Tracker before the Output.
+                    let detections = s.spec.get("reports").and_then(|r| r.as_str())
+                        == Some("detections")
+                        && !spec
+                            .as_ref()
+                            .is_some_and(|spec| spec.pipeline.output_tracked());
                     let alone = spec.as_ref().is_none_or(|spec| spec.publishes_alone());
                     let confirm = spec.as_ref().and_then(|spec| spec.confirms_after());
                     let motion = spec.as_ref().and_then(|spec| spec.emitter_motion);
                     let stage = spec
-                        .and_then(|spec| spec.pipeline.registry)
+                        .map(|spec| spec.pipeline.output_registry())
                         .unwrap_or_default();
                     (s.id, s.priority, detections, alone, confirm, stage, motion)
                 })

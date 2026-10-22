@@ -832,14 +832,23 @@ const enc = encodeURIComponent
 // --- Sources -------------------------------------------------------------------------------
 
 /** A source spec as stored: transport + pipeline, all JSON. */
+/** A Map step's mapping. */
+export interface MappingSpec {
+  schema_version?: number
+  rules: unknown[]
+  reject?: unknown[]
+}
+
 export interface SourceSpec {
   id: string
   name: string
   description?: string
   transport: { type: string; [k: string]: unknown }
+  /** The codec, and the flow of steps after the input (crates/ot-source/src/flow.rs). */
   pipeline: {
     codec: { type: string; [k: string]: unknown }
-    mapping: { schema_version?: number; rules: unknown[]; reject?: unknown[] }
+    nodes?: unknown[]
+    edges?: unknown[]
     [k: string]: unknown
   }
   priority?: number
@@ -913,25 +922,12 @@ export interface SourceRow {
   status: SourceStatus | null
 }
 
-/** A pipeline stage, in the order a frame meets them. */
-export type SourceStage =
-  | 'source'
-  | 'decode'
-  | 'map'
-  | 'static_join'
-  | 'registry'
-  | 'affiliation'
-  | 'filter'
-  | 'tracker'
-  | 'throttle'
-  | 'output'
-
 /** One reason a source may not run. */
 export interface SourceProblem {
   /** `invalid`: the source cannot be saved. `incomplete`: it saves as a draft. */
   kind: 'invalid' | 'incomplete'
-  /** The stage it belongs to; null for the source as a whole (its id and name). */
-  stage: SourceStage | null
+  /** The step of the flow it belongs to (`input` for the transport and codec); null for the source as a whole. */
+  node: string | null
   /** The setting, where there is one (for example `host`). */
   field?: string
   message: string
@@ -980,7 +976,7 @@ export interface ProbeResult {
   codec: SourceSpec['pipeline']['codec']
   suggested_records_path: string | null
   fields: FieldStat[]
-  suggestion: { mapping: SourceSpec['pipeline']['mapping']; proposals: Proposal[]; identifiers: unknown[]; missing: string[] }
+  suggestion: { mapping: MappingSpec; proposals: Proposal[]; identifiers: unknown[]; missing: string[] }
   samples_saved: number | null
   sample_frames: {
     received_at: string
@@ -1001,7 +997,10 @@ export interface PreviewObservation extends Observation {
 }
 
 export interface PreviewResult {
+  /** Whether the source is complete; a draft is dry-run as far as it can be. */
   valid: boolean
+  /** What stops the source running, each on its stage. */
+  problems?: SourceProblem[]
   counts?: Record<string, number>
   errors?: string[]
   observations?: PreviewObservation[]

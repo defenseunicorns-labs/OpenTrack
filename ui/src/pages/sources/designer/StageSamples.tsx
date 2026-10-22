@@ -7,8 +7,8 @@ import { countsLine, samplesAt } from '../../../lib/trace'
  * The live preview's samples after one stage: a line of counts and any errors, then each traced
  * sample as pretty-printed JSON (or what became of it). The list scrolls, not the modal.
  */
-export function StageSamples({ result, stageId }: { result: PreviewResult; stageId: string }) {
-  const samples = samplesAt(result.trace, stageId)
+export function StageSamples({ result, stageId, path }: { result: PreviewResult; stageId: string; path?: string[] }) {
+  const samples = samplesAt(result.trace, stageId, path)
   const errors = [...new Set(result.errors ?? [])]
   const counts = countsLine(result)
   return (

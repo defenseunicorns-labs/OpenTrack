@@ -6,6 +6,7 @@
 
 pub mod codec;
 pub mod expr;
+pub mod flow;
 pub mod frame;
 pub mod grpc;
 pub mod mapping;

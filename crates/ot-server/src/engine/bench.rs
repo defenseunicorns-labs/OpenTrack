@@ -325,7 +325,10 @@ pub async fn run(common: &Common, opts: BenchOptions) -> anyhow::Result<()> {
         "observations": observations,
         "sources": specs.iter().map(|(s, _)| json!({
             "id": s.id, "reports": s.reports,
-            "tracker": s.pipeline.tracker.as_ref().map(|t| serde_json::to_value(t).unwrap_or(Value::Null)),
+            "tracker": s.pipeline.nodes.iter().find_map(|n| match &n.step {
+                ot_source::flow::Step::Tracker(t) => Some(serde_json::to_value(t).unwrap_or(Value::Null)),
+                _ => None,
+            }),
         })).collect::<Vec<_>>(),
         "correlation": correlation_used,
         "plugins": plugins,
@@ -412,7 +415,7 @@ async fn replay(
         }
         let end = now > last;
         for p in pipelines.values_mut() {
-            let out = p.flush(now, end);
+            let out = p.flush(now, end, &registry);
             if let Some(e) = &out.last_error {
                 let entry = errors.entry(specs_id(p)).or_insert((0, String::new()));
                 entry.0 += 1;

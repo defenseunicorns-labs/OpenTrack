@@ -92,7 +92,7 @@ fn replay(path: &std::path::Path) -> (Vec<ot_core::Observation>, Pipeline, usize
     let last = out.last().map(|o| o.observed_at).unwrap();
     out.extend(
         pipeline
-            .flush(last + chrono::TimeDelta::hours(1), true)
+            .flush(last + chrono::TimeDelta::hours(1), true, &registry)
             .observations,
     );
     (out, pipeline, packets, dwells)
@@ -223,7 +223,7 @@ fn a_slow_revisit_recording_tunes_the_tracker_itself() {
 fn platform_types_have_valid_symbols() {
     let spec: SourceSpec =
         serde_json::from_str(include_str!("../../../docs/examples/stanag4607.json")).unwrap();
-    let json = serde_json::to_value(&spec.pipeline.mapping).unwrap();
+    let json = serde_json::to_value(spec.pipeline.mappings().next().unwrap()).unwrap();
     let rule = json["rules"]
         .as_array()
         .unwrap()
@@ -276,7 +276,9 @@ fn gmti_plots_carry_ground_error_ellipses() {
             continue;
         }
         located += usize::from(r.get("lat").is_some());
-        let ot_source::mapping::MapOutcome::Mapped(mapped) = spec.pipeline.mapping.apply(r) else {
+        let ot_source::mapping::MapOutcome::Mapped(mapped) =
+            spec.pipeline.mappings().next().unwrap().apply(r)
+        else {
             continue;
         };
         for m in mapped.iter().filter(|m| m.rule == "target") {

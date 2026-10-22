@@ -1,5 +1,5 @@
-//! A stage-by-stage record of what a pipeline did with its first few
-//! records, for the pipeline designer's live preview.
+//! A step-by-step record of what a source's flow did with its first few
+//! records, for the editor's samples.
 //!
 //! Tracing is opt-in: [`crate::pipeline::Pipeline::process_traced`] fills a
 //! [`Trace`]; [`crate::pipeline::Pipeline::process`] takes no trace and
@@ -40,14 +40,14 @@ pub struct Trace {
 pub struct SampleTrace {
     /// Index in [`Trace::frames`] of the frame it came from.
     pub frame: usize,
-    /// The pipeline's stages after the transport, in order, only those it has.
+    /// The flow's steps, input first, in the order they are met.
     pub stages: Vec<StageTrace>,
     /// What the pipeline emitted from this record, to show as published.
     #[serde(skip)]
     pub emitted: Vec<Observation>,
-    /// Detections this record gave the tracker stage.
+    /// Detections this record gave each Tracker step, by step id.
     #[serde(skip)]
-    pub(crate) plots: Vec<Observation>,
+    pub(crate) plots: Vec<(String, Observation)>,
 }
 
 /// A raw frame, readable: JSON when it parses, else text, else escaped bytes.
@@ -69,8 +69,8 @@ pub struct FrameView {
 /// A record after one stage.
 #[derive(Debug, Serialize)]
 pub struct StageTrace {
-    /// The stage id, as the UI names it (`decode`, `map`, `filter`…).
-    pub id: &'static str,
+    /// The step's id (`input` holds the decoded record).
+    pub id: String,
     /// What this stage passed on: the record up to the reject stage, the
     /// mapping's outputs, then observations.
     pub items: Vec<Value>,
@@ -103,7 +103,7 @@ impl Trace {
 
     /// Start tracing a record of `frame` (or the frame itself, when it does
     /// not decode), if the trace still has room.
-    pub(crate) fn begin(&mut self, frame: &Frame, stages: &[&'static str]) -> Option<usize> {
+    pub(crate) fn begin(&mut self, frame: &Frame, stages: &[String]) -> Option<usize> {
         if self.samples.len() >= self.limit {
             return None;
         }
@@ -121,7 +121,7 @@ impl Trace {
             stages: stages
                 .iter()
                 .map(|id| StageTrace {
-                    id,
+                    id: id.clone(),
                     items: Vec::new(),
                     dropped: Vec::new(),
                     notes: Vec::new(),

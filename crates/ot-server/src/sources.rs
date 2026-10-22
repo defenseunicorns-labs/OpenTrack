@@ -5,8 +5,8 @@
 //! backoff) feeding its pipeline, which appends observations to the source's
 //! Redis stream. The worker also persists the static-join cache, flushes
 //! per-source metrics, and publishes a live status the API reads. A source
-//! with a raw-output subject (set with recorded consent) also publishes each
-//! of its observations, before correlation, as JSON on that NATS subject.
+//! with NATS topic steps also publishes what reaches each, as JSON on its
+//! subject, without correlation.
 //! Entity fields a feed updates (a pipeline's track → entity links) are
 //! written to the registry every few seconds.
 
@@ -109,7 +109,7 @@ pub async fn run(
     shutdown: impl std::future::Future<Output = ()>,
 ) -> anyhow::Result<()> {
     let redis = common.open_redis().await?;
-    // Only raw output uses NATS here; the client connects in the background.
+    // Only NATS topic steps use NATS here; the client connects in the background.
     let nats = common.connect_nats().await?.client().clone();
     let registry = Arc::new(Registry::default());
     let mut running: BTreeMap<String, Running> = BTreeMap::new();
@@ -306,15 +306,12 @@ fn reconcile(
             );
             continue;
         }
-        let Some(schema) = schemas.get(&spec.pipeline.mapping.schema_version).cloned() else {
-            tracing::error!(source = %id, version = spec.pipeline.mapping.schema_version,
+        let Some(schema) = schemas.get(&spec.pipeline.schema_version()).cloned() else {
+            tracing::error!(source = %id, version = spec.pipeline.schema_version(),
                 "mapping targets an unpublished schema version; not started");
             continue;
         };
-        let raw = row.raw_subject.clone().map(|subject| RawOutput {
-            client: nats.clone(),
-            subject,
-        });
+        let raw = Some(nats.clone());
         let handle = tokio::spawn(run_source(
             spec,
             schema,
@@ -336,20 +333,13 @@ fn reconcile(
     refused
 }
 
-/// Where a source's raw output goes.
-#[derive(Clone)]
-struct RawOutput {
-    client: ot_nats::async_nats::Client,
-    subject: String,
-}
-
 /// Run one source forever: a supervised transport and its pipeline.
 async fn run_source(
     spec: SourceSpec,
     schema: ExtensionSchema,
     revision: i64,
     redis: RedisStore,
-    raw: Option<RawOutput>,
+    raw: Option<ot_nats::async_nats::Client>,
     registry: Arc<Registry>,
 ) {
     let id = spec.id.clone();
@@ -431,10 +421,10 @@ async fn run_source(
     supervisor.abort();
 }
 
-/// Where a pipeline writes: its Redis stream, and its raw feed if it has one.
+/// Where a pipeline writes: its Redis stream, and NATS for its topic steps.
 struct Outputs<'a> {
     redis: &'a RedisStore,
-    raw: Option<&'a RawOutput>,
+    raw: Option<&'a ot_nats::async_nats::Client>,
 }
 
 async fn pipeline_loop(
@@ -451,7 +441,7 @@ async fn pipeline_loop(
     let mut pipeline = Pipeline::new(id, spec.pipeline.clone())
         .context("invalid pipeline")?
         .with_schema(schema.clone());
-    let static_ttl = Duration::from_secs(spec.pipeline.static_join.ttl_secs);
+    let static_ttl = pipeline.static_ttl();
 
     // Warm the static cache so identity survives a restart.
     let mut loaded = 0;
@@ -466,7 +456,7 @@ async fn pipeline_loop(
     let mut flush = tokio::time::interval(FLUSH_EVERY);
     let mut last_error: Option<String> = None;
     let mut totals: HashMap<String, u64> = HashMap::new();
-    let (mut raw_published, mut raw_errors) = (0u64, 0u64);
+    let mut publish_errors = 0u64;
     // Scans a tracker holds for late plots are run when their hold passes.
     let mut hold = tokio::time::interval(TRACKER_HOLD_POLL);
     loop {
@@ -476,13 +466,11 @@ async fn pipeline_loop(
                 tracing::info_span!("source.process", source = %id)
                     .in_scope(|| pipeline.process(&frame, registry.as_ref()))
             }
-            _ = hold.tick(), if spec.pipeline.tracker.is_some() => pipeline.flush(Utc::now(), false),
+            _ = hold.tick(), if pipeline.has_tracker() => pipeline.flush(Utc::now(), false, registry.as_ref()),
             _ = flush.tick() => {
                 let mut counts = pipeline.take_counts().pairs();
-                for (k, n) in [("raw_published", &mut raw_published), ("raw_error", &mut raw_errors)] {
-                    if *n > 0 {
-                        counts.push((k.to_owned(), std::mem::take(n)));
-                    }
+                if publish_errors > 0 {
+                    counts.push(("publish_error".to_owned(), std::mem::take(&mut publish_errors)));
                 }
                 redis.incr_metrics(id, &counts).await?;
                 for (k, n) in &counts {
@@ -510,6 +498,12 @@ async fn pipeline_loop(
             for o in &mut out.observations {
                 o.security = Some(label.clone());
             }
+            let label = serde_json::to_value(label)?;
+            for (_, v) in &mut out.published {
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("security".into(), label.clone());
+                }
+            }
         }
         redis
             .append_observations(id, &out.observations)
@@ -519,15 +513,12 @@ async fn pipeline_loop(
                 observations = out.observations.len()
             ))
             .await?;
-        if let Some(raw) = raw {
-            for obs in &out.observations {
-                let body = serde_json::to_vec(obs)?;
-                match raw.client.publish(raw.subject.clone(), body.into()).await {
-                    Ok(()) => raw_published += 1,
-                    Err(e) => {
-                        raw_errors += 1;
-                        last_error = Some(format!("raw output: {e}"));
-                    }
+        if let Some(nats) = raw {
+            for (subject, v) in &out.published {
+                let body = serde_json::to_vec(v)?;
+                if let Err(e) = nats.publish(subject.clone(), body.into()).await {
+                    publish_errors += 1;
+                    last_error = Some(format!("NATS topic {subject}: {e}"));
                 }
             }
         }
@@ -559,9 +550,89 @@ fn rand_fraction() -> f64 {
     (h.finish() >> 11) as f64 / (1u64 << 53) as f64
 }
 
+/// Sources saved with a raw-output subject (before flows) publish it from a
+/// NATS topic step instead: added once, beside the Output, and the subject
+/// cleared. Each change is a revision, recorded as the migration's.
+pub fn migrate_raw_outputs(db: &mut ot_store::Db) -> anyhow::Result<()> {
+    for row in db.list_sources()? {
+        let Some(subject) = row.raw_subject.clone() else {
+            continue;
+        };
+        let Ok(mut spec) = serde_json::from_value::<SourceSpec>(row.spec.clone()) else {
+            tracing::warn!(source = %row.id, "raw output not moved to a NATS topic step: its spec does not read");
+            continue;
+        };
+        if spec.pipeline.add_output_topic(&subject).is_none() {
+            tracing::warn!(source = %row.id, "raw output not moved to a NATS topic step: it has no Output");
+            continue;
+        }
+        let normalised = serde_json::to_value(&spec)?;
+        db.put_source(
+            &ot_store::SourceWrite {
+                id: &row.id,
+                name: &row.name,
+                transport: &row.transport,
+                codec: &row.codec,
+                priority: row.priority,
+                spec: &normalised,
+                problems: &row.problems,
+            },
+            "op:migration",
+        )?;
+        db.set_raw_output(&row.id, None, "op:migration")?;
+        tracing::info!(source = %row.id, %subject, "raw output moved to a NATS topic step");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_raw_output_moves_to_a_nats_topic_step_once() {
+        let mut db = ot_store::Db::open_in_memory().unwrap();
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../../../docs/examples/gps-udp.json")).unwrap();
+        let none = json!([]);
+        let write = ot_store::SourceWrite {
+            id: spec["id"].as_str().unwrap(),
+            name: "GPS",
+            transport: "udp",
+            codec: "json",
+            priority: 100,
+            spec: &spec,
+            problems: &none,
+        };
+        db.put_source(&write, "op:test").unwrap();
+        db.set_raw_output(write.id, Some("raw.gps"), "op:test")
+            .unwrap();
+        migrate_raw_outputs(&mut db).unwrap();
+        let row = db.get_source(write.id).unwrap().unwrap();
+        assert!(row.raw_subject.is_none());
+        let moved: SourceSpec = serde_json::from_value(row.spec.clone()).unwrap();
+        let topic = moved.pipeline.node("raw").expect("a NATS topic step");
+        assert!(matches!(&topic.step, ot_source::flow::Step::Nats(t) if t.subject == "raw.gps"));
+        // Beside the Output: fed by the same step.
+        let feeds = |id: &str| {
+            moved
+                .pipeline
+                .edges
+                .iter()
+                .find(|e| e.target == id)
+                .unwrap()
+                .source
+                .clone()
+        };
+        assert_eq!(feeds("raw"), feeds("output"));
+        assert!(moved.pipeline.shape_problems().is_empty());
+        // Again: nothing more to move.
+        migrate_raw_outputs(&mut db).unwrap();
+        assert_eq!(
+            db.get_source(write.id).unwrap().unwrap().revision,
+            row.revision
+        );
+    }
 
     /// A UDP listener saved before 0.4.5, without the risk acceptance, is
     /// not started, and its status says why; with the acceptance it runs.
@@ -586,7 +657,7 @@ mod tests {
             redis_namespace: ns.clone(),
             site: ot_core::SiteCode::new("TST").unwrap(),
             nats: crate::config::NatsArgs {
-                // Nothing listens here; only raw output would use it.
+                // Nothing listens here; only NATS topic steps would use it.
                 url: "nats://127.0.0.1:9".into(),
                 creds: None,
                 token: None,

@@ -10,10 +10,11 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post, put};
 use axum::{Extension, Json, Router};
+use ot_source::flow::{INPUT, Step};
 use ot_source::frame::Frame;
 use ot_source::pipeline::Pipeline;
 use ot_source::schema::{ExtensionField, ExtensionSchema};
-use ot_source::source::{Problem, ProblemKind, SourceSpec, Stage};
+use ot_source::source::{Problem, ProblemKind, SourceSpec};
 use ot_source::trace::Trace;
 use ot_store::{Entity, SourceRow, SourceWrite};
 use serde::Deserialize;
@@ -33,10 +34,6 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/sources/{id}/enable", post(enable_source))
         .route("/sources/{id}/disable", post(disable_source))
-        .route(
-            "/sources/{id}/raw-output",
-            put(set_raw_output).delete(clear_raw_output),
-        )
         .route("/sources/{id}/revisions", get(source_revisions))
         .route("/sources/{id}/metrics", get(source_metrics))
         .route("/registry", get(registry_resolve))
@@ -77,6 +74,7 @@ pub(crate) fn actor(headers: &HeaderMap) -> String {
 /// filled in), the published extension schema its mapping targets (if it
 /// is published) and everything that stops it running. A spec that does
 /// not parse, or is not allowed at all, is refused here.
+#[derive(Clone)]
 struct Checked {
     spec: SourceSpec,
     normalised: Value,
@@ -100,12 +98,58 @@ impl Checked {
         }
     }
 
-    /// Refuse it unless it is complete (it may run).
-    fn complete(self) -> Result<(SourceSpec, Value, ExtensionSchema), ApiError> {
-        match self.schema {
-            Some(schema) if self.problems.is_empty() => Ok((self.spec, self.normalised, schema)),
-            _ => Err(ApiError::source_problems(&self.problems)),
-        }
+    /// Its pipeline, to dry-run over samples: a draft runs too, as far as
+    /// its shape, maps, trackers and codec allow (its transport is not used,
+    /// and without a published schema its extension fields are not checked).
+    fn dry_run(&self) -> Result<Pipeline, ApiError> {
+        self.clone().savable()?;
+        let pipeline =
+            Pipeline::new(self.spec.id.clone(), self.spec.pipeline.clone()).map_err(|e| {
+                use ot_source::pipeline::PipelineError as E;
+                let flow = &self.spec.pipeline;
+                let blocks = |p: &&Problem| {
+                    p.kind == ProblemKind::Invalid
+                        || (p.node.as_deref() == Some(INPUT) && p.field.as_deref() == Some("codec"))
+                        || p.node
+                            .as_deref()
+                            .and_then(|n| flow.node(n))
+                            .is_some_and(|n| matches!(n.step, Step::Map(_) | Step::Tracker(_)))
+                };
+                let mut blocking: Vec<Problem> =
+                    self.problems.iter().filter(blocks).cloned().collect();
+                // What the checks did not see (a tracker plugin not loaded, say), on its step.
+                if blocking.is_empty() {
+                    let first = |want: fn(&Step) -> bool| {
+                        flow.nodes
+                            .iter()
+                            .find(|n| want(&n.step))
+                            .map(|n| n.id.clone())
+                    };
+                    blocking.push(Problem {
+                        kind: ProblemKind::Incomplete,
+                        node: match e {
+                            E::Mapping(_) => first(|s| matches!(s, Step::Map(_))),
+                            E::Tracker(_) => first(|s| matches!(s, Step::Tracker(_))),
+                            E::Codec(_) => Some(INPUT.to_owned()),
+                            E::Flow(_) => None,
+                        },
+                        field: None,
+                        message: e.to_string(),
+                    });
+                }
+                // Then the rest, so every step shows what it needs.
+                let rest = self
+                    .problems
+                    .iter()
+                    .filter(|p| !blocking.contains(p))
+                    .cloned();
+                let all: Vec<Problem> = blocking.iter().cloned().chain(rest).collect();
+                ApiError::source_problems(&all)
+            })?;
+        Ok(match &self.schema {
+            Some(schema) => pipeline.with_schema(schema.clone()),
+            None => pipeline,
+        })
     }
 }
 
@@ -113,7 +157,7 @@ impl Checked {
 fn invalid(message: String) -> ApiError {
     ApiError::source_problems(&[Problem {
         kind: ProblemKind::Invalid,
-        stage: None,
+        node: None,
         field: None,
         message,
     }])
@@ -125,13 +169,27 @@ async fn check_spec(s: &AppState, body: Value) -> Result<Checked, ApiError> {
     crate::probe::file_allowed(&s.common, &spec.transport).map_err(|e| {
         ApiError::source_problems(&[Problem {
             kind: ProblemKind::Invalid,
-            stage: Some(Stage::Source),
+            node: Some(INPUT.to_owned()),
             field: Some("path".into()),
             message: e,
         }])
     })?;
-    let schema = published_schema(s, spec.pipeline.mapping.schema_version).await?;
-    let problems = spec.problems(schema.as_ref());
+    let schema = published_schema(s, spec.pipeline.schema_version()).await?;
+    let mut problems = spec.problems(schema.as_ref());
+    // A NATS topic publishes outside the system tracks' subjects.
+    for n in &spec.pipeline.nodes {
+        if let Step::Nats(t) = &n.step
+            && ot_source::source::check_subject(&t.subject).is_ok()
+            && let Err(e) = check_raw_subject(&t.subject, &s.common.nats.tracks_subject)
+        {
+            problems.push(Problem {
+                kind: ProblemKind::Incomplete,
+                node: Some(n.id.clone()),
+                field: Some("subject".into()),
+                message: e,
+            });
+        }
+    }
     let normalised = serde_json::to_value(&spec).map_err(|e| ApiError::internal(e.to_string()))?;
     Ok(Checked {
         spec,
@@ -353,16 +411,6 @@ async fn disable_source(
     toggle(s, id, false, None, headers).await
 }
 
-#[derive(Deserialize)]
-struct RawOutput {
-    /// NATS subject for this source's raw tracks; `opentrack.raw.<source>`
-    /// when omitted.
-    #[serde(default)]
-    subject: Option<String>,
-    /// Must be true: the admin confirms this source's raw data is published.
-    consent: bool,
-}
-
 /// A concrete (wildcard-free) NATS subject outside the system tracks prefix.
 pub(crate) fn check_raw_subject(subject: &str, tracks_prefix: &str) -> Result<(), String> {
     let valid = !subject.is_empty()
@@ -376,45 +424,10 @@ pub(crate) fn check_raw_subject(subject: &str, tracks_prefix: &str) -> Result<()
     }
     if subject == tracks_prefix || subject.starts_with(&format!("{tracks_prefix}.")) {
         return Err(format!(
-            "raw output needs its own subject, outside the system tracks subjects ({tracks_prefix}.>)"
+            "a NATS topic needs its own subject, outside the system tracks subjects ({tracks_prefix}.>)"
         ));
     }
     Ok(())
-}
-
-async fn set_raw_output(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(body): Json<RawOutput>,
-) -> Result<Json<Value>, ApiError> {
-    if !body.consent {
-        return Err(ApiError::unprocessable(
-            "raw output publishes this source's tracks as received; set consent to true to confirm",
-        ));
-    }
-    let c = match body.subject.as_deref().map(str::trim) {
-        Some(sub) if !sub.is_empty() => sub.to_owned(),
-        _ => format!("opentrack.raw.{id}"),
-    };
-    check_raw_subject(&c, &s.common.nats.tracks_subject).map_err(ApiError::unprocessable)?;
-    let actor = actor(&headers);
-    let row = s
-        .with_db(move |db| db.set_raw_output(&id, Some(&c), &actor))
-        .await?;
-    Ok(Json(with_status(&s, row).await))
-}
-
-async fn clear_raw_output(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
-    let actor = actor(&headers);
-    let row = s
-        .with_db(move |db| db.set_raw_output(&id, None, &actor))
-        .await?;
-    Ok(Json(with_status(&s, row).await))
 }
 
 async fn source_revisions(
@@ -473,13 +486,22 @@ struct ValidateBody {
     trace: Option<usize>,
 }
 
-/// Validate a source spec and optionally dry-run sample frames through its
-/// pipeline, using the live registry. Nothing is saved or published.
+/// Check a source spec and optionally dry-run sample frames through its
+/// pipeline, using the live registry. Nothing is saved or published. The
+/// answer lists the spec's `problems` (`valid` when there are none); a draft
+/// is dry-run as far as it can be.
 async fn validate_source(
     State(s): State<AppState>,
     Json(body): Json<ValidateBody>,
 ) -> Result<Json<Value>, ApiError> {
-    let (spec, normalised, schema) = check_spec(&s, body.spec).await?.complete()?;
+    let checked = check_spec(&s, body.spec).await?;
+    let mut pipeline = checked.dry_run()?;
+    let Checked {
+        normalised,
+        problems,
+        ..
+    } = checked;
+    let valid = problems.is_empty();
     let mut frames: Vec<Frame> = body
         .samples
         .iter()
@@ -498,7 +520,9 @@ async fn validate_source(
         }));
     }
     if frames.is_empty() {
-        return Ok(Json(json!({ "valid": true, "spec": normalised })));
+        return Ok(Json(
+            json!({ "valid": valid, "problems": problems, "spec": normalised }),
+        ));
     }
     let rows = s.with_db(|db| db.registry_rows()).await?;
     let registry: BTreeMap<(String, String), ot_source::registry::RegistryEntry> = rows
@@ -515,9 +539,6 @@ async fn validate_source(
             )
         })
         .collect();
-    let mut pipeline = Pipeline::new(spec.id.clone(), spec.pipeline.clone())
-        .map_err(|e| ApiError::unprocessable(e.to_string()))?
-        .with_schema(schema);
     let mut trace = body.trace.filter(|n| *n > 0).map(Trace::new);
     let mut observations = Vec::new();
     let mut errors = Vec::new();
@@ -536,13 +557,14 @@ async fn validate_source(
         .last()
         .map_or_else(chrono::Utc::now, |f| f.received_at);
     let flushed = match trace.as_mut() {
-        Some(t) => pipeline.flush_traced(last, true, t),
-        None => pipeline.flush(last, true),
+        Some(t) => pipeline.flush_traced(last, true, &registry, t),
+        None => pipeline.flush(last, true, &registry),
     };
     observations.extend(flushed.observations);
     let counts: BTreeMap<String, u64> = pipeline.take_counts().pairs().into_iter().collect();
     let mut body = json!({
-        "valid": true,
+        "valid": valid,
+        "problems": problems,
         "counts": counts,
         "errors": errors,
         "observations": observations,
@@ -999,8 +1021,8 @@ mod tests {
         assert_eq!(st, StatusCode::CREATED, "{body}");
         let problem = &body["problems"][0];
         assert_eq!(
-            (&problem["stage"], &problem["field"]),
-            (&json!("source"), &json!("unauthenticated")),
+            (&problem["node"], &problem["field"]),
+            (&json!("input"), &json!("unauthenticated")),
             "{body}"
         );
         assert!(
@@ -1061,7 +1083,7 @@ mod tests {
         assert_eq!(body["transport"], "http_poll");
         assert_eq!(body["draft"], true, "{body}");
         assert_eq!(body["problems"][0]["kind"], "incomplete", "{body}");
-        assert_eq!(body["problems"][0]["stage"], "map", "{body}");
+        assert_eq!(body["problems"][0]["node"], "map", "{body}");
         assert!(
             body["problems"][0]["message"]
                 .as_str()
@@ -1075,7 +1097,7 @@ mod tests {
             body["error"].as_str().unwrap().contains("schema version 2"),
             "{body}"
         );
-        assert_eq!(body["problems"][0]["stage"], "map", "{body}");
+        assert_eq!(body["problems"][0]["node"], "map", "{body}");
 
         // Once the schema is published, it may run as it is.
         publish_example_schema(&app).await;
@@ -1120,7 +1142,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .inspect(|p| assert_eq!(p["stage"], "map", "{body}"))
+            .inspect(|p| assert_eq!(p["node"], "map", "{body}"))
             .map(|p| p["message"].as_str().unwrap())
             .collect();
         assert!(
@@ -1150,44 +1172,28 @@ mod tests {
         assert_eq!(body["sources"][0]["name"], "adsb.lol (edited)");
         assert_eq!(body["sources"][0]["draft"], false);
 
-        // Raw output needs explicit consent and a subject outside `tracks.>`.
-        for bad in [
-            json!({"consent": false}),
-            json!({"subject": "tracks.raw", "consent": true}),
-            json!({"subject": "tracks", "consent": true}),
-            json!({"subject": "raw.*", "consent": true}),
-            json!({"subject": "raw..adsb", "consent": true}),
-        ] {
-            let (st, _) = call(
-                &app,
-                "PUT",
-                "/api/v1/sources/adsb-lol/raw-output",
-                Some(bad.clone()),
-            )
-            .await;
-            assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
-        }
-        let (st, body) = call(
-            &app,
-            "PUT",
-            "/api/v1/sources/adsb-lol/raw-output",
-            Some(json!({"consent": true})),
-        )
-        .await;
+        // A NATS topic publishes outside the system tracks' subjects.
+        let mut topic = spec.clone();
+        topic["pipeline"] = json!({
+            "codec": spec["pipeline"]["codec"],
+            "nodes": [
+                {"id": "map", "type": "map", "config": {"mapping": spec["pipeline"]["mapping"]}},
+                {"id": "out", "type": "output"},
+                {"id": "raw", "type": "nats", "config": {"subject": "tracks.raw"}}
+            ],
+            "edges": [{"source": "input", "target": "map"}, {"source": "map", "target": "out"},
+                      {"source": "map", "target": "raw"}]
+        });
+        topic["name"] = json!("adsb.lol (edited)");
+        let (st, body) = call(&app, "PUT", "/api/v1/sources/adsb-lol", Some(topic.clone())).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "enabled: {body}");
+        assert_eq!(body["problems"][0]["node"], "raw", "{body}");
+        topic["pipeline"]["nodes"][2]["config"]["subject"] = json!("raw.adsb");
+        let (st, body) = call(&app, "PUT", "/api/v1/sources/adsb-lol", Some(topic)).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(
-            (st, body["raw_subject"].as_str()),
-            (StatusCode::OK, Some("opentrack.raw.adsb-lol"))
-        );
-        let (st, body) = call(
-            &app,
-            "PUT",
-            "/api/v1/sources/adsb-lol/raw-output",
-            Some(json!({"subject": "raw.adsb", "consent": true})),
-        )
-        .await;
-        assert_eq!(
-            (st, body["raw_subject"].as_str()),
-            (StatusCode::OK, Some("raw.adsb"))
+            body["spec"]["pipeline"]["nodes"][3]["config"]["subject"], "raw.adsb",
+            "{body}"
         );
 
         // Status reports NATS as down without blocking the API: 503, with
@@ -1308,6 +1314,42 @@ mod tests {
         assert_eq!(o["ext"]["registry"]["scheme"], "elnot");
         assert_eq!(o["ext"]["registry"]["grade"], "name");
         assert_eq!(o["classification"]["cot_type"], "a-f-S-C-A");
+        assert_eq!(body["valid"], true, "{body}");
+
+        // A draft runs as far as it can: its transport is not used.
+        let mut draft = spec.clone();
+        draft["transport"] = json!({"type": "udp", "bind": ""});
+        let (st, body) = call(
+            &app,
+            "POST",
+            "/api/v1/sources/validate",
+            Some(json!({"spec": draft, "samples": [frame]})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["valid"], false, "{body}");
+        assert_eq!(body["problems"][0]["field"], "bind", "{body}");
+        assert_eq!(body["observations"].as_array().unwrap().len(), 1, "{body}");
+        // One whose mapping cannot run says why, on its stage.
+        draft["pipeline"]["mapping"]["rules"] = json!([]);
+        let (st, body) = call(
+            &app,
+            "POST",
+            "/api/v1/sources/validate",
+            Some(json!({"spec": draft, "samples": [frame]})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["problems"][0]["node"], "map", "{body}");
+        // The others follow, so each step shows what it needs.
+        assert!(
+            body["problems"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["field"] == "bind"),
+            "{body}"
+        );
         redis.purge_namespace().await.unwrap();
     }
 
@@ -1374,13 +1416,17 @@ mod tests {
             .iter()
             .map(|s| s["id"].as_str().unwrap())
             .collect();
-        assert_eq!(ids, ["decode", "map", "registry", "filter", "publish"]);
-        let publish = &t[0]["stages"][4]["items"][0];
+        assert_eq!(
+            ids,
+            ["input", "map", "registry", "filter", "output", "publish"]
+        );
+        let publish = &t[0]["stages"][5]["items"][0];
         assert_eq!(publish["name"], "ALPHA", "the published message");
         assert_eq!(publish["op"], "upsert");
         assert_eq!(publish["track_id"], "assigned by correlation");
         assert_eq!(t[1]["stages"][3]["dropped"], json!(["drop_if matched"]));
         assert_eq!(t[1]["stages"][4]["items"], json!([]));
+        assert_eq!(t[1]["stages"][5]["items"], json!([]));
         assert_eq!(
             frames[2],
             json!({"format": "text", "bytes": 8, "content": "not json"})

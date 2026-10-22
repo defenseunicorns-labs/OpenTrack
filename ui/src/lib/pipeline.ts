@@ -1,5 +1,5 @@
 /**
- * Plain-language views of a source pipeline, for the Pipeline flowchart and field map.
+ * Plain-language views of a source's settings, for its steps and the field map.
  *
  * Mirrors the server's evaluation (ot-source `expr.rs`, `mapping.rs`, `pipeline.rs`): a value spec
  * is a path string or an object with one source (`path`, `const`, `first`, `template`, `cases`,
@@ -100,206 +100,6 @@ export function describeValue(spec: ValueSpec | undefined): string {
   return [bits.join(' '), ...after].filter(Boolean).join(' · ')
 }
 
-// --- Stages --------------------------------------------------------------------------------
-
-export interface Fact {
-  label: string
-  value: string
-}
-
-export interface Stage {
-  id: string
-  title: string
-  /** One line under the title in the flowchart. */
-  summary: string
-  facts: Fact[]
-}
-
-const secs = (s: number) => (s >= 86400 ? `${+(s / 86400).toFixed(1)} d` : s >= 3600 ? `${+(s / 3600).toFixed(1)} h` : s >= 60 ? `${+(s / 60).toFixed(1)} min` : `${s} s`)
-
-function transportStage(spec: SourceSpec): Stage {
-  const t = spec.transport
-  const where = String(t.url ?? t.bind ?? (t.host ? `${t.host}:${t.port ?? ''}` : ''))
-  const facts: Fact[] = Object.entries(t)
-    .filter(([k]) => k !== 'type')
-    .map(([k, v]) => ({ label: k, value: typeof v === 'string' ? v : JSON.stringify(v) }))
-  return { id: 'transport', title: t.type.replace('_', ' '), summary: where, facts }
-}
-
-/** The stages a record passes through, in the order the source worker runs them. */
-export function pipelineStages(spec: SourceSpec): Stage[] {
-  const p = spec.pipeline as SourceSpec['pipeline'] & Obj
-  const codec = p.codec
-  const rules = (p.mapping.rules as Obj[]) ?? []
-  const reject = (p.mapping.reject as Obj[]) ?? []
-  const fieldCount = rules.reduce((n, r) => n + Object.keys((r.fields as Obj) ?? {}).length, 0)
-  const out: Stage[] = [
-    transportStage(spec),
-    {
-      id: 'decode',
-      title: `decode ${codec.type}`,
-      summary: typeof codec.records === 'string' ? `records at "${codec.records}"` : 'one record per frame',
-      facts: Object.entries(codec)
-        .filter(([k]) => k !== 'type')
-        .map(([k, v]) => ({ label: k, value: typeof v === 'string' ? v : JSON.stringify(v) })),
-    },
-  ]
-  if (reject.length) {
-    out.push({
-      id: 'reject',
-      title: 'reject',
-      summary: plural(reject.length, 'rule'),
-      facts: reject.map((r) => ({ label: String(r.reason), value: describeCondition(r.when) })),
-    })
-  }
-  out.push({
-    id: 'map',
-    title: 'map',
-    summary: `${plural(rules.length, 'rule')} · ${plural(fieldCount, 'field')}`,
-    facts: [],
-  })
-  if (rules.some((r) => r.kind === 'static')) {
-    const ttl = Number((p.static_join as Obj | undefined)?.ttl_secs ?? 7 * 86400)
-    out.push({
-      id: 'join',
-      title: 'identity join',
-      summary: `keeps identity fields ${secs(ttl)}`,
-      facts: [
-        { label: 'What it does', value: 'Fields from static rules are cached per track key and fill gaps in later position reports.' },
-        { label: 'Kept for', value: secs(ttl) },
-      ],
-    })
-  }
-  const reg = p.registry as Obj | undefined
-  const links = entityLinks(reg)
-  const toTrack = links.filter((l) => l.direction !== 'to_entity').length
-  out.push({
-    id: 'registry',
-    title: 'entity',
-    summary: `${plural(toTrack, 'field')} from the entity${links.length > toTrack ? `, ${links.length - toTrack} back to it` : ''}${reg ? '' : ' (defaults)'}`,
-    facts: [
-      { label: 'Schemes', value: ((reg?.schemes as string[]) ?? []).join(', ') || 'every identifier' },
-      { label: 'Name to grade', value: String(reg?.broadcast_name ?? 'name') },
-      { label: 'Used at grades', value: ((reg?.apply_grades as string[]) ?? DEFAULT_GRADES).join(', ') },
-      ...links.map((l) =>
-        l.direction === 'to_entity'
-          ? { label: `updates entity ${l.entity}`, value: `from the track's ${l.track}` }
-          : { label: `sets ${l.track}`, value: `from the entity's ${l.entity}` },
-      ),
-    ],
-  })
-  const aff = p.affiliation as Obj | undefined
-  if (aff) {
-    const n = (k: string) => ((aff[k] as string[]) ?? []).length
-    out.push({
-      id: 'affiliation',
-      title: 'affiliation',
-      summary: `by country · ${n('friendly')} friendly, ${n('hostile')} hostile`,
-      facts: [
-        { label: 'Country from', value: describeValue(aff.country as ValueSpec) },
-        { label: 'Friend', value: ((aff.friendly as string[]) ?? []).join(' ') || '—' },
-        { label: 'Hostile', value: ((aff.hostile as string[]) ?? []).join(' ') || '—' },
-        { label: 'Neutral', value: ((aff.neutral as string[]) ?? []).join(' ') || '—' },
-        { label: 'Other countries', value: String(aff.otherwise ?? 'left unset') },
-        { label: 'No country', value: String(aff.unknown_country ?? 'left unset') },
-      ],
-    })
-  }
-  const filter = p.filter as Obj | undefined
-  if (filter) {
-    const facts: Fact[] = []
-    if (filter.keep_if) facts.push({ label: 'Keep only if', value: describeCondition(filter.keep_if) })
-    if (filter.drop_if) facts.push({ label: 'Drop if', value: describeCondition(filter.drop_if) })
-    out.push({ id: 'filter', title: 'filter', summary: filter.keep_if ? 'keep only matching' : 'drop matching', facts })
-  }
-  const tr = p.tracker as Obj | undefined
-  if (tr) {
-    const mht = (tr.mht as Obj | undefined) ?? {}
-    const alg = tr.algorithm === 'mht' ? 'MHT' : tr.algorithm === 'plugin' ? `plugin ${String(tr.plugin ?? '')}` : 'GNN'
-    const profile: Fact[] = tr.profile ? [{ label: 'Profile', value: String(tr.profile) }] : []
-    const facts: Fact[] =
-      tr.algorithm === 'plugin'
-        ? [
-            ...profile,
-            { label: 'Tracker', value: `the ${String(tr.plugin ?? '?')} plugin (Settings → General → Plugins)` },
-            { label: 'Options', value: Object.keys((tr.options as Obj | undefined) ?? {}).length ? JSON.stringify(tr.options) : 'its defaults' },
-            { label: 'Track keys', value: 'as the plugin names them' },
-          ]
-        : [
-            ...profile,
-            { label: 'Association', value: alg === 'MHT' ? `multiple hypotheses, final after ${Number(mht.n_scan ?? 3)} scans` : 'global nearest neighbour' },
-            { label: 'Classification', value: `unknown affiliation${tr.domain ? `, ${String(tr.domain)}` : ', domain from the plots if they report one'}; no identity` },
-            {
-              label: 'Confirmed at',
-              value: `existence ${Number(tr.confirm_probability ?? 0.95)}, after at least ${Number(tr.confirm_hits ?? 3)} plots`,
-            },
-            { label: 'Clutter', value: `${Number(tr.clutter_density ?? 1e-6)} false plots per m², detection ${Number(tr.detection_probability ?? 0.9)}` },
-            {
-              label: 'Dropped after',
-              value: tr.auto_timing != null ? 'a few missed revisits (auto timing)' : `${secs(Number(tr.drop_confirmed_secs ?? 8))} without a plot`,
-            },
-            { label: 'Track keys', value: `${String(tr.key_prefix ?? 'T')}<run>-1, -2…` },
-          ]
-    out.push({
-      id: 'tracker',
-      title: `tracker · ${alg}`,
-      summary: `plots → tracks · ${tr.domain ? `${String(tr.domain)}, ` : ''}${tr.profile ? `${String(tr.profile)} · ` : ''}unknown affiliation`,
-      facts,
-    })
-  }
-  const th = p.throttle as Obj | undefined
-  if (th) {
-    const min = Number(th.min_interval_secs ?? 0)
-    const beat = Number(th.heartbeat_secs ?? 600)
-    const move = Number(th.min_move_m ?? 0)
-    out.push({
-      id: 'throttle',
-      title: 'throttle',
-      summary: `≥ ${secs(min)} apart · ${move} m move`,
-      facts: [
-        { label: 'At most every', value: secs(min) },
-        { label: 'Between that and the heartbeat', value: move > 0 ? `only after moving ${move} m` : 'every report' },
-        { label: 'Heartbeat', value: `always after ${secs(beat)}` },
-      ],
-    })
-  }
-  const plots = spec.reports === 'detections' && !tr
-  out.push({
-    id: 'publish',
-    title: 'correlation → TRACKS',
-    summary: plots ? 'plots associated with system tracks' : 'system track, published to NATS',
-    facts: [
-      {
-        label: 'Correlation',
-        value: plots
-          ? 'Each plot updates the nearest system track inside the gate; plots with none are dropped.'
-          : 'Each source track reports for one system track, paired with other sources’ tracks on a shared identifier or kinematic agreement.',
-      },
-      {
-        label: 'Published',
-        value: 'Confirmed tracks that a source allowed to stand alone reports for: the GOLD fields plus the output schema’s attributes.',
-      },
-    ],
-  })
-  return out
-}
-
-// --- Decode stage ------------------------------------------------------------------------
-
-/** The codecs the Decode stage edits; the others (protobuf, plugins) are chosen on the Transport tab. */
-export const DECODE_CODECS = ['json', 'cot_xml', 'xml']
-
-/**
- * A codec the Decode stage only shows: its type and its message or plugin, or null for one it
- * edits. Choosing a Decode format would replace such a codec's schema, plugin and options.
- */
-export function transportCodec(codec: Obj | undefined): { type: string; name?: string } | null {
-  const type = String(codec?.type ?? 'json')
-  if (DECODE_CODECS.includes(type)) return null
-  const name = type === 'protobuf' ? codec?.message : type === 'plugin' ? codec?.plugin : undefined
-  return typeof name === 'string' && name ? { type, name } : { type }
-}
-
 // --- Entity links --------------------------------------------------------------------------
 
 export interface EntityLink {
@@ -387,7 +187,13 @@ export function destinations(target: string, schema: SchemaOverview): Destinatio
 export function fieldMap(spec: SourceSpec, schema: SchemaOverview): FieldRow[] {
   const p = spec.pipeline as SourceSpec['pipeline'] & Obj
   const rows: FieldRow[] = []
-  for (const [i, r] of ((p.mapping.rules as Obj[]) ?? []).entries()) {
+  // Every Map's rules, and the first Entity links step's (a source from before flows has one of each).
+  const nodes = (p.nodes as { type?: string; config?: Obj }[] | undefined) ?? []
+  const rules = nodes.length
+    ? nodes.filter((n) => n.type === 'map').flatMap((n) => ((n.config?.mapping as Obj | undefined)?.rules as Obj[]) ?? [])
+    : (((p.mapping as Obj | undefined)?.rules as Obj[]) ?? [])
+  const registry = nodes.length ? nodes.find((n) => n.type === 'registry')?.config : (p.registry as Obj | undefined)
+  for (const [i, r] of rules.entries()) {
     const stage = `${String(r.name ?? `rule ${i + 1}`)}${r.kind === 'static' ? ' (identity)' : ''}`
     rows.push({
       id: `${i}:key`,
@@ -420,7 +226,7 @@ export function fieldMap(spec: SourceSpec, schema: SchemaOverview): FieldRow[] {
       })
     }
   }
-  for (const [n, l] of entityLinks(p.registry as Obj | undefined).entries()) {
+  for (const [n, l] of entityLinks(registry).entries()) {
     rows.push(
       l.direction === 'to_entity'
         ? {

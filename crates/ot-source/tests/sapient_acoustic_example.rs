@@ -28,7 +28,8 @@ fn acoustic_example_maps_a_sapient_bearing() {
             }
         }
     });
-    let MapOutcome::Mapped(mapped) = source.pipeline.mapping.apply(&record) else {
+    let MapOutcome::Mapped(mapped) = source.pipeline.mappings().next().unwrap().apply(&record)
+    else {
         panic!("acoustic record did not match the source mapping");
     };
     let observation = finalize(&source.id, 1, &mapped[0], Utc::now()).expect("valid bearing");

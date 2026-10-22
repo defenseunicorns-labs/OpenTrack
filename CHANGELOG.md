@@ -4,13 +4,28 @@
 
 ### Added
 
+- **Sources are flows.** A source's editor is a workspace: the step list on the left, the source's
+  steps placed and connected by hand, each clicked open for its settings and samples. After the
+  input (transport and codec) come Reject, Map, Filter, Entity links, Affiliation, Tracker and
+  Throttle steps, any number of each, branching to the source's one **Output** (system tracks, to
+  correlation) and any **NATS topics** (the mapped data, as JSON, without correlation). The spec
+  keeps the flow under `pipeline` (`nodes`, `edges`); a spec in the older fixed form still reads,
+  as the same stages in a line. Add source asks for a name, id and transport and opens a draft.
 - **Draft sources.** A source that is not complete yet saves as a draft, which cannot be enabled,
-  instead of being refused. Its row carries `draft` and `problems`, each with the pipeline stage it
-  belongs to. An enabled source is still saved only complete, and enabling re-checks it.
+  instead of being refused. Its row carries `draft` and `problems`, each on the step it belongs to. An enabled source is still saved only complete, and enabling re-checks it.
 - **Every problem with a source at once.** A refused save or enable is a 422 that lists all of the
-  source's `problems` (`{kind, stage, field?, message}`), not just the first, and an empty
+  source's `problems` (`{kind, node, field?, message}`), not just the first, and an empty
   transport setting (host, port, URL, bind address, topic, method, path) is now reported by name.
   The SQLite schema moves to version 20.
+
+### Changed
+
+- **Raw output is a NATS topic step.** Its consent and the `/sources/{id}/raw-output` endpoints are
+  gone. A source saved with a raw-output subject gets a NATS topic step beside its Output, once, on
+  start (recorded as a revision by `op:migration`); a configuration file's raw output is read the
+  same way. A NATS topic's subject must lie outside the system tracks' subjects.
+- **The add-source wizard, the source drawer and the pipeline designer** are replaced by the
+  source editor.
 
 ## 1.0.0, 2026-10-06
 

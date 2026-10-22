@@ -239,17 +239,18 @@ track update should filter on `OT-Op: upsert` and `delete`, or subscribe to `tra
 
 ## Other subjects
 
-Nothing else OpenTrack publishes falls under `tracks.>`. Per-source raw output, when an admin
-enables it with recorded consent, goes to `opentrack.raw.<source>` (or an admin-chosen subject
-outside `tracks.>`): core NATS (no stream, no acknowledgement), one message per observation as the
-source's pipeline produced it, before correlation, as JSON (`source_id`, `source_track_key`,
-`observed_at`, `position`, `kinematics`, `classification`, `identifiers`, `ext`, ...). It is a
-diagnostic and integration feed, not a contract: its shape follows OpenTrack's internal
-observation and can change between versions.
+Nothing else OpenTrack publishes falls under `tracks.>`. A source's **NATS topic** steps publish
+what reaches them on their own subjects, which must lie outside `tracks.>`: core NATS (no stream,
+no acknowledgement), one message per observation as the source's flow made it up to that step,
+before correlation, as JSON (`source_id`, `source_track_key`, `observed_at`, `position`,
+`kinematics`, `classification`, `identifiers`, `ext`, ..., and the source's `security` label when it
+has one). It is an integration feed, not a contract: its shape follows OpenTrack's internal
+observation and can change between versions. A source saved with a raw-output subject before
+flows publishes it from a NATS topic step beside its Output.
 
 ## Permissions OpenTrack needs
 
-Publish on `tracks.>` and on any raw-output subjects, plus the JetStream API for the stream
+Publish on `tracks.>` and on your sources' NATS topic subjects, plus the JetStream API for the stream
 (`$JS.API.STREAM.INFO.TRACKS`, and `$JS.API.STREAM.CREATE.TRACKS` unless the stream is created
 beforehand). Authenticate with `OT_NATS_CREDS` (credentials file), `OT_NATS_TOKEN`, or
 `OT_NATS_USER` and `OT_NATS_PASSWORD`.
