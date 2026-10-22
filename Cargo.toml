@@ -29,9 +29,9 @@ bytes = "1"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 quick-xml = "0.42"
 # Registry spreadsheets: xlsx out, xlsx/ods in, CSV both ways.
-calamine = "0.36"
+calamine = "0.37"
 csv = "1"
-rust_xlsxwriter = "0.99"
+rust_xlsxwriter = "0.101"
 regex = "1"
 rumqttc = "0.25"
 # Named so the process can pick its TLS crypto provider (see ot-server main).
