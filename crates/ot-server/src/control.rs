@@ -355,50 +355,52 @@ pub(crate) fn parse_uid(raw: &str) -> Result<Uid, ApiError> {
 pub struct ApiError {
     status: StatusCode,
     pub(crate) message: String,
+    /// What is wrong with a source, each problem with its pipeline stage
+    /// (`ot_source::source::Problem`), sent as the body's `problems`.
+    problems: Option<serde_json::Value>,
 }
 
 impl ApiError {
-    pub(crate) fn internal(m: impl Into<String>) -> Self {
+    fn new(status: StatusCode, m: impl Into<String>) -> Self {
         Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
+            status,
             message: m.into(),
+            problems: None,
         }
+    }
+
+    pub(crate) fn internal(m: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, m)
     }
     pub(crate) fn not_found(m: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            message: m.into(),
-        }
+        Self::new(StatusCode::NOT_FOUND, m)
     }
     pub(crate) fn unprocessable(m: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: m.into(),
-        }
+        Self::new(StatusCode::UNPROCESSABLE_ENTITY, m)
     }
     pub(crate) fn conflict(m: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::CONFLICT,
-            message: m.into(),
-        }
+        Self::new(StatusCode::CONFLICT, m)
     }
     pub(crate) fn unauthorized(m: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            message: m.into(),
-        }
+        Self::new(StatusCode::UNAUTHORIZED, m)
     }
     pub(crate) fn forbidden(m: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, m)
+    }
+    /// A source that cannot be saved or enabled as it is: 422, with its
+    /// problems listed (the first is the `error`).
+    pub(crate) fn source_problems(problems: &[ot_source::source::Problem]) -> Self {
         Self {
-            status: StatusCode::FORBIDDEN,
-            message: m.into(),
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: problems
+                .first()
+                .map_or_else(|| "invalid source".to_owned(), |p| p.message.clone()),
+            problems: Some(serde_json::to_value(problems).unwrap_or_default()),
         }
     }
+
     pub(crate) fn bad_request(m: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            message: m.into(),
-        }
+        Self::new(StatusCode::BAD_REQUEST, m)
     }
 }
 
@@ -406,10 +408,7 @@ impl From<ot_store::StoreError> for ApiError {
     fn from(e: ot_store::StoreError) -> Self {
         match e {
             ot_store::StoreError::NotFound(m) => Self::not_found(m),
-            ot_store::StoreError::Conflict(m) => Self {
-                status: StatusCode::CONFLICT,
-                message: m,
-            },
+            ot_store::StoreError::Conflict(m) => Self::conflict(m),
             other => Self::internal(other.to_string()),
         }
     }
@@ -430,7 +429,14 @@ impl IntoResponse for ApiError {
             )
                 .into_response();
         }
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        match self.problems {
+            Some(problems) => (
+                self.status,
+                Json(json!({ "error": self.message, "problems": problems })),
+            )
+                .into_response(),
+            None => (self.status, Json(json!({ "error": self.message }))).into_response(),
+        }
     }
 }
 

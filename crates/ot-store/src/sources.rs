@@ -21,6 +21,11 @@ pub struct SourceRow {
     pub raw_subject: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// Why the source may not run yet, as the server found when it was
+    /// saved: a JSON array, empty when it is complete.
+    pub problems: Value,
+    /// Whether it has problems: a draft cannot be enabled.
+    pub draft: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -40,11 +45,13 @@ pub struct SourceWrite<'a> {
     pub codec: &'a str,
     pub priority: i64,
     pub spec: &'a Value,
+    /// Its problems (a JSON array; empty: complete).
+    pub problems: &'a Value,
 }
 
-const COLUMNS: &str = "id, name, transport, codec, enabled, priority, revision, settings, raw_subject, created_at_ms, updated_at_ms";
+const COLUMNS: &str = "id, name, transport, codec, enabled, priority, revision, settings, raw_subject, created_at_ms, updated_at_ms, problems";
 
-fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(SourceRow, String)> {
+fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(SourceRow, String, String)> {
     let spec: String = r.get(7)?;
     Ok((
         SourceRow {
@@ -59,14 +66,36 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(SourceRow, String)> {
             raw_subject: r.get(8)?,
             created_at_ms: r.get(9)?,
             updated_at_ms: r.get(10)?,
+            problems: Value::Null,
+            draft: false,
         },
         spec,
+        r.get(11)?,
     ))
 }
 
-fn finish((mut row, spec): (SourceRow, String)) -> Result<SourceRow> {
+fn finish((mut row, spec, problems): (SourceRow, String, String)) -> Result<SourceRow> {
     row.spec = serde_json::from_str(&spec)?;
+    row.problems = serde_json::from_str(&problems)?;
+    row.draft = is_draft(&row.problems);
     Ok(row)
+}
+
+/// Whether a source with these problems is a draft: any problem listed.
+fn is_draft(problems: &Value) -> bool {
+    problems.as_array().is_some_and(|a| !a.is_empty())
+}
+
+/// A source's stored problems, if it exists.
+fn stored_problems(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<Option<(bool, Value)>> {
+    tx.query_row(
+        "SELECT enabled, problems FROM sources WHERE id = ?1",
+        [id],
+        |r| Ok((r.get::<_, bool>(0)?, r.get::<_, String>(1)?)),
+    )
+    .optional()?
+    .map(|(enabled, p)| Ok((enabled, serde_json::from_str(&p)?)))
+    .transpose()
 }
 
 impl Db {
@@ -90,10 +119,19 @@ impl Db {
             .transpose()
     }
 
-    /// Create or update a source. Returns the saved row.
+    /// Create or update a source. Returns the saved row. An enabled source
+    /// is saved only complete (an edit never stops a running source).
     pub fn put_source(&mut self, w: &SourceWrite<'_>, actor: &str) -> Result<SourceRow> {
         let before = self.get_source(w.id)?;
         self.write(|tx| {
+            if is_draft(w.problems)
+                && stored_problems(tx, w.id)?.is_some_and(|(enabled, _)| enabled)
+            {
+                return Err(StoreError::Conflict(format!(
+                    "source {} is enabled; it can be saved only complete",
+                    w.id
+                )));
+            }
             let now = now_ms();
             let (op, revision) = match &before {
                 None => ("create_source", 1),
@@ -110,19 +148,23 @@ impl Db {
             };
             let decision_id = record_decision(tx, &decision, now)?;
             let spec = w.spec.to_string();
+            let problems = w.problems.to_string();
             if before.is_none() {
                 tx.execute(
                     "INSERT INTO sources (id, name, transport, codec, settings, priority, revision,
-                                          created_at_ms, updated_at_ms)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?7)",
-                    params![w.id, w.name, w.transport, w.codec, spec, w.priority, now],
+                                          created_at_ms, updated_at_ms, problems)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?7, ?8)",
+                    params![w.id, w.name, w.transport, w.codec, spec, w.priority, now, problems],
                 )?;
             } else {
                 tx.execute(
                     "UPDATE sources SET name = ?2, transport = ?3, codec = ?4, settings = ?5,
-                            priority = ?6, revision = ?7, updated_at_ms = ?8
+                            priority = ?6, revision = ?7, updated_at_ms = ?8, problems = ?9
                      WHERE id = ?1",
-                    params![w.id, w.name, w.transport, w.codec, spec, w.priority, revision, now],
+                    params![
+                        w.id, w.name, w.transport, w.codec, spec, w.priority, revision, now,
+                        problems
+                    ],
                 )?;
             }
             tx.execute(
@@ -136,14 +178,32 @@ impl Db {
             .ok_or_else(|| StoreError::NotFound(format!("source {}", w.id)))
     }
 
+    /// Enable or disable a source. `problems`, when given, is what checking
+    /// it again found now (a schema published since it was saved, say),
+    /// stored first: a draft cannot be enabled.
     pub fn set_source_enabled(
         &mut self,
         id: &str,
         enabled: bool,
+        problems: Option<&Value>,
         actor: &str,
     ) -> Result<SourceRow> {
         self.write(|tx| {
             let now = now_ms();
+            let Some((_, stored)) = stored_problems(tx, id)? else {
+                return Err(StoreError::NotFound(format!("source {id}")));
+            };
+            if let Some(p) = problems {
+                tx.execute(
+                    "UPDATE sources SET problems = ?2 WHERE id = ?1",
+                    params![id, p.to_string()],
+                )?;
+            }
+            if enabled && is_draft(problems.unwrap_or(&stored)) {
+                return Err(StoreError::Conflict(format!(
+                    "source {id} is a draft; complete it before enabling it"
+                )));
+            }
             let op = if enabled {
                 "enable_source"
             } else {
@@ -151,17 +211,29 @@ impl Db {
             };
             let d = Decision::new(actor, op).evidence(json!({ "source": id }));
             record_decision(tx, &d, now)?;
-            let n = tx.execute(
+            tx.execute(
                 "UPDATE sources SET enabled = ?2, updated_at_ms = ?3 WHERE id = ?1",
                 params![id, enabled, now],
+            )?;
+            Ok(())
+        })?;
+        self.get_source(id)?
+            .ok_or_else(|| StoreError::NotFound(format!("source {id}")))
+    }
+
+    /// Store what checking a source again found, without a new revision
+    /// (nothing about the source itself changed).
+    pub fn set_source_problems(&mut self, id: &str, problems: &Value) -> Result<()> {
+        self.write(|tx| {
+            let n = tx.execute(
+                "UPDATE sources SET problems = ?2 WHERE id = ?1",
+                params![id, problems.to_string()],
             )?;
             if n == 0 {
                 return Err(StoreError::NotFound(format!("source {id}")));
             }
             Ok(())
-        })?;
-        self.get_source(id)?
-            .ok_or_else(|| StoreError::NotFound(format!("source {id}")))
+        })
     }
 
     /// Set or clear the raw-output subject. Setting one records the admin's
@@ -255,6 +327,8 @@ fn masked(spec: &Value) -> Value {
 mod tests {
     use super::*;
 
+    const COMPLETE: &Value = &Value::Array(Vec::new());
+
     fn write<'a>(spec: &'a Value) -> SourceWrite<'a> {
         SourceWrite {
             id: "ais",
@@ -263,7 +337,43 @@ mod tests {
             codec: "json",
             priority: 100,
             spec,
+            problems: COMPLETE,
         }
+    }
+
+    #[test]
+    fn a_draft_keeps_its_problems_and_cannot_be_enabled() {
+        let mut db = Db::open_in_memory().unwrap();
+        let spec = json!({"v": 1});
+        let problems = json!([{"kind": "incomplete", "stage": "source", "field": "url",
+                               "message": "the URL is not set"}]);
+        let row = db
+            .put_source(
+                &SourceWrite {
+                    problems: &problems,
+                    ..write(&spec)
+                },
+                "op:test",
+            )
+            .unwrap();
+        assert!(row.draft);
+        assert_eq!(row.problems, problems);
+        assert!(matches!(
+            db.set_source_enabled("ais", true, None, "op:test"),
+            Err(StoreError::Conflict(_))
+        ));
+        assert!(!db.get_source("ais").unwrap().unwrap().enabled);
+        // Turning a draft off is fine; completing it lets it run.
+        db.set_source_enabled("ais", false, None, "op:test")
+            .unwrap();
+        let row = db.put_source(&write(&spec), "op:test").unwrap();
+        assert!(!row.draft);
+        assert_eq!(row.problems, json!([]));
+        assert!(
+            db.set_source_enabled("ais", true, None, "op:test")
+                .unwrap()
+                .enabled
+        );
     }
 
     #[test]
@@ -318,7 +428,7 @@ mod tests {
         let v1 = db.sources_version().unwrap();
         assert_ne!(v0, v1);
 
-        let row = db.set_source_enabled("ais", true, "op:test").unwrap();
+        let row = db.set_source_enabled("ais", true, None, "op:test").unwrap();
         assert!(row.enabled);
         let revs = db.source_revisions("ais").unwrap();
         assert_eq!(revs.len(), 2);
@@ -351,7 +461,7 @@ mod tests {
             ]
         );
         assert!(matches!(
-            db.set_source_enabled("nope", true, "x"),
+            db.set_source_enabled("nope", true, None, "x"),
             Err(StoreError::NotFound(_))
         ));
     }

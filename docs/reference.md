@@ -160,6 +160,14 @@ A source is a transport (`tcp_client`, `tcp_server`, `udp` with IPv4 or IPv6 mul
 `_frame` (an MQTT topic is `_frame.topic`, `_frame.topic_levels[1]` its second level). Secrets are
 written as `${env:NAME}` and resolved when the source starts.
 
+A source that is not complete yet (a setting left empty, no mapping rules, a mapping problem, an
+unpublished schema version) saves as a **draft**: its row has `"draft": true` and `problems`, each
+`{kind, stage, field?, message}`, where `stage` is the pipeline stage it belongs to (`source`,
+`decode`, `map`, `static_join`, `registry`, `affiliation`, `filter`, `tracker`, `throttle`,
+`output`) and `null` for the source as a whole. A draft cannot be enabled. A source without a valid
+id or name is not saved (`kind: "invalid"`), and an enabled source is saved only complete. A
+refusal is a 422 whose body lists the `problems` beside the `error`.
+
 `tcp_client`, `http_poll` (`https://`), `websocket` (`wss://`) and `mqtt` (`mqtts://`) take a
 `tls` object: `ca_file` (trusted instead of the system roots), `cert_file` and `key_file` (a client
 certificate for mutual TLS), `server_name` (verify against this name instead of the host) and

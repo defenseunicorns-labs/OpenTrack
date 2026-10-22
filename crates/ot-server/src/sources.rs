@@ -624,6 +624,8 @@ mod tests {
             raw_subject: None,
             created_at_ms: 0,
             updated_at_ms: 0,
+            problems: serde_json::json!([]),
+            draft: false,
         };
         let schema = ExtensionSchema {
             version: accepted["pipeline"]["mapping"]["schema_version"]

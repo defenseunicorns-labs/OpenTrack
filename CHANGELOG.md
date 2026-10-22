@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Draft sources.** A source that is not complete yet saves as a draft, which cannot be enabled,
+  instead of being refused. Its row carries `draft` and `problems`, each with the pipeline stage it
+  belongs to. An enabled source is still saved only complete, and enabling re-checks it.
+- **Every problem with a source at once.** A refused save or enable is a 422 that lists all of the
+  source's `problems` (`{kind, stage, field?, message}`), not just the first, and an empty
+  transport setting (host, port, URL, bind address, topic, method, path) is now reported by name.
+  The SQLite schema moves to version 20.
+
 ## 1.0.0, 2026-10-06
 
 The first open-source release, under the MIT License. 1.0 carries everything up to 0.4.7, plus the

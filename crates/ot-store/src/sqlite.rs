@@ -30,6 +30,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0017_account_expiry.sql"),
     include_str!("../migrations/0018_sync_keys.sql"),
     include_str!("../migrations/0019_plugin_secret.sql"),
+    include_str!("../migrations/0020_source_problems.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -567,9 +568,9 @@ mod tests {
     fn migrates_once_and_reopens() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ot.db");
-        assert_eq!(Db::open(&path).unwrap().schema_version().unwrap(), 19);
+        assert_eq!(Db::open(&path).unwrap().schema_version().unwrap(), 20);
         // Re-opening applies nothing and keeps the version.
-        assert_eq!(Db::open(&path).unwrap().schema_version().unwrap(), 19);
+        assert_eq!(Db::open(&path).unwrap().schema_version().unwrap(), 20);
     }
 
     #[test]

@@ -209,17 +209,26 @@ pub enum MapOutcome {
 
 impl MappingSpec {
     pub fn validate(&self) -> Result<(), MappingError> {
-        if self.rules.is_empty() {
-            return Err(MappingError::NoRules);
+        match self.problems().into_iter().next() {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
+    }
+
+    /// Every problem with the rules, in rule order.
+    pub fn problems(&self) -> Vec<MappingError> {
+        if self.rules.is_empty() {
+            return vec![MappingError::NoRules];
+        }
+        let mut out = Vec::new();
         let mut names = std::collections::HashSet::new();
         for rule in &self.rules {
             if !names.insert(rule.name.as_str()) {
-                return Err(MappingError::DuplicateRule(rule.name.clone()));
+                out.push(MappingError::DuplicateRule(rule.name.clone()));
             }
             for field in rule.fields.keys() {
                 if target_type(field).is_none() {
-                    return Err(MappingError::UnknownField {
+                    out.push(MappingError::UnknownField {
                         rule: rule.name.clone(),
                         field: field.clone(),
                     });
@@ -230,10 +239,10 @@ impl MappingSpec {
                 && !(rule.fields.contains_key("position.latitude")
                     && rule.fields.contains_key("position.longitude"))
             {
-                return Err(MappingError::NoPosition(rule.name.clone()));
+                out.push(MappingError::NoPosition(rule.name.clone()));
             }
         }
-        Ok(())
+        out
     }
 
     pub fn apply(&self, record: &Value) -> MapOutcome {

@@ -224,12 +224,60 @@ impl SourceSpec {
         }
     }
 
+    /// The first reason this source may not run (without the extension
+    /// schema checks): see [`Self::problems`] for all of them.
     pub fn validate(&self) -> Result<(), SourceError> {
-        if let Some(label) = &self.security {
-            label.validate().map_err(SourceError::Tracker)?;
+        match self.checks(None).into_iter().next() {
+            Some((_, _, e)) => Err(e),
+            None => Ok(()),
         }
-        if let Some(m) = &self.emitter_motion {
-            m.check().map_err(SourceError::Tracker)?;
+    }
+
+    /// Everything that stops this source running, each with the pipeline
+    /// stage (and, where there is one, the setting) it belongs to. Empty:
+    /// the source is complete and may be enabled. A problem of kind
+    /// [`ProblemKind::Invalid`] also stops it being saved; the rest leave
+    /// it a draft.
+    pub fn problems(&self, schema: Option<&crate::schema::ExtensionSchema>) -> Vec<Problem> {
+        self.checks(Some(schema))
+            .into_iter()
+            .map(|(stage, field, e)| Problem {
+                kind: match e {
+                    SourceError::BadId(_) | SourceError::NoName => ProblemKind::Invalid,
+                    _ => ProblemKind::Incomplete,
+                },
+                stage,
+                field: field.map(str::to_owned),
+                message: e.to_string(),
+            })
+            .collect()
+    }
+
+    /// Every check, in order, each failure with its stage and setting.
+    /// `schema`: `None` skips the extension schema checks; `Some(None)`
+    /// means the mapping's schema version is not published.
+    fn checks(
+        &self,
+        schema: Option<Option<&crate::schema::ExtensionSchema>>,
+    ) -> Vec<(Option<Stage>, Option<&'static str>, SourceError)> {
+        let mut out = Vec::new();
+        if let Some(label) = &self.security
+            && let Err(e) = label.validate()
+        {
+            out.push((
+                Some(Stage::Output),
+                Some("security"),
+                SourceError::Tracker(e),
+            ));
+        }
+        if let Some(m) = &self.emitter_motion
+            && let Err(e) = m.check()
+        {
+            out.push((
+                Some(Stage::Output),
+                Some("emitter_motion"),
+                SourceError::Tracker(e),
+            ));
         }
         let id_ok = !self.id.is_empty()
             && self.id.len() <= 64
@@ -238,84 +286,164 @@ impl SourceSpec {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
         if !id_ok {
-            return Err(SourceError::BadId(self.id.clone()));
+            out.push((None, Some("id"), SourceError::BadId(self.id.clone())));
         }
         if self.name.trim().is_empty() {
-            return Err(SourceError::NoName);
+            out.push((None, Some("name"), SourceError::NoName));
         }
-        self.pipeline.mapping.validate()?;
-        if let Some(t) = &self.pipeline.tracker {
-            t.validate().map_err(SourceError::Tracker)?;
+        for e in self.pipeline.mapping.problems() {
+            out.push((Some(Stage::Map), None, e.into()));
         }
-        if let crate::codec::CodecConfig::Plugin { .. }
-        | crate::codec::CodecConfig::Protobuf { .. } = &self.pipeline.codec
+        if let Some(t) = &self.pipeline.tracker
+            && let Err(e) = t.validate()
         {
-            crate::codec::Codec::new(self.pipeline.codec.clone())
-                .map_err(|e| SourceError::Tracker(e.to_string()))?;
+            out.push((Some(Stage::Tracker), None, SourceError::Tracker(e)));
         }
-        self.transport.check().map_err(SourceError::Transport)?;
+        let grpc = matches!(
+            self.transport,
+            TransportConfig::GrpcClient { .. } | TransportConfig::GrpcServer { .. }
+        );
+        let protobuf = matches!(
+            self.pipeline.codec,
+            crate::codec::CodecConfig::Protobuf { .. }
+        );
+        let plugin = matches!(
+            self.pipeline.codec,
+            crate::codec::CodecConfig::Plugin { .. }
+        );
+        // A gRPC source's protobuf is compiled (once) by the check below.
+        if (plugin || (protobuf && !grpc))
+            && let Err(e) = crate::codec::Codec::new(self.pipeline.codec.clone())
+        {
+            out.push((
+                Some(Stage::Decode),
+                None,
+                SourceError::Tracker(e.to_string()),
+            ));
+        }
+        let missing = self.transport.missing();
+        for (field, what) in &missing {
+            out.push((
+                Some(Stage::Source),
+                Some(*field),
+                SourceError::Transport(format!("{what} is not set")),
+            ));
+        }
+        if let Err(e) = self.transport.check() {
+            out.push((Some(Stage::Source), None, SourceError::Transport(e)));
+        }
         // gRPC carries protobuf: the method must fit the codec's message.
-        if let TransportConfig::GrpcClient { .. } | TransportConfig::GrpcServer { .. } =
-            &self.transport
-        {
-            let proto = crate::transport::ProtoContext::of(&self.pipeline.codec)
-                .map_err(SourceError::Transport)?
-                .ok_or_else(|| {
-                    SourceError::Transport("a gRPC source decodes with the protobuf codec".into())
-                })?;
-            match &self.transport {
-                TransportConfig::GrpcClient {
-                    method, request, ..
-                } => {
-                    proto
-                        .client_request(method, request)
-                        .map_err(SourceError::Transport)?;
+        if grpc {
+            match crate::transport::ProtoContext::of(&self.pipeline.codec) {
+                Err(e) => out.push((Some(Stage::Decode), None, SourceError::Transport(e))),
+                Ok(None) => out.push((
+                    Some(Stage::Decode),
+                    None,
+                    SourceError::Transport("a gRPC source decodes with the protobuf codec".into()),
+                )),
+                Ok(Some(_)) if !missing.is_empty() => {}
+                Ok(Some(proto)) => {
+                    let fit = match &self.transport {
+                        TransportConfig::GrpcClient {
+                            method, request, ..
+                        } => proto.client_request(method, request).map(drop),
+                        TransportConfig::GrpcServer { methods, .. } => {
+                            proto.server_methods(methods).map(drop)
+                        }
+                        _ => Ok(()),
+                    };
+                    if let Err(e) = fit {
+                        out.push((Some(Stage::Source), None, SourceError::Transport(e)));
+                    }
                 }
-                TransportConfig::GrpcServer { methods, .. } => {
-                    proto
-                        .server_methods(methods)
-                        .map_err(SourceError::Transport)?;
-                }
-                _ => {}
             }
         }
         if let TransportConfig::TcpClient { framing, .. }
         | TransportConfig::TcpServer { framing, .. } = &self.transport
+            && let Err(e) = crate::frame::Framer::new(framing.clone())
         {
-            crate::frame::Framer::new(framing.clone())?;
+            out.push((Some(Stage::Source), Some("framing"), e.into()));
         }
         // Last, so that a broken setting is reported before its security.
         if let Some(e) = self.authentication_problem() {
-            return Err(SourceError::Unauthenticated(e));
+            out.push((
+                Some(Stage::Source),
+                Some("unauthenticated"),
+                SourceError::Unauthenticated(e),
+            ));
         }
-        Ok(())
-    }
-
-    /// Validate against the extension schema version the mapping targets
-    /// (`None` if that version is not published).
-    pub fn validate_against(
-        &self,
-        schema: Option<&crate::schema::ExtensionSchema>,
-    ) -> Result<(), SourceError> {
-        self.validate()?;
-        let wanted = self.pipeline.mapping.schema_version;
-        let Some(schema) = schema.filter(|s| s.version == wanted) else {
-            return Err(SourceError::SchemaVersion {
-                wanted,
-                found: "not published".into(),
-            });
-        };
-        for (key, rules) in crate::schema::mapped_ext_keys(&self.pipeline.mapping) {
-            if schema.field(&key).is_none() {
-                return Err(SourceError::UndeclaredExtension {
-                    rule: rules[0].clone(),
-                    key,
-                    version: wanted,
-                });
+        if let Some(schema) = schema {
+            let wanted = self.pipeline.mapping.schema_version;
+            match schema.filter(|s| s.version == wanted) {
+                None => out.push((
+                    Some(Stage::Map),
+                    Some("schema_version"),
+                    SourceError::SchemaVersion {
+                        wanted,
+                        found: "not published".into(),
+                    },
+                )),
+                Some(schema) => {
+                    for (key, rules) in crate::schema::mapped_ext_keys(&self.pipeline.mapping) {
+                        if schema.field(&key).is_none() {
+                            out.push((
+                                Some(Stage::Map),
+                                None,
+                                SourceError::UndeclaredExtension {
+                                    rule: rules[0].clone(),
+                                    key,
+                                    version: wanted,
+                                },
+                            ));
+                        }
+                    }
+                }
             }
         }
-        Ok(())
+        out
     }
+}
+
+/// One reason a source may not run (see [`SourceSpec::problems`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Problem {
+    pub kind: ProblemKind,
+    /// The pipeline stage it belongs to; `None` for the source as a whole
+    /// (its id and name).
+    pub stage: Option<Stage>,
+    /// The setting, where there is one (for example `host`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProblemKind {
+    /// The source cannot be saved.
+    Invalid,
+    /// The source saves as a draft, which cannot be enabled.
+    Incomplete,
+}
+
+/// A source's pipeline stages, in the order a frame meets them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// The transport and its framing.
+    Source,
+    /// The codec.
+    Decode,
+    Map,
+    StaticJoin,
+    Registry,
+    Affiliation,
+    Filter,
+    Tracker,
+    Throttle,
+    /// What the source reports and how: tracks or detections, security
+    /// label, priority.
+    Output,
 }
 
 #[cfg(test)]
@@ -374,6 +502,71 @@ mod tests {
         v["publish_alone"] = json!(true);
         let chosen: SourceSpec = serde_json::from_value(v).unwrap();
         assert!(chosen.publishes_alone());
+    }
+
+    #[test]
+    fn problems_name_their_stage_and_a_draft_is_only_incomplete() {
+        let ok: SourceSpec = serde_json::from_value(spec("cot")).unwrap();
+        assert_eq!(
+            ok.problems(None),
+            vec![Problem {
+                kind: ProblemKind::Incomplete,
+                stage: Some(Stage::Map),
+                field: Some("schema_version".into()),
+                message: "mapping targets schema version 1, but it is not published".into(),
+            }]
+        );
+
+        // A new source: the settings left empty, no rules yet.
+        let draft: SourceSpec = serde_json::from_value(json!({
+            "id": "radar", "name": "Radar",
+            "transport": { "type": "tcp_client", "host": " ", "port": 0 },
+            "pipeline": { "codec": { "type": "json" }, "mapping": { "rules": [] } }
+        }))
+        .unwrap();
+        let found: Vec<_> = draft
+            .problems(None)
+            .into_iter()
+            .map(|p| (p.kind, p.stage, p.field))
+            .collect();
+        let incomplete = ProblemKind::Incomplete;
+        assert_eq!(
+            found,
+            vec![
+                (incomplete, Some(Stage::Map), None),
+                (incomplete, Some(Stage::Source), Some("host".into())),
+                (incomplete, Some(Stage::Source), Some("port".into())),
+                (incomplete, Some(Stage::Map), Some("schema_version".into())),
+            ]
+        );
+        assert!(matches!(draft.validate(), Err(SourceError::Mapping(_))));
+
+        // Every rule's problems, not just the first.
+        let mut v = spec("cot");
+        v["name"] = json!("");
+        v["pipeline"]["mapping"]["rules"] = json!([
+            { "name": "a", "key": "k", "fields": { "nope": "x" } },
+            { "name": "a", "key": "k", "fields": {} }
+        ]);
+        let s: SourceSpec = serde_json::from_value(v).unwrap();
+        let found: Vec<_> = s
+            .problems(None)
+            .into_iter()
+            .map(|p| (p.kind, p.stage, p.message))
+            .collect();
+        assert_eq!(
+            found[0],
+            (
+                ProblemKind::Invalid,
+                None,
+                "source name must not be empty".into()
+            )
+        );
+        assert_eq!(
+            found.iter().filter(|p| p.1 == Some(Stage::Map)).count(),
+            5,
+            "unknown field, no position (twice), duplicate rule, schema: {found:?}"
+        );
     }
 
     #[test]

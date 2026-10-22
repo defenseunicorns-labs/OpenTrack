@@ -379,6 +379,57 @@ impl TransportConfig {
         }
     }
 
+    /// The settings a source needs that are empty, as (setting, what it
+    /// is): a draft may leave them so, an enabled source may not.
+    pub fn missing(&self) -> Vec<(&'static str, &'static str)> {
+        let blank = |s: &str| s.trim().is_empty();
+        let mut out = Vec::new();
+        match self {
+            TransportConfig::TcpClient { host, port, .. } => {
+                if blank(host) {
+                    out.push(("host", "the host"));
+                }
+                if *port == 0 {
+                    out.push(("port", "the port"));
+                }
+            }
+            TransportConfig::TcpServer { bind, .. }
+            | TransportConfig::Udp { bind, .. }
+            | TransportConfig::GrpcServer { bind, .. } => {
+                if blank(bind) {
+                    out.push(("bind", "the address to listen on"));
+                }
+            }
+            TransportConfig::HttpPoll { url, .. } | TransportConfig::Websocket { url, .. } => {
+                if blank(url) {
+                    out.push(("url", "the URL"));
+                }
+            }
+            TransportConfig::Mqtt { url, topics, .. } => {
+                if blank(url) {
+                    out.push(("url", "the broker URL"));
+                }
+                if topics.iter().all(|t| blank(t)) {
+                    out.push(("topics", "a topic"));
+                }
+            }
+            TransportConfig::GrpcClient { url, method, .. } => {
+                if blank(url) {
+                    out.push(("url", "the URL"));
+                }
+                if blank(method) {
+                    out.push(("method", "the method"));
+                }
+            }
+            TransportConfig::File { path, .. } => {
+                if blank(path) {
+                    out.push(("path", "the path"));
+                }
+            }
+        }
+        out
+    }
+
     /// Settings that cannot be caught by the type alone.
     pub fn check(&self) -> Result<(), String> {
         match self {

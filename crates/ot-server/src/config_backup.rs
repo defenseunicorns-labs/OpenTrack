@@ -296,10 +296,20 @@ fn check(common: &Common, f: &mut ConfigFile) -> Vec<String> {
             p.push(format!("{at}: {e}"));
             continue;
         }
+        // A draft comes back a draft; an enabled source must be complete.
         let schema = schemas.get(&spec.pipeline.mapping.schema_version);
-        if let Err(e) = spec.validate_against(schema) {
-            p.push(format!("{at}: {e}"));
+        let problems = spec.problems(schema);
+        let refused: Vec<_> = problems
+            .iter()
+            .filter(|q| s.enabled || q.kind == ot_source::source::ProblemKind::Invalid)
+            .collect();
+        if !refused.is_empty() {
+            p.extend(refused.iter().map(|q| format!("{at}: {}", q.message)));
             continue;
+        }
+        match serde_json::to_value(&problems) {
+            Ok(v) => s.problems = v,
+            Err(e) => p.push(format!("{at}: {e}")),
         }
         if let Some(sub) = &s.raw_subject
             && let Err(e) = crate::api::check_raw_subject(sub, &common.nats.tracks_subject)
@@ -817,11 +827,13 @@ pub(crate) mod tests {
                 codec: "json",
                 priority: 100,
                 spec: &spec,
+                problems: &serde_json::json!([]),
             },
             "op:test",
         )
         .unwrap();
-        db.set_source_enabled("aisstream", true, "op:test").unwrap();
+        db.set_source_enabled("aisstream", true, None, "op:test")
+            .unwrap();
         db.put_app_settings(&json!({"site_name": "Garden Island"}), "op:test")
             .unwrap();
         // Saved before the account policy was fixed: those settings are

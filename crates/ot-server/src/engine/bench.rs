@@ -237,10 +237,11 @@ pub async fn run(common: &Common, opts: BenchOptions) -> anyhow::Result<()> {
                     codec: spec.pipeline.codec.name(),
                     priority: spec.priority,
                     spec: raw,
+                    problems: &serde_json::json!([]),
                 },
                 "bench",
             )?;
-            db.set_source_enabled(&spec.id, true, "bench")?;
+            db.set_source_enabled(&spec.id, true, None, "bench")?;
         }
     }
     let mut settings = EngineSettings::default();

@@ -1364,6 +1364,7 @@ mod tests {
                     codec: "json",
                     priority: 0,
                     spec: &spec,
+                    problems: &serde_json::json!([]),
                 },
                 "root@x.org",
             )

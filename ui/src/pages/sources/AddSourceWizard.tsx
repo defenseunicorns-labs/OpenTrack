@@ -122,11 +122,20 @@ export function AddSourceWizard({ onDone, onCancel }: { onDone: (id: string) => 
     }
   }
 
+  // An incomplete source is saved as a draft, which cannot be enabled: once
+  // it exists, Save updates it instead of creating it again.
+  const [created, setCreated] = useState(false)
+
   const save = async () => {
     setSaving(true)
     setSaveError(null)
     try {
-      await api.createSource(spec)
+      if (created) {
+        await api.saveSource(spec)
+      } else {
+        await api.createSource(spec)
+        setCreated(true)
+      }
       if (enable) await api.setEnabled(spec.id, true)
       toast({ variant: 'success', message: `Source ${spec.id} saved${enable ? ' and enabled' : ''}.` })
       onDone(spec.id)

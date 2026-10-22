@@ -388,9 +388,12 @@ export interface ConfigImported {
 
 export class ApiError extends Error {
   readonly status: number
-  constructor(status: number, message: string) {
+  /** For a source that cannot be saved or enabled: everything wrong with it, by stage. */
+  readonly problems: SourceProblem[]
+  constructor(status: number, message: string, problems: SourceProblem[] = []) {
     super(message)
     this.status = status
+    this.problems = problems
   }
 }
 
@@ -423,7 +426,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   })
   const text = await res.text()
   const parsed = text ? JSON.parse(text) : {}
-  if (!res.ok) throw new ApiError(res.status, parsed.error ?? res.statusText)
+  if (!res.ok) throw new ApiError(res.status, parsed.error ?? res.statusText, parsed.problems ?? [])
   return parsed as T
 }
 
@@ -902,8 +905,36 @@ export interface SourceRow {
   raw_subject: string | null
   created_at_ms: number
   updated_at_ms: number
+  /** Why it may not run yet, as found when it was saved; empty when complete. */
+  problems: SourceProblem[]
+  /** Whether it has problems: a draft cannot be enabled. */
+  draft: boolean
   /** Live worker status; null when no worker runs it (disabled or stopped). */
   status: SourceStatus | null
+}
+
+/** A pipeline stage, in the order a frame meets them. */
+export type SourceStage =
+  | 'source'
+  | 'decode'
+  | 'map'
+  | 'static_join'
+  | 'registry'
+  | 'affiliation'
+  | 'filter'
+  | 'tracker'
+  | 'throttle'
+  | 'output'
+
+/** One reason a source may not run. */
+export interface SourceProblem {
+  /** `invalid`: the source cannot be saved. `incomplete`: it saves as a draft. */
+  kind: 'invalid' | 'incomplete'
+  /** The stage it belongs to; null for the source as a whole (its id and name). */
+  stage: SourceStage | null
+  /** The setting, where there is one (for example `host`). */
+  field?: string
+  message: string
 }
 
 export interface MetricsResponse {

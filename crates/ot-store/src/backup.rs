@@ -92,10 +92,22 @@ pub struct SourceEntry {
     pub created_at_ms: i64,
     #[serde(default)]
     pub updated_at_ms: i64,
+    /// Why it may not run yet (a draft); empty when it is complete. Files
+    /// from before drafts have none: every source was complete.
+    #[serde(default = "no_problems", skip_serializing_if = "is_empty_array")]
+    pub problems: Value,
 }
 
 fn one() -> i64 {
     1
+}
+
+fn no_problems() -> Value {
+    Value::Array(Vec::new())
+}
+
+fn is_empty_array(v: &Value) -> bool {
+    v.as_array().is_some_and(Vec::is_empty)
 }
 
 /// An output schema version.
@@ -372,6 +384,7 @@ impl Db {
                 raw_subject: r.raw_subject,
                 created_at_ms: r.created_at_ms,
                 updated_at_ms: r.updated_at_ms,
+                problems: r.problems,
             })
             .collect();
         let schema_versions = self
@@ -652,8 +665,8 @@ impl Db {
                 let revision = s.revision.max(1);
                 tx.execute(
                     "INSERT INTO sources (id, name, transport, codec, settings, enabled, priority,
-                         raw_subject, raw_consent, revision, created_at_ms, updated_at_ms)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                         raw_subject, raw_consent, revision, created_at_ms, updated_at_ms, problems)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         s.id,
                         s.name,
@@ -667,6 +680,11 @@ impl Db {
                         revision,
                         if s.created_at_ms > 0 { s.created_at_ms } else { now },
                         now,
+                        if s.problems.is_array() {
+                            s.problems.to_string()
+                        } else {
+                            "[]".to_owned()
+                        },
                     ],
                 )?;
                 tx.execute(
@@ -757,11 +775,12 @@ mod tests {
                 codec: "json",
                 priority: 50,
                 spec: &spec,
+                problems: &serde_json::json!([]),
             },
             "op:test",
         )
         .unwrap();
-        db.set_source_enabled("ais", true, "op:test").unwrap();
+        db.set_source_enabled("ais", true, None, "op:test").unwrap();
         db.set_raw_output("ais", Some("opentrack.raw.ais"), "op:test")
             .unwrap();
         db.put_schema_draft(&[json!({"key": "hull", "type": "string"})], None, "op:test")
@@ -886,6 +905,31 @@ mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert!(ops.contains(&"import_config".to_owned()), "{ops:?}");
+    }
+
+    #[test]
+    fn a_draft_source_comes_back_a_draft() {
+        let mut snap = configured().config_snapshot().unwrap();
+        let problems = json!([{"kind": "incomplete", "stage": "source", "field": "url",
+                               "message": "the URL is not set"}]);
+        snap.sources[0].enabled = false;
+        snap.sources[0].problems = problems.clone();
+        // The file says so, and a file from before drafts reads as complete.
+        let file = serde_json::to_value(&snap).unwrap();
+        assert_eq!(file["sources"][0]["problems"], problems);
+        let mut old = file.clone();
+        old["sources"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("problems");
+        let old: ConfigFile = serde_json::from_value(old).unwrap();
+        assert_eq!(old.sources[0].problems, json!([]));
+
+        let mut fresh = Db::open_in_memory().unwrap();
+        fresh.restore_config(&snap, "cli", || Ok(())).unwrap();
+        let row = fresh.get_source("ais").unwrap().unwrap();
+        assert!(row.draft && !row.enabled);
+        assert_eq!(row.problems, problems);
     }
 
     #[test]
