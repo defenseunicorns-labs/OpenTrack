@@ -20,6 +20,9 @@ pub const PEER: &str = "peer:";
 /// How long another node's entry waits for its tracks.
 const PENDING_FOR_MS: i64 = 12 * 3600 * 1000;
 
+/// How often reports left out as too old for the wire are logged.
+const STALE_WARN_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// A command's logged form, from what it was given and what it answered:
 /// UIDs it minted or resolved are filled in, and who ran it is left to the
 /// entry.
@@ -726,16 +729,14 @@ impl Engine {
             self.common.site,
             ot_sync::Hlc::new(Utc::now().timestamp_millis() as u64, 0),
         );
-        let (reports, attrs) = self.within_budget(out.reports, out.attrs);
-        let stale: Vec<_> = reports
-            .iter()
-            .filter(|r| !ot_sync::wire::report_time_fits(r, hlc.ms()))
-            .map(|r| r.uid.to_string())
-            .collect();
-        if !stale.is_empty() {
-            tracing::warn!(tracks = ?stale,
-                "not reporting to other nodes: the estimate is more than 24 days from now");
-        }
+        // A report too far from now for the wire is left out before the
+        // budget, so it spends none of it.
+        let (fresh, stale): (Vec<Queued>, Vec<Queued>) = out
+            .reports
+            .into_iter()
+            .partition(|q| ot_sync::wire::report_time_fits(&q.report, hlc.ms()));
+        self.warn_stale(&stale);
+        let (reports, attrs) = self.within_budget(fresh, out.attrs);
         let mut msgs = ot_sync::wire::encode_reports(site, hlc, &reports);
         // As many UIDs as fit in a message once signed.
         let most = (ot_sync::wire::MAX_UNSIGNED - ot_sync::wire::HEADER - 2) / 7;
@@ -758,6 +759,27 @@ impl Engine {
     /// tracks, state changes and retirements, then the largest drifts, then
     /// heartbeats, then attributes. What does not fit waits for the next
     /// flush (it is due again). No budget: everything.
+    /// Say, at most once a minute, that reports are left out because their
+    /// estimates are too far from now for the wire (a replay of old data,
+    /// say): how many, and a few of their tracks.
+    fn warn_stale(&mut self, stale: &[Queued]) {
+        if stale.is_empty()
+            || self
+                .sync_stale_warned
+                .is_some_and(|at| at.elapsed() < STALE_WARN_EVERY)
+        {
+            return;
+        }
+        self.sync_stale_warned = Some(std::time::Instant::now());
+        let some: Vec<String> = stale
+            .iter()
+            .take(5)
+            .map(|q| q.report.uid.to_string())
+            .collect();
+        tracing::warn!(count = stale.len(), tracks = ?some,
+            "not reporting tracks to other nodes: their estimates are more than 24 days from now");
+    }
+
     fn within_budget(
         &mut self,
         mut reports: Vec<Queued>,

@@ -562,6 +562,8 @@ pub struct Engine {
     sync_budget_bps: f64,
     sync_allowance: f64,
     sync_topped: Instant,
+    /// When reports too old for the wire were last logged.
+    sync_stale_warned: Option<Instant>,
     /// Lines of bearing waiting to be crossed into fixes.
     bearings: nonpoint::Bearings,
     /// Where each ended source track last reported, for scoring replays.
@@ -668,6 +670,7 @@ impl Engine {
             sync_budget_bps: 0.0,
             sync_allowance: 0.0,
             sync_topped: Instant::now(),
+            sync_stale_warned: None,
             bearings: Default::default(),
             #[cfg(test)]
             ended_on: HashMap::new(),
@@ -3038,15 +3041,18 @@ mod tests {
         .unwrap()
     }
 
-    /// Noon UTC yesterday: recent, so that report times stay inside what
-    /// the sync wire carries (a 32-bit millisecond offset from the send
-    /// time, about 24.8 days), and fixed for the length of a test run.
+    /// Noon UTC yesterday, as at the first call: recent, so that report
+    /// times stay inside what the sync wire carries (a 32-bit millisecond
+    /// offset from the send time, about 24.8 days), and the same for the
+    /// whole test run, even one that passes midnight.
     pub(super) fn t0() -> DateTime<Utc> {
-        let today = Utc::now().date_naive();
-        (today - chrono::Days::new(1))
-            .and_hms_opt(12, 0, 0)
-            .expect("noon exists")
-            .and_utc()
+        static T0: std::sync::OnceLock<DateTime<Utc>> = std::sync::OnceLock::new();
+        *T0.get_or_init(|| {
+            (Utc::now().date_naive() - chrono::Days::new(1))
+                .and_hms_opt(12, 0, 0)
+                .expect("noon exists")
+                .and_utc()
+        })
     }
 
     #[test]
