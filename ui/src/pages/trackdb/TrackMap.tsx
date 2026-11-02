@@ -26,10 +26,12 @@ interface MapDisplay {
   uncertainty: boolean
   focus: boolean
   labels: boolean
+  /** Lost tracks on the map; off, only the selected one stays. */
+  lost: boolean
 }
 
-/** A track on the map; `text` is its label on the map (the popup shows `label`). */
-export type TrackMapPoint = MapPoint & { text?: string }
+/** A track on the map; `text` is its label on the map (the popup shows `label`); `lost`, its state is lost. */
+export type TrackMapPoint = MapPoint & { text?: string; lost?: boolean }
 
 interface TrackMapProps {
   points: TrackMapPoint[]
@@ -61,6 +63,7 @@ const DEFAULT_DISPLAY: MapDisplay = {
   uncertainty: true,
   focus: true,
   labels: true,
+  lost: true,
 }
 const EMPTY = { type: 'FeatureCollection' as const, features: [] }
 
@@ -344,19 +347,20 @@ export function TrackMap({
   useEffect(() => {
     const m = map.current
     if (!m || !ready) return
-    const text = new Map(points.map((p) => [p.id, p.text ?? '']))
-    const data = pointsToGeoJSON(points, selectedId, palette.statusInfo)
+    const shown = display.lost ? points : points.filter((p) => !p.lost || p.id === selectedId)
+    const text = new Map(shown.map((p) => [p.id, p.text ?? '']))
+    const data = pointsToGeoJSON(shown, selectedId, palette.statusInfo)
     for (const f of data.features) f.properties = { ...f.properties, text: text.get(String(f.properties?.id)) ?? '' }
     ;(m.getSource('points') as GeoJSONSource).setData(data)
     ;(m.getSource('sensors') as GeoJSONSource).setData(pointsToGeoJSON(sensorPoints, null, EVIDENCE_COLOR))
     if (fitted.current !== fitKey || fitted.current === null) {
-      const bounds = pointBounds(points)
+      const bounds = pointBounds(shown)
       if (bounds) {
         m.fitBounds(bounds, { padding: 24, maxZoom: 9, duration: 0 })
         fitted.current = fitKey ?? ''
       }
     }
-  }, [ready, points, sensorPoints, selectedId, fitKey, palette.statusInfo])
+  }, [ready, points, sensorPoints, selectedId, fitKey, palette.statusInfo, display.lost])
 
   useEffect(() => {
     const m = map.current
@@ -418,6 +422,7 @@ export function TrackMap({
               style={{ width: 120 }}
             />
           </div>
+          <MapToggle label="Lost tracks" checked={display.lost} onChange={(lost) => updateDisplay({ lost })} />
           <MapToggle label="Track labels" checked={display.labels} onChange={(labels) => updateDisplay({ labels })} />
           <MapToggle label="High-contrast tracks" checked={display.highContrast} onChange={(highContrast) => updateDisplay({ highContrast })} />
           <MapToggle label="Evidence lines" checked={display.evidence} onChange={(evidence) => updateDisplay({ evidence })} />

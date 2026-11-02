@@ -224,6 +224,7 @@ export default function TrackDbPage({ selected, onSelect }: { selected: string; 
         label: `${t.track_id} ${displayName(t)}`.trim(),
         // On the map: the name, else the track number.
         text: displayName(t) || t.track_id,
+        lost: t.state === 'lost',
       })),
     [shown],
   )

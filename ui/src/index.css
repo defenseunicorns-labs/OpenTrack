@@ -428,6 +428,10 @@ body {
   right: calc(var(--space-sm) + 48px);
   display: flex;
   width: min(260px, calc(100% - 16px));
+  /* Within the map: past its height, the options scroll (and the wheel stays off the map). */
+  max-height: calc(100% - 2 * var(--space-sm));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-md);
   flex-direction: column;
   gap: var(--space-sm);
@@ -435,6 +439,11 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-deep);
+}
+
+/* Rows keep their height; the menu scrolls instead. */
+.track-map__menu > * {
+  flex-shrink: 0;
 }
 
 .track-map__menu .subhead {

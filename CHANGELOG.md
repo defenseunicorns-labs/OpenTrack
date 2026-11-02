@@ -4,6 +4,10 @@
 
 ### Added
 
+- **Lost tracks can be hidden on the map.** Map display → **Lost tracks** (on by default, kept
+  per browser); off, the map shows no lost track but the selected one. The options panel scrolls
+  when the map is shorter than it.
+
 - **Sources are flows.** A source's editor is a workspace: the step list on the left, the source's
   steps placed and connected by hand, each clicked open for its settings and samples. After the
   input (transport and codec) come Reject, Map, Filter, Entity links, Affiliation, Tracker and
