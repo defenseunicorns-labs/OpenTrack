@@ -409,6 +409,8 @@ themselves.
 
 Turning it on:
 - Enable it in Settings → Nodes, and list the site codes of the trusted nodes.
+- A node can be one-way: **Receive only** takes the others' picture in and sends nothing; **Send
+  only** shares its picture and takes nothing in.
 - Between server sites, `opentrack bridge --node nats://a:4222 --node nats://b:4222` carries the
   messages. See `docs/examples/two-sites/`.
 - `scripts/benchmark/bench swarm` measures how it copes with loss, a bandwidth cap and a

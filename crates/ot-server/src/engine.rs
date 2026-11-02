@@ -547,7 +547,10 @@ pub struct Engine {
     remote: bool,
     /// Settings: other nodes' track management applies here, but none is
     /// accepted from this node's own people.
-    receive_only: bool,
+    no_local_management: bool,
+    /// Settings: which way the picture goes. Receiving only, this node
+    /// reports no track and logs no decision for the others.
+    sync_direction: crate::settings_api::Direction,
     /// Settings: other nodes' output schema and correlation settings apply.
     share_profile: bool,
     /// Settings: sharing the picture with other nodes, and the site codes
@@ -661,7 +664,8 @@ impl Engine {
             history_last: HashMap::new(),
             canonical: None,
             remote: false,
-            receive_only: false,
+            no_local_management: false,
+            sync_direction: Default::default(),
             share_profile: true,
             sync_on: false,
             peers: Vec::new(),
@@ -824,7 +828,8 @@ impl Engine {
             Ok((hours, every, crate::settings_api::sync_settings(&saved)))
         })
         .await??;
-        self.receive_only = sync.receive_only;
+        self.no_local_management = sync.no_local_management;
+        self.sync_direction = sync.direction;
         self.share_profile = sync.share_profile;
         self.sync_on = sync.enabled;
         self.peers = sync.peers;
@@ -4994,7 +4999,7 @@ mod tests {
 
         // A's summary reaches B (not C: A and C are out of range): B asks,
         // A answers, B applies.
-        let want = deliver(vec![la.summary().await.unwrap()], &mut lb, &mut b).await;
+        let want = deliver(vec![la.summary().await.unwrap().unwrap()], &mut lb, &mut b).await;
         // B has not heard A before: it asks for A's tracks too.
         assert_eq!(want.len(), 2);
         assert!(
@@ -5006,7 +5011,7 @@ mod tests {
         assert_eq!(b.tracks[&t1].paired_with, vec![t2]);
 
         // C hears only B, and gets A's decision from it.
-        let want = deliver(vec![lb.summary().await.unwrap()], &mut lc, &mut c).await;
+        let want = deliver(vec![lb.summary().await.unwrap().unwrap()], &mut lc, &mut c).await;
         assert_eq!(want[0].to.map(|s| s.to_string()), Some("BBB".into()));
         let answer = deliver(want, &mut lb, &mut b).await;
         deliver(answer, &mut lc, &mut c).await;
@@ -5014,7 +5019,7 @@ mod tests {
 
         // Nothing more to ask for; and a stranger is not listened to.
         assert!(
-            deliver(vec![lb.summary().await.unwrap()], &mut lc, &mut c)
+            deliver(vec![lb.summary().await.unwrap().unwrap()], &mut lc, &mut c)
                 .await
                 .is_empty()
         );
@@ -5031,12 +5036,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_receive_only_node_refuses_track_management_but_applies_others() {
+    async fn a_node_with_no_local_management_refuses_it_but_applies_others() {
         let Some((mut e, _d)) = engine_at("BBB", &["ais"]).await else {
             eprintln!("skipped: OT_TEST_REDIS_URL not set");
             return;
         };
-        let v = json!({ "sync": { "enabled": true, "peers": ["AAA"], "receive_only": true } });
+        let v =
+            json!({ "sync": { "enabled": true, "peers": ["AAA"], "no_local_management": true } });
         e.db(move |db| db.put_app_settings(&v, "test"))
             .await
             .unwrap();
@@ -5058,7 +5064,12 @@ mod tests {
         )
         .await;
         assert_eq!(r["ok"], false, "{r}");
-        assert!(r["error"].as_str().unwrap().contains("receive-only"));
+        assert!(
+            r["error"]
+                .as_str()
+                .unwrap()
+                .contains("no track management here")
+        );
         let entry = ot_sync::Entry {
             id: "AAA:1".parse().unwrap(),
             hlc: ot_sync::Hlc::new(1, 0),
@@ -5092,6 +5103,8 @@ mod tests {
         l: crate::link::Link,
         _dir: tempfile::TempDir,
         inbox: Vec<crate::link::Out>,
+        /// Messages its link has sent so far.
+        sent: usize,
     }
 
     async fn node(site: &str, sources: &[&str], peers: &[&str]) -> Option<Node> {
@@ -5107,6 +5120,7 @@ mod tests {
             l,
             _dir: dir,
             inbox: Vec::new(),
+            sent: 0,
         })
     }
 
@@ -5119,6 +5133,7 @@ mod tests {
             let mut outs = std::mem::take(&mut n.inbox);
             outs.extend(n.l.new_decisions().await.unwrap());
             outs.extend(n.l.engine_messages().await.unwrap());
+            n.sent += outs.len();
             sent.push((n.e.common.site, outs));
         }
         let mut report_bytes = 0;
@@ -5142,6 +5157,79 @@ mod tests {
             n.e.sync_tick().await.unwrap();
         }
         report_bytes
+    }
+
+    #[tokio::test]
+    async fn a_node_that_receives_only_sends_nothing_and_keeps_applying_others() {
+        let Some(a) = node("AAA", &["sensor"], &["BBB"]).await else {
+            eprintln!("skipped: OT_TEST_REDIS_URL not set");
+            return;
+        };
+        let b = node("BBB", &["sensor"], &["AAA"]).await.unwrap();
+        let mut nodes = [a, b];
+        {
+            let [a, b] = &mut nodes;
+            let v =
+                json!({ "sync": { "enabled": true, "peers": ["AAA"], "direction": "receive" } });
+            b.e.db(move |db| db.put_app_settings(&v, "test"))
+                .await
+                .unwrap();
+            b.e.refresh_attributes().await.unwrap();
+            introduce(&mut [(&a.e, &mut a.l), (&b.e, &mut b.l)]).await;
+        }
+        // One object both see, B better than A: B would report it if it
+        // could. And one only B sees.
+        let seen = |key: &str, s: i64, lat: f64, error_m: f64| {
+            let mut r = report("sensor", key, s, lat, -117.0, None);
+            r.uncertainty = serde_json::from_value(json!({"circular_error_m": error_m})).unwrap();
+            r
+        };
+        for s in 0..30 {
+            let lat = 32.0 + 0.00001 * s as f64;
+            nodes[0]
+                .e
+                .redis
+                .append_observations("sensor", &[seen("1", s, lat, 60.0)])
+                .await
+                .unwrap();
+            nodes[1]
+                .e
+                .redis
+                .append_observations("sensor", &[seen("1", s, lat, 5.0), seen("2", s, 33.0, 5.0)])
+                .await
+                .unwrap();
+            exchange(&mut nodes).await;
+        }
+        let [a, b] = &mut nodes;
+        assert_eq!(b.sent, 0, "a receive-only node sent {} messages", b.sent);
+        assert!(a.sent > 0);
+        // B holds A's track from A's reports, A reports it, and B never
+        // takes over.
+        let a_uid = track_of(&a.e, "sensor", "1");
+        let on_b = &b.e.tracks[&a_uid];
+        assert!(on_b.contributors.iter().any(|c| c.source_id == "peer:AAA"));
+        assert_eq!(on_b.reported_by.as_deref(), Some("AAA"));
+        assert!(!b.e.shared.values().any(|s| s.resp.reporting));
+        // Nothing of B's reached A.
+        assert!(
+            a.e.tracks
+                .values()
+                .all(|t| { t.contributors.iter().all(|c| c.source_id != "peer:BBB") })
+        );
+        // Track management on B stays on B: it is not logged for others.
+        let (t1, t2) = (a_uid, track_of(&b.e, "sensor", "2"));
+        let r = operator(
+            &mut b.e,
+            json!({"op": "pair", "tracks": [t1.doc_id(), t2.doc_id()]}),
+        )
+        .await;
+        assert_eq!(r["ok"], true, "{r}");
+        let site = b.e.common.site;
+        let next = b.e.db(move |db| db.sync_next_seq(site)).await.unwrap();
+        assert_eq!(next, 1, "B logged its decision for other nodes");
+        for n in &nodes {
+            n.e.redis.purge_namespace().await.unwrap();
+        }
     }
 
     #[tokio::test]

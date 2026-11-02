@@ -141,7 +141,16 @@ A decision still names who made it. The Management log shows each one with its s
 
 Accounts, sessions and the audit record stay per node. A user signs in to each node on its own: its session (idle timeout, limit per account, lockout counts) is known only where it began, and ends there. Each node keeps its own hash-chained audit record of what it recorded, replicated decisions included, and verifies only its own chain.
 
-Any node's track managers decide for every node. Roles don't need to match across nodes: a node applies a replicated decision if the deciding node's role for that person allowed it. An admin can mark a node **receive-only**: it applies other nodes' decisions but doesn't accept track management locally. That suits a drone with no operator.
+Any node's track managers decide for every node. Roles don't need to match across nodes: a node applies a replicated decision if the deciding node's role for that person allowed it. An admin can turn off track management on a node (**Accept no track management here**; called receive-only in earlier releases): it applies other nodes' decisions but doesn't accept any locally. That suits a drone with no operator.
+
+### One-way links
+
+A node's **direction** (`sync.direction`) says which way its picture goes: `both` (the default), `receive` or `send`. The link role holds the node to it, whatever the transport does.
+
+- **`receive`**: the node takes in trusted nodes' reports and decisions and publishes nothing. It never takes reporting responsibility for a track (its sensors may see the track better, but the sender keeps reporting it, and its reports keep applying). Track management done on it is not logged for other nodes, nor are its profile changes. With `sync.repair`, it still sends `summary` and `want`, which carry no tracks and no decisions, so lost decisions are repaired; without it, they are not, and only reports (which replace each other) recover.
+- **`send`**: the node publishes as usual and takes in nothing: no reports, attributes, decisions, summaries or releases. It answers a trusted node's `want`, so a receiving node with `repair` on can fill its gaps.
+
+`opentrack bridge` can enforce a direction on the transport too: a node's `;send=off` carries nothing it publishes, and `;send=repair` only its `summary` and `want`.
 
 ## Transport: OpenTrack owns the data, not the network
 

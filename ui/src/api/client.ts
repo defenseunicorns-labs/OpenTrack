@@ -542,20 +542,35 @@ export interface ProtoDescription {
   messages: { name: string; fields: { name: string; type: string; repeated: boolean }[] }[]
 }
 
+/** Which way this node's picture goes: both ways, receiving only (sending nothing), or sending only. */
+export type SyncDirection = 'both' | 'receive' | 'send'
+
 /** Sharing the picture with other OpenTrack nodes (docs/multi-node.md). */
 export interface SyncSettings {
   enabled: boolean
+  /** Which way the picture goes. */
+  direction: SyncDirection
+  /** Receiving only: still ask peers for what was missed (summaries and requests, no tracks or decisions). */
+  repair: boolean
   /** Site codes of the nodes trusted. */
   peers: string[]
-  /** Apply other nodes' track management; accept none here. */
-  receive_only: boolean
+  /** Apply other nodes' track management; accept none from this node's own people. */
+  no_local_management: boolean
   /** Share the output schema and correlation settings. */
   share_profile: boolean
   /** What this node may send for its tracks, kbit/s (0: no cap). */
   budget_kbps: number
 }
 
-export const DEFAULT_SYNC: SyncSettings = { enabled: false, peers: [], receive_only: false, share_profile: true, budget_kbps: 0 }
+export const DEFAULT_SYNC: SyncSettings = {
+  enabled: false,
+  direction: 'both',
+  repair: false,
+  peers: [],
+  no_local_management: false,
+  share_profile: true,
+  budget_kbps: 0,
+}
 
 export interface SyncStatus {
   site: string

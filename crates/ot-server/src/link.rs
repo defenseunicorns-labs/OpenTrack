@@ -16,6 +16,12 @@
 //! for the sender's site code in Settings → Nodes (`docs/sync-icd.md`,
 //! *Signature*). A signed message is accepted once, and only while its clock
 //! is within [`FRESH`] of this node's, so a recorded one cannot be replayed.
+//!
+//! A one-way node (`sync.direction`, see `docs/multi-node.md`, *One-way
+//! links*) is held to it here, whatever the transport does: receiving only,
+//! it publishes nothing (with `sync.repair`, only summaries and requests for
+//! what it missed); sending only, it takes in no tracks or decisions and
+//! answers only requests to fill gaps.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,7 +35,7 @@ use ot_sync::{Entry, Hlc};
 use serde_json::json;
 
 use crate::config::Common;
-use crate::settings_api::{SyncSettings, sync_settings};
+use crate::settings_api::{Direction, SyncSettings, sync_settings};
 
 /// Header on an `out` message meant for one node, with its site code.
 pub const HEADER_TO: &str = "OT-To";
@@ -77,6 +83,10 @@ pub struct LinkCounts {
     pub stale: u64,
     /// Already accepted once.
     pub replayed: u64,
+    /// Tracks or decisions not taken in: this node sends only.
+    pub not_received: u64,
+    /// Messages not sent: this node receives only.
+    pub not_sent: u64,
 }
 
 /// How far a message's clock may be from this node's for it to be
@@ -217,6 +227,15 @@ impl Link {
         self.settings.enabled
     }
 
+    fn direction(&self) -> Direction {
+        self.settings.direction
+    }
+
+    /// Receiving only, may this node still ask for what it missed?
+    fn may_ask(&self) -> bool {
+        self.direction().sends() || self.settings.repair
+    }
+
     async fn db<T: Send + 'static>(
         &self,
         f: impl FnOnce(&mut ot_store::Db) -> ot_store::sqlite::Result<T> + Send + 'static,
@@ -279,6 +298,14 @@ impl Link {
         loop {
             let batch = redis.pop_sync_out(500).await?;
             let n = batch.len();
+            if !self.direction().sends() {
+                // Taken off the queue so it does not grow, and dropped.
+                self.counts.not_sent += n as u64;
+                if n < 500 {
+                    return Ok(outs);
+                }
+                continue;
+            }
             outs.extend(batch.into_iter().filter_map(|bytes| {
                 let kind = bytes.get(3).copied().and_then(kind_of)?;
                 Some(self.out(kind, None, bytes))
@@ -299,6 +326,10 @@ impl Link {
 
     /// This node's entries made since the last call, for everyone.
     pub async fn new_decisions(&mut self) -> anyhow::Result<Vec<Out>> {
+        if !self.direction().sends() {
+            // Left where they are: they go out if the node sends again.
+            return Ok(Vec::new());
+        }
         let (site, after) = (self.common.site, self.sent);
         let entries: Vec<Entry> = self.db(move |db| db.sync_since(site, after, 255)).await?;
         let Some(last) = entries.last() else {
@@ -323,13 +354,20 @@ impl Link {
                 (site.to_string(), json!(now - ago))
             })
             .collect();
-        let status = json!({ "at": now, "heard": heard, "counts": self.counts });
+        let status = json!({
+            "at": now, "heard": heard, "counts": self.counts,
+            "direction": self.direction(), "repair": self.settings.repair,
+        });
         self.redis().await?.put_sync_status("link", &status).await?;
         Ok(())
     }
 
-    /// What this node holds, for everyone.
-    pub async fn summary(&self) -> anyhow::Result<Out> {
+    /// What this node holds, for everyone; none when this node receives
+    /// only and does not ask for what it missed.
+    pub async fn summary(&self) -> anyhow::Result<Option<Out>> {
+        if !self.may_ask() {
+            return Ok(None);
+        }
         let heads = self.db(|db| db.sync_heads()).await?;
         let m = Message::new(
             self.common.site,
@@ -339,7 +377,7 @@ impl Link {
                 reporting: 0,
             }),
         );
-        Ok(self.out(Kind::Summary, None, m.encode()))
+        Ok(Some(self.out(Kind::Summary, None, m.encode())))
     }
 
     /// Handle a message another node sent; returns what to send back.
@@ -400,7 +438,7 @@ impl Link {
             .insert(m.site, Instant::now())
             .is_none_or(|at| at.elapsed() > SILENT);
         let mut outs = Vec::new();
-        if returning {
+        if returning && self.direction().receives() && self.may_ask() {
             // A node new to this one (or back): ask for its whole picture.
             let want = Message::new(
                 self.common.site,
@@ -453,6 +491,12 @@ impl Link {
     }
 
     async fn dispatch(&mut self, m: Message) -> anyhow::Result<Vec<Out>> {
+        if !self.direction().receives() && !matches!(m.body, Body::Want(_)) {
+            // Sending only: a request to fill gaps is answered, nothing
+            // else is taken in.
+            self.counts.not_received += 1;
+            return Ok(Vec::new());
+        }
         match m.body {
             Body::Decisions(entries) => {
                 self.counts.decisions_in += entries.len() as u64;
@@ -467,9 +511,15 @@ impl Link {
                 }
                 Ok(Vec::new())
             }
-            Body::Summary(s) => self.wants_for(m.site, s).await,
+            Body::Summary(s) if self.may_ask() => self.wants_for(m.site, s).await,
+            Body::Summary(_) => Ok(Vec::new()),
             Body::Want(w) => {
                 self.counts.wants_in += 1;
+                if !self.direction().sends() {
+                    // Receiving only: nothing of this node's goes out.
+                    self.counts.not_sent += 1;
+                    return Ok(Vec::new());
+                }
                 if w.snapshot {
                     self.redis()
                         .await?
@@ -670,6 +720,7 @@ pub async fn run(
     tracing::info!(
         prefix = %args.sync_prefix,
         enabled = link.enabled(),
+        direction = ?link.direction(),
         key = %link.key().public().fingerprint_text(),
         "link running"
     );
@@ -734,7 +785,7 @@ pub async fn run(
                         tracing::warn!(error = %format!("{e:#}"), "sync status failed");
                     }
                     match link.summary().await {
-                        Ok(o) => send(vec![o]).await,
+                        Ok(o) => send(o.into_iter().collect()).await,
                         Err(e) => tracing::warn!(error = %format!("{e:#}"), "summary failed"),
                     }
                 }
@@ -754,10 +805,15 @@ mod tests {
     /// A link for site `site` on a throwaway database (no Redis: summaries
     /// need only the database), trusting `peers`.
     async fn link(site: &str, peers: &[&str]) -> (Link, tempfile::TempDir) {
+        link_with(site, json!({ "enabled": true, "peers": peers })).await
+    }
+
+    /// A link for site `site` with these sync settings.
+    async fn link_with(site: &str, sync: serde_json::Value) -> (Link, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let mut common = crate::config_backup::tests::common(dir.path());
         common.site = site.parse().unwrap();
-        let v = json!({ "sync": { "enabled": true, "peers": peers } });
+        let v = json!({ "sync": sync });
         common
             .open_db()
             .unwrap()
@@ -812,7 +868,7 @@ mod tests {
         let (a, _da) = link("AAA", &["BBB"]).await;
         let (mut b, _db) = link("BBB", &["AAA", "CCC"]).await;
         let (c, _dc) = link("CCC", &["BBB"]).await;
-        let summary = a.summary().await.unwrap();
+        let summary = a.summary().await.unwrap().unwrap();
 
         // Trusted, but no key pinned yet (as after an upgrade).
         b.handle(&summary.bytes).await.unwrap();
@@ -831,10 +887,10 @@ mod tests {
         assert_eq!(b.counts.replayed, 1);
 
         // A changed byte, or C claiming to be A: refused and audited once.
-        let mut tampered = a.summary().await.unwrap().bytes;
+        let mut tampered = a.summary().await.unwrap().unwrap().bytes;
         tampered[16] ^= 1;
         b.handle(&tampered).await.unwrap();
-        let mut forged = c.summary().await.unwrap().bytes;
+        let mut forged = c.summary().await.unwrap().unwrap().bytes;
         forged[4..7].copy_from_slice(b"AAA");
         b.handle(&forged).await.unwrap();
         assert_eq!(b.counts.bad_signature, 2);
@@ -842,7 +898,9 @@ mod tests {
 
         // A site not trusted at all, and a message with no signature.
         let (d, _dd) = link("DDD", &[]).await;
-        b.handle(&d.summary().await.unwrap().bytes).await.unwrap();
+        b.handle(&d.summary().await.unwrap().unwrap().bytes)
+            .await
+            .unwrap();
         assert_eq!(b.counts.untrusted, 1);
         let plain = Message::new(
             a.common.site,
@@ -867,5 +925,110 @@ mod tests {
         v1[2] = 1;
         b.handle(&v1).await.unwrap();
         assert_eq!(b.counts.unreadable, 1);
+    }
+
+    /// A decision of this link's own node, logged for the others.
+    fn decide(l: &Link) {
+        l.common
+            .open_db()
+            .unwrap()
+            .sync_append_own(
+                l.common.site,
+                "tm",
+                "track_manager",
+                &json!({"op": "pair", "tracks": ["tms-AAA000000001", "tms-AAA000000002"]}),
+                chrono::Utc::now().timestamp_millis() as u64,
+            )
+            .unwrap();
+    }
+
+    fn want(from: &Link, of: &str, snapshot: bool) -> Vec<u8> {
+        let m = Message::new(
+            from.common.site,
+            from.now_hlc(),
+            Body::Want(Want {
+                decisions: vec![(of.parse().unwrap(), vec![(1, 1)])],
+                snapshot,
+            }),
+        );
+        from.key().sign(m.encode())
+    }
+
+    #[tokio::test]
+    async fn a_node_that_receives_only_sends_nothing() {
+        let (mut r, _dr) = link_with(
+            "RRR",
+            json!({ "enabled": true, "peers": ["SSS"], "direction": "receive" }),
+        )
+        .await;
+        let (mut s, _ds) = link_with("SSS", json!({ "enabled": true, "direction": "send" })).await;
+        pin(&r, "SSS", &s.key().public());
+        pin(&s, "RRR", &r.key().public());
+        r.refresh().await.unwrap();
+        s.refresh().await.unwrap();
+        decide(&r);
+        decide(&s);
+
+        // Its own decisions and its summary stay here.
+        assert!(r.new_decisions().await.unwrap().is_empty());
+        assert!(r.summary().await.unwrap().is_none());
+        // Hearing the sender: no request for its picture, no request for
+        // what its summary shows, no answer to its requests.
+        let heard = s.summary().await.unwrap().unwrap();
+        assert!(r.handle(&heard.bytes).await.unwrap().is_empty());
+        assert!(r.heard.contains_key(&"SSS".parse().unwrap()));
+        assert!(r.handle(&want(&s, "RRR", false)).await.unwrap().is_empty());
+        assert_eq!(r.counts.not_sent, 1);
+        assert_eq!(r.counts.wants_out, 0);
+        assert_eq!(r.counts.decisions_out, 0);
+
+        // The sender's decisions do go out.
+        assert_eq!(s.new_decisions().await.unwrap().len(), 1);
+
+        // With repair on, it asks for what it missed, and only that.
+        let (mut r2, _dr2) = link_with(
+            "RRR",
+            json!({ "enabled": true, "peers": ["SSS"], "direction": "receive", "repair": true }),
+        )
+        .await;
+        pin(&r2, "SSS", &s.key().public());
+        r2.refresh().await.unwrap();
+        decide(&r2);
+        assert!(r2.new_decisions().await.unwrap().is_empty());
+        assert_eq!(r2.summary().await.unwrap().unwrap().kind, Kind::Summary);
+        let back = r2
+            .handle(&s.summary().await.unwrap().unwrap().bytes)
+            .await
+            .unwrap();
+        assert!(!back.is_empty());
+        assert!(back.iter().all(|o| o.kind == Kind::Want));
+        assert!(r2.handle(&want(&s, "RRR", false)).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_node_that_sends_only_takes_nothing_in_but_fills_gaps() {
+        let (mut s, _ds) = link_with(
+            "SSS",
+            json!({ "enabled": true, "peers": ["RRR"], "direction": "send" }),
+        )
+        .await;
+        let (r, _dr) = link_with(
+            "RRR",
+            json!({ "enabled": true, "peers": ["SSS"], "direction": "receive", "repair": true }),
+        )
+        .await;
+        pin(&s, "RRR", &r.key().public());
+        s.refresh().await.unwrap();
+        decide(&s);
+        // A summary is not taken in: no request back for its picture or
+        // its decisions.
+        let heard = r.summary().await.unwrap().unwrap();
+        assert!(s.handle(&heard.bytes).await.unwrap().is_empty());
+        assert_eq!(s.counts.not_received, 1);
+        // A request for its own decisions is answered.
+        let back = s.handle(&want(&r, "SSS", false)).await.unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].kind, Kind::Decision);
+        assert_eq!(back[0].to, Some("RRR".parse().unwrap()));
     }
 }

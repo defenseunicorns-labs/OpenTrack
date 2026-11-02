@@ -13,6 +13,11 @@
 //! can set its own after its URL: `--node 'tls://b:4222;ca=/b/ca.pem'`.
 //! Secrets are only read from files or the environment, never taken from
 //! the command line of a node, and never logged.
+//!
+//! A link can be one-way: `;send=off` after a node's URL carries nothing it
+//! sends, and `;send=repair` only its summaries and requests for what it
+//! missed (no tracks, no decisions). Set it for a node that receives only
+//! (`sync.direction`), so the link holds even if its settings are changed.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -31,7 +36,9 @@ pub struct BridgeArgs {
     /// when its prefix is not `ot.sync`, then this node's own credentials
     /// and TLS if they differ from `--nats-*`: `;ca=`, `;cert=`, `;key=`,
     /// `;creds=` (files), `;user=`, `;password-file=`, `;token-file=`
-    /// (an empty value drops the `--nats-*` one). Give one per node.
+    /// (an empty value drops the `--nats-*` one); and `;send=off` (carry
+    /// nothing it sends) or `;send=repair` (only its summaries and
+    /// requests for what it missed). Give one per node.
     #[arg(long = "node", required = true)]
     pub nodes: Vec<String>,
     #[command(flatten)]
@@ -173,6 +180,41 @@ pub struct NodeSpec {
     pub url: String,
     pub prefix: String,
     pub auth: NatsAuth,
+    pub send: Sending,
+}
+
+/// What the bridge carries of what a node sends.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Sending {
+    /// Everything.
+    #[default]
+    All,
+    /// Only summaries and requests for what it missed: no tracks, no
+    /// decisions.
+    Repair,
+    /// Nothing.
+    Off,
+}
+
+impl Sending {
+    fn parse(v: &str) -> Option<Self> {
+        match v {
+            "on" | "all" => Some(Self::All),
+            "repair" => Some(Self::Repair),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    /// Whether a message of this kind (the last part of its subject) is
+    /// carried.
+    pub fn carries(self, kind: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Repair => matches!(kind, "summary" | "want"),
+            Self::Off => false,
+        }
+    }
 }
 
 impl NodeSpec {
@@ -187,6 +229,7 @@ impl NodeSpec {
         let url = url_shown.as_str();
         anyhow::ensure!(!prefix.is_empty(), "node {url} has an empty prefix");
         let mut auth = defaults.clone();
+        let mut send = Sending::All;
         for opt in parts.map(str::trim).filter(|o| !o.is_empty()) {
             let (k, v) = opt.split_once('=').ok_or_else(|| {
                 anyhow::anyhow!("node {url}: option {k:?} is not <name>=<value>", k = opt)
@@ -201,12 +244,17 @@ impl NodeSpec {
                 "user" => auth.user = (!v.is_empty()).then(|| v.to_owned()),
                 "password-file" => auth.password = path().map(|p| read_secret(&p)).transpose()?,
                 "token-file" => auth.token = path().map(|p| read_secret(&p)).transpose()?,
+                "send" => {
+                    send = Sending::parse(v).ok_or_else(|| {
+                        anyhow::anyhow!("node {url}: send={v:?} is not on, repair or off")
+                    })?
+                }
                 // A secret on the command line shows in the process list.
                 "password" | "token" => anyhow::bail!(
                     "node {url}: give the {k} in a file ({k}-file=), not on the command line"
                 ),
                 _ => anyhow::bail!(
-                    "node {url}: unknown option {k:?} (ca, cert, key, creds, user, password-file, token-file)"
+                    "node {url}: unknown option {k:?} (ca, cert, key, creds, user, password-file, token-file, send)"
                 ),
             }
         }
@@ -215,6 +263,7 @@ impl NodeSpec {
             url: full_url.to_owned(),
             prefix: prefix.to_owned(),
             auth,
+            send,
         })
     }
 
@@ -319,6 +368,8 @@ pub struct SideCounts {
     pub lost: u64,
     pub over_rate: u64,
     pub partitioned: u64,
+    /// Not carried: the node's `send=` holds it back.
+    pub held: u64,
 }
 
 /// A small deterministic generator (xorshift64*), enough for link noise.
@@ -336,6 +387,7 @@ impl Rng {
 struct Side {
     client: async_nats::Client,
     prefix: String,
+    send: Sending,
     /// Learned from the messages it sends.
     site: Option<String>,
     /// Sending allowance, bytes (token bucket), and when last topped up.
@@ -364,7 +416,7 @@ pub async fn run(
     let mut sides = Vec::new();
     for (i, spec) in specs.iter().enumerate() {
         let (tls, how) = spec.describe();
-        tracing::info!(node = i, prefix = %spec.prefix, tls, auth = how, "bridge node");
+        tracing::info!(node = i, prefix = %spec.prefix, tls, auth = how, send = ?spec.send, "bridge node");
         let known = clients
             .iter()
             .find(|(u, a, _)| *u == spec.url && *a == spec.auth);
@@ -386,6 +438,7 @@ pub async fn run(
         sides.push(Side {
             client,
             prefix: prefix.to_owned(),
+            send: spec.send,
             site: None,
             allowance: 0.0,
             topped: Instant::now(),
@@ -443,6 +496,10 @@ pub async fn run(
                     s.counts.sent_bytes += len as u64;
                     if kind == "report" {
                         s.counts.report_bytes += len as u64;
+                    }
+                    if !s.send.carries(&kind) {
+                        s.counts.held += 1;
+                        continue;
                     }
                     if rate > 0.0 {
                         let now = Instant::now();
@@ -632,7 +689,31 @@ mod tests {
         assert_eq!(c.auth.token, None);
         assert_eq!(c.auth.user.as_deref(), Some("bridge"));
         assert_eq!(c.auth.password.as_deref(), Some("pa55"));
+        assert_eq!(c.send, Sending::All);
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_node_can_be_one_way() {
+        let none = NatsAuth::default();
+        let spec = |s: &str| NodeSpec::parse(s, &none);
+        assert_eq!(spec("nats://a:4222").unwrap().send, Sending::All);
+        assert_eq!(spec("nats://a:4222;send=on").unwrap().send, Sending::All);
+        let off = spec("nats://a:4222;send=off").unwrap().send;
+        assert_eq!(off, Sending::Off);
+        let repair = spec("nats://a:4222#p;send=repair").unwrap().send;
+        assert_eq!(repair, Sending::Repair);
+        let e = spec("nats://a:4222;send=maybe").unwrap_err().to_string();
+        assert!(e.contains("on, repair or off"), "{e}");
+        for kind in ["report", "attrs", "decision", "release", "summary", "want"] {
+            assert!(Sending::All.carries(kind));
+            assert!(!Sending::Off.carries(kind));
+            assert_eq!(
+                Sending::Repair.carries(kind),
+                matches!(kind, "summary" | "want"),
+                "{kind}"
+            );
+        }
     }
 
     #[test]

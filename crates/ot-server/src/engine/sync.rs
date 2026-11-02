@@ -86,9 +86,10 @@ impl Engine {
         if op.starts_with("profile_") {
             anyhow::bail!("{op} comes only from another node");
         }
-        if self.receive_only {
+        if self.no_local_management {
             anyhow::bail!(
-                "this node is receive-only: track management is done on another node (Settings)"
+                "this node accepts no track management here: it is done on another node \
+                 (Settings → Nodes)"
             );
         }
         let before = self.db(|db| db.max_decision_id()).await?;
@@ -108,7 +109,10 @@ impl Engine {
             }
             None => canonical(cmd, &result),
         };
-        if let Some(command) = logged {
+        // A node that sends nothing keeps its decisions to itself: they are
+        // not logged for the others, so they never leave, even if it sends
+        // later.
+        if let Some(command) = logged.filter(|_| self.sync_direction.sends()) {
             let actor = cmd["actor"].as_str().unwrap_or("operator").to_owned();
             let role = cmd["role"].as_str().unwrap_or("track_manager").to_owned();
             let parts = if command["op"] == "delete" {
@@ -508,7 +512,9 @@ impl Engine {
         if !t.kind.is_track() {
             return;
         }
-        let local = if self.locally_authoritative(t) {
+        // Receiving only, this node never reports a track: whoever else
+        // sees it does, and its reports keep applying here.
+        let local = if self.sync_direction.sends() && self.locally_authoritative(t) {
             self.local_view(uid)
         } else {
             None
@@ -644,7 +650,7 @@ impl Engine {
         let mine = self
             .tracks
             .get(&uid)
-            .filter(|t| self.locally_authoritative(t))
+            .filter(|t| self.sync_direction.sends() && self.locally_authoritative(t))
             .and_then(|_| self.local_view(uid))
             .map(|v| quality_of(&v));
         let heard = ot_sync::r2::Heard {

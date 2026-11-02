@@ -51,17 +51,53 @@ pub struct AppSettings {
     pub tak: crate::cot::settings::TakSettings,
 }
 
+/// Which way this node's picture goes (see `docs/multi-node.md`, *One-way
+/// links*).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    /// Share this node's tracks and decisions, and take in trusted nodes'.
+    #[default]
+    Both,
+    /// Take in trusted nodes' tracks and decisions and send nothing at all
+    /// (unless [`SyncSettings::repair`] allows asking for what was missed).
+    Receive,
+    /// Share this node's tracks and decisions and take in nothing; it
+    /// answers trusted nodes' requests to fill gaps.
+    Send,
+}
+
+impl Direction {
+    /// Whether this node sends its tracks and decisions.
+    pub fn sends(self) -> bool {
+        self != Direction::Receive
+    }
+
+    /// Whether this node takes in other nodes' tracks and decisions.
+    pub fn receives(self) -> bool {
+        self != Direction::Send
+    }
+}
+
 /// Sharing the picture with other nodes (see `docs/multi-node.md`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SyncSettings {
     /// Exchange tracks and decisions with the peers below (the `link` role).
     pub enabled: bool,
+    /// Which way the picture goes.
+    pub direction: Direction,
+    /// Receiving only: still send summaries and requests for what was
+    /// missed (no tracks, no decisions), so a lost decision is asked for
+    /// again. Off: the node sends nothing at all.
+    pub repair: bool,
     /// Site codes of the nodes this one trusts; anything else is dropped.
     pub peers: Vec<String>,
-    /// Apply other nodes' track management but accept none here (a drone
-    /// with no operator, say).
-    pub receive_only: bool,
+    /// Apply other nodes' track management but accept none from this
+    /// node's own people (a drone with no operator, say). Saved by earlier
+    /// builds as `receive_only`.
+    #[serde(alias = "receive_only")]
+    pub no_local_management: bool,
     /// Share the output schema and correlation settings, so every node
     /// publishes the same attributes and pairs by the same rules.
     pub share_profile: bool,
@@ -75,8 +111,10 @@ impl Default for SyncSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            direction: Direction::Both,
+            repair: false,
             peers: Vec::new(),
-            receive_only: false,
+            no_local_management: false,
             share_profile: true,
             budget_kbps: 0.0,
         }
@@ -92,7 +130,9 @@ pub fn share_profile(
     command: &Value,
 ) -> ot_store::sqlite::Result<()> {
     let sync = sync_settings(&db.app_settings()?);
-    if sync.share_profile {
+    // A node that sends nothing logs nothing for the others: a change made
+    // here stays here.
+    if sync.share_profile && sync.direction.sends() {
         let now = chrono::Utc::now().timestamp_millis() as u64;
         db.sync_append_own(site, actor, "admin", command, now)?;
     }
@@ -604,6 +644,26 @@ mod tests {
             ..AppSettings::default()
         };
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn saved_sync_settings_from_earlier_builds_load() {
+        // Before the direction setting: receive_only meant "no track
+        // management here", and every node sent and received.
+        let old = sync_settings(&json!({"sync": {"enabled": true, "receive_only": true}}));
+        assert!(old.no_local_management);
+        assert_eq!(old.direction, Direction::Both);
+        assert!(!old.repair);
+        // Written back under the new name only.
+        let v = serde_json::to_value(&old).unwrap();
+        assert_eq!(v["no_local_management"], true);
+        assert!(v.get("receive_only").is_none());
+        assert_eq!(v["direction"], "both");
+        let one_way = sync_settings(&json!({"sync": {"direction": "receive", "repair": true}}));
+        assert!(!one_way.direction.sends() && one_way.direction.receives());
+        assert!(one_way.repair);
+        let send = sync_settings(&json!({"sync": {"direction": "send"}}));
+        assert!(send.direction.sends() && !send.direction.receives());
     }
 
     #[test]

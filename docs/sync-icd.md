@@ -21,6 +21,7 @@ What OpenTrack needs from the package:
 - **Nothing about the sender.** Every payload names its sending node by site code and is signed with that node's key (see *Signature*). OpenTrack checks the signature itself, so a package need not prove the sender, though it may (and should keep strangers off the link: a refused message still costs bandwidth).
 - **Priority, when the link is short.** In order of importance: `decision`, `want`, `summary`, `release`, `report`, then `attrs`. `attrs` can be dropped first.
 - **No echo needed.** OpenTrack ignores its own messages if they come back.
+- **One-way nodes.** A node set to receive only (`sync.direction` = `receive`) publishes nothing on `out`, or only `summary` and `want` when it asks for what it missed (`sync.repair`). A node set to send only ignores everything on `in` but `want`. A package may enforce the same on its side.
 
 Expected volume per node (500 tracks at steady state):
 - `report`: about 6–8 kbit/s (measured with `bench swarm`). It rises with manoeuvring targets and falls with fewer tracks.

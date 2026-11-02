@@ -7,6 +7,20 @@
 - **Lost tracks can be hidden on the map.** Map display → **Lost tracks** (on by default, kept
   per browser); off, the map shows no lost track but the selected one. The options panel scrolls
   when the map is shorter than it.
+- **One-way sync.** Settings → Nodes has a **Direction**: Send and receive, **Receive only** (take
+  in trusted nodes' tracks and decisions and send nothing at all) or **Send only** (share this
+  node's picture and take nothing in). The link holds a node to it, whatever the transport does.
+  A node that receives only never takes over reporting a track, and track management done on it
+  stays on it. **Ask peers to fill gaps** lets it send only summaries and requests for what it
+  missed (`sync.direction`, `sync.repair`).
+- **What a node does, in one line.** Settings → Nodes opens with a sentence such as "OTK receives
+  tracks and decisions from DUG and sends nothing", notes on settings that combine unexpectedly,
+  and a **Taken in** column for each trusted node. The header shows a one-way node's direction
+  beside its site code.
+- **Add a node** in Settings → Nodes: its site code and public key in one dialog, with the
+  fingerprint shown to compare before it is added.
+- **`opentrack bridge --node '<url>;send=off'`** carries nothing that node sends, and
+  `;send=repair` only its summaries and requests for what it missed.
 
 - **Sources are flows.** A source's editor is a workspace: the step list on the left, the source's
   steps placed and connected by hand, each clicked open for its settings and samples. After the
@@ -28,6 +42,9 @@
   times, a track key of fixed-length ids, CoT types) and fields named like an OpenTrack field whose
   values fit. It no longer guesses from names of particular feeds, and no longer suggests
   identifiers or unit conversions: add those on the Map.
+- **Receive only is now Accept no track management here** (`sync.no_local_management`). It always
+  meant that the node's own users may not manage tracks, never that it sends nothing; Receive only
+  is now a direction. Saved settings and configuration exports that use `receive_only` still load.
 - **Raw output is a NATS topic step.** Its consent and the `/sources/{id}/raw-output` endpoints are
   gone. A source saved with a raw-output subject gets a NATS topic step beside its Output, once, on
   start (recorded as a revision by `op:migration`); a configuration file's raw output is read the
