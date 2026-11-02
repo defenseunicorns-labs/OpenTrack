@@ -575,7 +575,7 @@ fn parse_time(v: &Value) -> Option<DateTime<Utc>> {
     if let Ok(t) = DateTime::parse_from_rfc3339(s) {
         return Some(t.with_timezone(&Utc));
     }
-    // e.g. aisstream "2026-09-24 12:00:00.123456789 +0000 UTC".
+    // e.g. Go's time.Time form, "2026-09-24 12:00:00.123456789 +0000 UTC".
     static TRAILING: OnceLock<Regex> = OnceLock::new();
     let trailing = TRAILING.get_or_init(|| Regex::new(r"\s+(UTC|GMT|Z)$").expect("regex"));
     let s = trailing.replace(s, "");

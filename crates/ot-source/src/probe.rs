@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::expr::{as_f64, as_string};
+use crate::mapping::{FieldType, targets};
 
 /// Cap on distinct values tracked per field.
 const DISTINCT_CAP: usize = 1000;
@@ -173,12 +174,17 @@ pub struct Suggestion {
     /// A complete mapping spec to start from (one observation rule).
     pub mapping: Value,
     pub proposals: Vec<Proposal>,
-    /// Suggested identifiers (scheme ← path).
+    /// Suggested identifiers (scheme ← path). Always empty: a scheme names
+    /// what a value identifies, which the values cannot tell; the admin adds them.
     pub identifiers: Vec<Value>,
     /// What could not be found; the admin must fill these in.
     pub missing: Vec<String>,
 }
 
+// Suggestions come from two things only: the values captured, and OpenTrack's
+// own field names (`mapping::targets`). No feed's field names are known here.
+
+/// A path's last part, lower case, without `@`, `_`, `-` or spaces.
 fn norm(path: &str) -> String {
     let last = path
         .rsplit(['.', '['])
@@ -190,6 +196,22 @@ fn norm(path: &str) -> String {
     last.to_ascii_lowercase().replace(['_', '-', ' '], "")
 }
 
+/// Unit suffixes of OpenTrack's field names (`course_deg`, `altitude_hae_m`).
+const UNITS: &[&str] = &["_hae_m", "_mps", "_deg", "_m"];
+
+/// The names a feed field can share with OpenTrack field `target`: its last
+/// part (`course_deg`) and that without its unit (`course`), with the unit.
+fn target_names(target: &str) -> (Vec<String>, Option<&'static str>) {
+    let leaf = target.rsplit('.').next().unwrap_or(target);
+    let mut names = vec![norm(leaf)];
+    let mut unit = None;
+    if let Some(u) = UNITS.iter().find(|u| leaf.ends_with(**u)) {
+        names.push(norm(&leaf[..leaf.len() - u.len()]));
+        unit = Some(&u[1..]);
+    }
+    (names, unit)
+}
+
 fn numeric(f: &FieldStat) -> bool {
     f.types.keys().any(|t| matches!(*t, "integer" | "number"))
         || (f.types.contains_key("string")
@@ -197,281 +219,301 @@ fn numeric(f: &FieldStat) -> bool {
             && !f.samples.is_empty())
 }
 
+/// The least and greatest value seen (over every record for numbers, the
+/// samples for numeric strings).
+fn bounds(f: &FieldStat) -> Option<(f64, f64)> {
+    if let (Some(a), Some(b)) = (f.min, f.max) {
+        return Some((a, b));
+    }
+    let xs: Vec<f64> = f.samples.iter().filter_map(as_f64).collect();
+    (!xs.is_empty()).then(|| {
+        (
+            xs.iter().copied().fold(f64::MAX, f64::min),
+            xs.iter().copied().fold(f64::MIN, f64::max),
+        )
+    })
+}
+
 fn in_range(f: &FieldStat, lo: f64, hi: f64) -> bool {
-    let (mn, mx) = match (f.min, f.max) {
-        (Some(a), Some(b)) => (a, b),
-        _ => {
-            let xs: Vec<f64> = f.samples.iter().filter_map(as_f64).collect();
-            if xs.is_empty() {
-                return false;
-            }
-            (
-                xs.iter().copied().fold(f64::MAX, f64::min),
-                xs.iter().copied().fold(f64::MIN, f64::max),
-            )
-        }
-    };
-    mn >= lo && mx <= hi
+    bounds(f).is_some_and(|(mn, mx)| mn >= lo && mx <= hi)
 }
 
-struct Candidate {
-    names: &'static [&'static str],
-    target: &'static str,
-    check: fn(&FieldStat) -> bool,
-    transform: Option<&'static str>,
+/// Some sample has a fractional part.
+fn fractional(f: &FieldStat) -> bool {
+    f.samples
+        .iter()
+        .filter_map(as_f64)
+        .any(|x| x.fract() != 0.0)
 }
 
-fn any(_: &FieldStat) -> bool {
-    true
+/// The most decimal places among the samples (coordinates carry several).
+fn decimals(f: &FieldStat) -> usize {
+    f.samples
+        .iter()
+        .map(|s| as_string(s).split_once('.').map_or(0, |(_, d)| d.len()))
+        .max()
+        .unwrap_or(0)
 }
-fn is_lat(f: &FieldStat) -> bool {
-    numeric(f) && in_range(f, -90.0, 90.0)
+
+/// Every sample reads as a time within ten years before now and a day after.
+fn is_time(f: &FieldStat) -> bool {
+    let now = chrono::Utc::now();
+    let window = (now - chrono::Duration::days(3653))..(now + chrono::Duration::days(1));
+    !f.samples.is_empty()
+        && f.samples.iter().all(|s| {
+            crate::expr::parse_time_value(s)
+                .as_str()
+                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                .is_some_and(|t| window.contains(&t.with_timezone(&chrono::Utc)))
+        })
 }
-fn is_lon(f: &FieldStat) -> bool {
-    numeric(f) && in_range(f, -180.0, 180.0)
-}
-fn is_angle(f: &FieldStat) -> bool {
-    numeric(f) && in_range(f, 0.0, 360.0)
-}
-fn is_num(f: &FieldStat) -> bool {
-    numeric(f)
-}
+
+/// Every sample has the form of a CoT type (`a-f-G-U-C`).
 fn is_cot_type(f: &FieldStat) -> bool {
     !f.samples.is_empty()
         && f.samples.iter().all(|s| {
             let s = as_string(s);
-            s.starts_with("a-") && s.len() >= 5
+            s.starts_with("a-") && s.len() >= 5 && s.split('-').all(|p| !p.is_empty())
         })
 }
 
-const CANDIDATES: &[Candidate] = &[
-    Candidate {
-        names: &["lat", "latitude", "y"],
-        target: "position.latitude",
-        check: is_lat,
-        transform: None,
-    },
-    Candidate {
-        names: &["lon", "lng", "long", "longitude", "x"],
-        target: "position.longitude",
-        check: is_lon,
-        transform: None,
-    },
-    Candidate {
-        names: &[
-            "hae",
-            "altitude",
-            "altitudem",
-            "altm",
-            "height",
-            "altgeom",
-            "alt",
-        ],
-        target: "position.altitude_hae_m",
-        check: is_num,
-        transform: None,
-    },
-    Candidate {
-        names: &["altft", "altitudeft", "altbaro", "altitudefeet"],
-        target: "position.altitude_hae_m",
-        check: is_num,
-        transform: Some("feet_to_m"),
-    },
-    Candidate {
-        names: &["course", "cog", "track", "trk", "bearing", "direction"],
-        target: "kinematics.course_deg",
-        check: is_angle,
-        transform: None,
-    },
-    Candidate {
-        names: &["heading", "hdg", "trueheading", "true_heading"],
-        target: "kinematics.heading_deg",
-        check: is_angle,
-        transform: None,
-    },
-    Candidate {
-        names: &["sog", "gs", "speedkt", "speedknots", "groundspeed", "knots"],
-        target: "kinematics.speed_mps",
-        check: is_num,
-        transform: Some("knots_to_mps"),
-    },
-    Candidate {
-        names: &["speedkmh", "kmh", "kph"],
-        target: "kinematics.speed_mps",
-        check: is_num,
-        transform: Some("kmh_to_mps"),
-    },
-    Candidate {
-        names: &["speed", "speedmps", "velocity", "spd", "mps"],
-        target: "kinematics.speed_mps",
-        check: is_num,
-        transform: None,
-    },
-    Candidate {
-        names: &["verticalrate", "climbrate", "vs", "vrate"],
-        target: "kinematics.vertical_rate_mps",
-        check: is_num,
-        transform: None,
-    },
-    Candidate {
-        names: &["barorate", "geomrate"],
-        target: "kinematics.vertical_rate_mps",
-        check: is_num,
-        transform: Some("fpm_to_mps"),
-    },
-    Candidate {
-        names: &[
-            "time",
-            "timestamp",
-            "ts",
-            "timeutc",
-            "datetime",
-            "observedat",
-            "lastupdate",
-            "updated",
-            "start",
-        ],
-        target: "observed_at",
-        check: any,
-        transform: Some("time"),
-    },
-    Candidate {
-        names: &["name", "shipname", "vesselname", "title"],
-        target: "name",
-        check: any,
-        transform: Some("trim"),
-    },
-    Candidate {
-        names: &["callsign", "flight", "cs"],
-        target: "callsign",
-        check: any,
-        transform: Some("trim"),
-    },
-    Candidate {
-        names: &["type", "cottype"],
-        target: "classification.cot_type",
-        check: is_cot_type,
-        transform: None,
-    },
-    Candidate {
-        names: &["ce", "cep", "rc", "circularerror"],
-        target: "uncertainty.circular_error_m",
-        check: is_num,
-        transform: None,
-    },
-    Candidate {
-        names: &["le", "verticalerror"],
-        target: "uncertainty.vertical_error_m",
-        check: is_num,
-        transform: None,
-    },
-    Candidate {
-        names: &["confidence", "conf", "quality"],
-        target: "provenance.confidence",
-        check: |f| is_num(f) && in_range(f, 0.0, 1.0),
-        transform: None,
-    },
-];
+/// Whether `f`'s values can be OpenTrack field `target`, which holds `t`.
+fn fits(target: &str, t: FieldType, f: &FieldStat) -> bool {
+    match t {
+        FieldType::Number => {
+            numeric(f)
+                && match target {
+                    "position.latitude" => in_range(f, -90.0, 90.0),
+                    "position.longitude" => in_range(f, -180.0, 180.0),
+                    "provenance.confidence" => in_range(f, 0.0, 1.0),
+                    _ if target.ends_with("_deg") => in_range(f, -360.0, 360.0),
+                    _ => true,
+                }
+        }
+        FieldType::Time => is_time(f),
+        FieldType::Text if target == "classification.cot_type" => is_cot_type(f),
+        FieldType::Text => f.types.contains_key("string") && !numeric(f),
+        // Enumerations, SIDCs and areas need their own forms: the admin maps them.
+        _ => false,
+    }
+}
 
-/// Identifier schemes recognised from field names. Anything else can be
-/// added by the admin; schemes are open-ended.
-const IDENTIFIER_NAMES: &[(&str, &str)] = &[
-    ("mmsi", "mmsi"),
-    ("icao", "icao"),
-    ("hex", "icao"),
-    ("icao24", "icao"),
-    ("imo", "imo"),
-    ("imonumber", "imo"),
-    ("elnot", "elnot"),
-    ("uid", "cot-uid"),
-    ("registration", "registration"),
-    ("tailnumber", "registration"),
-    ("hull", "hull"),
-    ("hullnumber", "hull"),
-];
+fn transform_for(t: FieldType) -> Option<&'static str> {
+    match t {
+        FieldType::Time => Some("time"),
+        FieldType::Text => Some("trim"),
+        _ => None,
+    }
+}
 
-const KEY_NAMES: &[&str] = &[
-    "id",
-    "uid",
-    "mmsi",
-    "icao",
-    "hex",
-    "icao24",
-    "trackid",
-    "uuid",
-    "tracknumber",
-    "tn",
-];
+fn spec_for(f: &FieldStat, transform: Option<&str>) -> Value {
+    match transform {
+        Some(t) => json!({ "path": f.mapping_path, "transforms": [t] }),
+        None => json!(f.mapping_path),
+    }
+}
+
+fn confidence(x: f64) -> f64 {
+    (x.min(1.0) * 100.0).round() / 100.0
+}
+
+/// The parent object's path.
+fn parent(path: &str) -> &str {
+    path.rfind(['.', '[']).map_or("", |i| &path[..i])
+}
 
 /// Suggest a mapping from inferred fields.
 pub fn suggest(fields: &[FieldStat]) -> Suggestion {
     let usable: Vec<&FieldStat> = fields.iter().filter(|f| f.present > 0).collect();
     let mut proposals: Vec<Proposal> = Vec::new();
     let mut used: HashSet<&str> = HashSet::new();
-    for c in CANDIDATES {
-        if proposals.iter().any(|p| p.target == c.target) {
+    let mut missing = Vec::new();
+
+    // A field named like an OpenTrack field whose values fit it. A name two
+    // OpenTrack fields share (`name`, `platform.name`) goes to the first only.
+    let mut taken_names: HashSet<String> = HashSet::new();
+    for (target, t) in targets() {
+        if target.starts_with("geometry.") {
+            // A line of bearing or an area changes what the track is: never guessed.
             continue;
         }
+        let (names, unit) = target_names(target);
+        let names: Vec<String> = names
+            .into_iter()
+            .filter(|n| taken_names.insert(n.clone()))
+            .collect();
         let best = usable
             .iter()
             .filter(|f| {
                 !used.contains(f.path.as_str())
-                    && c.names.contains(&norm(&f.path).as_str())
-                    && (c.check)(f)
+                    && names.contains(&norm(&f.path))
+                    && fits(target, *t, f)
             })
             .max_by(|a, b| a.presence.total_cmp(&b.presence));
         if let Some(f) = best {
             used.insert(f.path.as_str());
-            let spec = match c.transform {
-                Some(t) => json!({ "path": f.mapping_path, "transforms": [t] }),
-                None => json!(f.mapping_path),
-            };
-            let confidence = (0.5 + 0.5 * f.presence).min(1.0);
+            let transform = transform_for(*t);
             proposals.push(Proposal {
-                target: c.target.to_owned(),
-                spec,
-                confidence: (confidence * 100.0).round() / 100.0,
+                target: (*target).to_owned(),
+                spec: spec_for(f, transform),
+                confidence: confidence(0.5 + 0.5 * f.presence),
                 reason: format!(
-                    "field {:?} (present in {:.0}% of records{})",
+                    "field {:?} is named like it and its values fit (present in {:.0}% of records{})",
                     f.path,
                     f.presence * 100.0,
-                    c.transform
-                        .map(|t| format!(", transform {t}"))
+                    unit.map(|u| format!("; assumed to be in {u}, check"))
                         .unwrap_or_default()
                 ),
             });
         }
     }
+    let proposed = |ps: &[Proposal], t: &str| ps.iter().any(|p| p.target == t);
 
-    // Key: a named id field, preferring the one closest to unique per record.
+    // A position from the values: two fractional coordinates in one object,
+    // the one past ±90 the longitude.
+    if !proposed(&proposals, "position.latitude") && !proposed(&proposals, "position.longitude") {
+        let coords: Vec<&FieldStat> = usable
+            .iter()
+            .copied()
+            .filter(|f| {
+                !used.contains(f.path.as_str())
+                    && numeric(f)
+                    && fractional(f)
+                    && in_range(f, -180.0, 180.0)
+            })
+            .collect();
+        let mut pairs: Vec<(&FieldStat, &FieldStat)> = Vec::new();
+        let mut unsure: Vec<String> = Vec::new();
+        let parents: BTreeMap<&str, Vec<&FieldStat>> =
+            coords.iter().fold(BTreeMap::new(), |mut m, f| {
+                m.entry(parent(&f.path)).or_insert_with(Vec::new).push(f);
+                m
+            });
+        for group in parents.values() {
+            let lons: Vec<&FieldStat> = group
+                .iter()
+                .copied()
+                .filter(|f| !in_range(f, -90.0, 90.0))
+                .collect();
+            let lats: Vec<&FieldStat> = group
+                .iter()
+                .copied()
+                .filter(|f| in_range(f, -90.0, 90.0))
+                .collect();
+            // Beside the longitude, the latitude: the one with the most
+            // decimal places, if one has more than the rest.
+            let mut lats = lats;
+            lats.sort_by_key(|f| std::cmp::Reverse(decimals(f)));
+            match (lats.as_slice(), lons.as_slice()) {
+                ([lat], [lon]) => pairs.push((*lat, *lon)),
+                ([lat, next, ..], [lon]) if decimals(lat) > decimals(next) => {
+                    pairs.push((*lat, *lon))
+                }
+                ([a, b], []) => unsure.push(format!("{:?} or {:?}", a.path, b.path)),
+                _ => {}
+            }
+        }
+        let best = pairs.into_iter().max_by(|a, b| {
+            (a.0.presence.min(a.1.presence)).total_cmp(&b.0.presence.min(b.1.presence))
+        });
+        if let Some((lat, lon)) = best {
+            for (target, f) in [("position.latitude", lat), ("position.longitude", lon)] {
+                used.insert(f.path.as_str());
+                proposals.push(Proposal {
+                    target: target.to_owned(),
+                    spec: json!(f.mapping_path),
+                    confidence: confidence(0.3 + 0.4 * f.presence),
+                    reason: format!(
+                        "fractional coordinates {:?} and {:?} side by side; only {:?} goes past ±90",
+                        lat.path, lon.path, lon.path
+                    ),
+                });
+            }
+        } else if let Some(u) = unsure.first() {
+            missing.push(format!(
+                "position (coordinates {u}: which is the latitude?)"
+            ));
+        }
+    }
+
+    // The time observed from the values: the most present field of times.
+    if !proposed(&proposals, "observed_at") {
+        let best = usable
+            .iter()
+            .filter(|f| !used.contains(f.path.as_str()) && is_time(f))
+            .max_by(|a, b| a.presence.total_cmp(&b.presence).then(b.path.cmp(&a.path)));
+        if let Some(f) = best {
+            used.insert(f.path.as_str());
+            proposals.push(Proposal {
+                target: "observed_at".to_owned(),
+                spec: spec_for(f, Some("time")),
+                confidence: confidence(0.3 + 0.4 * f.presence),
+                reason: format!(
+                    "field {:?} holds times (present in {:.0}% of records)",
+                    f.path,
+                    f.presence * 100.0
+                ),
+            });
+        }
+    }
+
+    // A CoT type from the values.
+    if !proposed(&proposals, "classification.cot_type")
+        && let Some(f) = usable
+            .iter()
+            .find(|f| !used.contains(f.path.as_str()) && is_cot_type(f))
+    {
+        used.insert(f.path.as_str());
+        proposals.push(Proposal {
+            target: "classification.cot_type".to_owned(),
+            spec: json!(f.mapping_path),
+            confidence: confidence(0.3 + 0.4 * f.presence),
+            reason: format!("field {:?} holds CoT types", f.path),
+        });
+    }
+
+    // The key from the values: in (nearly) every record, whole tokens of one
+    // length (an id, not a name or a number with a fraction), the most distinct.
+    let token = |f: &FieldStat| {
+        f.types
+            .keys()
+            .all(|t| matches!(*t, "string" | "integer" | "null"))
+            && f.samples.iter().all(|s| {
+                let s = as_string(s);
+                !s.is_empty() && !s.contains(char::is_whitespace)
+            })
+    };
+    let one_length = |f: &FieldStat| {
+        let lens: HashSet<usize> = f.samples.iter().map(|s| as_string(s).len()).collect();
+        lens.len() == 1
+    };
     let key = usable
         .iter()
-        .filter(|f| KEY_NAMES.contains(&norm(&f.path).as_str()) && f.presence >= 0.9)
+        .filter(|f| !used.contains(f.path.as_str()) && f.presence >= 0.9 && token(f) && !is_time(f))
         .max_by(|a, b| {
             a.distinct
                 .cmp(&b.distinct)
+                .then(one_length(a).cmp(&one_length(b)))
                 .then(a.presence.total_cmp(&b.presence))
+                // Shallower, then first by name.
+                .then(
+                    b.path
+                        .matches('.')
+                        .count()
+                        .cmp(&a.path.matches('.').count()),
+                )
+                .then(b.path.cmp(&a.path))
         });
-    let identifiers: Vec<Value> = usable
-        .iter()
-        .filter_map(|f| {
-            IDENTIFIER_NAMES
-                .iter()
-                .find(|(n, _)| *n == norm(&f.path))
-                .map(|(_, scheme)| json!({ "scheme": scheme, "value": f.mapping_path }))
-        })
-        .collect();
 
-    let mut missing = Vec::new();
     for t in ["position.latitude", "position.longitude"] {
-        if !proposals.iter().any(|p| p.target == t) {
+        if !proposed(&proposals, t) && !missing.iter().any(|m| m.starts_with("position")) {
             missing.push(t.to_owned());
         }
     }
     if key.is_none() {
         missing.push("key".to_owned());
     }
-    if !proposals.iter().any(|p| p.target == "observed_at") {
+    if !proposed(&proposals, "observed_at") {
         missing.push("observed_at (receive time will be used)".to_owned());
     }
 
@@ -484,14 +526,14 @@ pub fn suggest(fields: &[FieldStat]) -> Suggestion {
         "rules": [{
             "name": "observation",
             "key": key.map_or(Value::Null, |k| json!(k.mapping_path)),
-            "identifiers": identifiers,
+            "identifiers": [],
             "fields": field_map,
         }]
     });
     Suggestion {
         mapping,
         proposals,
-        identifiers,
+        identifiers: Vec::new(),
         missing,
     }
 }
@@ -500,79 +542,130 @@ pub fn suggest(fields: &[FieldStat]) -> Suggestion {
 mod tests {
     use super::*;
 
+    fn now(offset_s: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::seconds(offset_s)).to_rfc3339()
+    }
+
     #[test]
     fn infers_types_presence_and_samples() {
         let recs = vec![
-            json!({"hex": "ae01", "lat": 32.1, "lon": -117.0, "gs": 250, "flight": "RCH1 ", "tags": [{"k": "a"}]}),
-            json!({"hex": "ae02", "lat": 33.0, "lon": -118.5, "gs": 300.5, "flight": null}),
-            json!({"hex": "ae03", "alt_baro": "ground"}),
+            json!({"ref": "k01", "a": 32.1, "b": -117.0, "v": 250, "label": "R 1 ", "tags": [{"k": "a"}]}),
+            json!({"ref": "k02", "a": 33.0, "b": -118.5, "v": 300.5, "label": null}),
+            json!({"ref": "k03", "c": "ground"}),
         ];
         let stats = infer(&recs);
         let get = |p: &str| stats.iter().find(|f| f.path == p).unwrap();
-        assert_eq!(get("hex").distinct, 3);
-        assert!((get("lat").presence - 2.0 / 3.0).abs() < 1e-9);
-        assert_eq!(get("gs").types.get("integer"), Some(&1));
-        assert_eq!(get("gs").types.get("number"), Some(&1));
-        assert_eq!(
-            (get("lon").min, get("lon").max),
-            (Some(-118.5), Some(-117.0))
-        );
-        assert_eq!(get("flight").present, 1);
+        assert_eq!(get("ref").distinct, 3);
+        assert!((get("a").presence - 2.0 / 3.0).abs() < 1e-9);
+        assert_eq!(get("v").types.get("integer"), Some(&1));
+        assert_eq!(get("v").types.get("number"), Some(&1));
+        assert_eq!((get("b").min, get("b").max), (Some(-118.5), Some(-117.0)));
+        assert_eq!(get("label").present, 1);
         assert_eq!(get("tags[*].k").mapping_path, "tags[0].k");
     }
 
     #[test]
-    fn suggests_records_path_and_mapping() {
+    fn suggests_records_path() {
         let frames = vec![
-            json!({"now": 1, "ac": [{"hex": "a"}]}),
-            json!({"now": 2, "ac": [{"hex": "b"}, {"hex": "c"}]}),
+            json!({"n": 1, "items": [{"r": "a"}]}),
+            json!({"n": 2, "items": [{"r": "b"}, {"r": "c"}]}),
         ];
-        assert_eq!(suggest_records_path(&frames).as_deref(), Some("ac"));
+        assert_eq!(suggest_records_path(&frames).as_deref(), Some("items"));
         assert_eq!(suggest_records_path(&[json!({"a": 1})]), None);
+    }
 
+    #[test]
+    fn fields_named_like_opentrack_fields_are_proposed_when_their_values_fit() {
         let recs: Vec<Value> = (0..10)
-            .map(|i| json!({"hex": format!("ae{i:02}"), "lat": 30.0 + i as f64, "lon": -117.0, "gs": 200,
-                            "track": 90, "flight": "RCH1", "seen_at": "2026-09-25T00:00:00Z", "type": "adsb_icao"}))
+            .map(|i| json!({"ref": format!("k{i:03}"), "latitude": 30.5 + i as f64, "longitude": -117.25,
+                            "speed": 3.5, "course": 90.5, "callsign": " R 1 ", "observed_at": now(i),
+                            "heading": "north", "name": "UNIT", "extra": {"name": "OTHER"}}))
             .collect();
         let s = suggest(&infer(&recs));
-        let rule = &s.mapping["rules"][0];
-        assert_eq!(rule["key"], "hex");
-        assert_eq!(rule["fields"]["position.latitude"], "lat");
-        assert_eq!(
-            rule["fields"]["kinematics.speed_mps"]["transforms"][0],
-            "knots_to_mps"
-        );
-        assert_eq!(rule["fields"]["kinematics.course_deg"], "track");
-        assert_eq!(
-            rule["identifiers"][0],
-            json!({"scheme": "icao", "value": "hex"})
-        );
-        // "type" holds adsb.lol's message type, not a CoT type: not proposed.
-        assert!(rule["fields"].get("classification.cot_type").is_none());
+        let f = &s.mapping["rules"][0]["fields"];
+        assert_eq!(f["position.latitude"], "latitude");
+        assert_eq!(f["position.longitude"], "longitude");
+        assert_eq!(f["kinematics.speed_mps"], "speed");
+        assert_eq!(f["kinematics.course_deg"], "course");
+        assert_eq!(f["callsign"]["transforms"][0], "trim");
+        assert_eq!(f["observed_at"]["transforms"][0], "time");
+        // One `name`; the other is not taken for `platform.name`, which only ends like it.
+        assert!(f.get("platform.name").is_none());
+        // Named like it, but its values are not a number of degrees.
+        assert!(f.get("kinematics.heading_deg").is_none());
+        let speed = s
+            .proposals
+            .iter()
+            .find(|p| p.target == "kinematics.speed_mps")
+            .unwrap();
         assert!(
-            s.missing.iter().any(|m| m.starts_with("observed_at")),
-            "{:?}",
-            s.missing
+            speed.reason.contains("assumed to be in mps"),
+            "{}",
+            speed.reason
         );
-        // The suggestion is a valid mapping spec.
+        assert_eq!(s.mapping["rules"][0]["key"], "ref");
+        assert!(s.identifiers.is_empty());
         let spec: crate::mapping::MappingSpec = serde_json::from_value(s.mapping).unwrap();
         spec.validate().unwrap();
     }
 
     #[test]
+    fn a_position_time_and_key_are_found_from_the_values_alone() {
+        let recs: Vec<Value> = (0..10)
+            .map(|i| json!({"body": {"p": 32.12345 + i as f64 * 0.01, "q": -117.23456, "r": 4.5, "n": 7},
+                            "when": now(i * 60), "id1": format!("{:06x}", 0xa0000 + i), "label": format!("UNIT {i}"),
+                            "seq": i * 7}))
+            .collect();
+        let s = suggest(&infer(&recs));
+        let rule = &s.mapping["rules"][0];
+        assert_eq!(rule["fields"]["position.latitude"], "body.p");
+        assert_eq!(rule["fields"]["position.longitude"], "body.q");
+        assert_eq!(rule["fields"]["observed_at"]["path"], "when");
+        // Ten distinct ids of one length beat a counter of varying length and a name with spaces.
+        assert_eq!(rule["key"], "id1");
+        assert!(s.missing.is_empty(), "{:?}", s.missing);
+    }
+
+    #[test]
+    fn coordinates_the_values_cannot_tell_apart_are_asked_about() {
+        let recs: Vec<Value> = (0..5)
+            .map(|i| json!({"m": {"u": 12.3456 + i as f64, "w": 45.6789}}))
+            .collect();
+        let s = suggest(&infer(&recs));
+        assert!(
+            s.mapping["rules"][0]["fields"]
+                .get("position.latitude")
+                .is_none()
+        );
+        assert!(
+            s.missing[0].contains("which is the latitude"),
+            "{:?}",
+            s.missing
+        );
+        assert!(s.missing.iter().any(|m| m.starts_with("observed_at")));
+    }
+
+    #[test]
+    fn numbers_are_not_taken_for_times_outside_the_last_ten_years() {
+        let recs: Vec<Value> = (0..5).map(|i| json!({"n": 500_000_000 + i})).collect();
+        let s = suggest(&infer(&recs));
+        assert!(s.mapping["rules"][0]["fields"].get("observed_at").is_none());
+    }
+
+    #[test]
     fn cot_attributes_are_recognised() {
         let recs = vec![
-            json!({"event": {"@uid": "A1", "@type": "a-f-G-U-C", "@time": "2026-09-25T00:00:00Z",
+            json!({"event": {"@uid": "A1", "@type": "a-f-G-U-C", "@time": now(0),
             "point": {"@lat": "32.7", "@lon": "-117.2", "@hae": "10", "@ce": "5", "@le": "9999999"},
             "detail": {"contact": {"@callsign": "VIPER 1"}}}}),
         ];
         let s = suggest(&infer(&recs));
         let f = &s.mapping["rules"][0]["fields"];
         assert_eq!(f["position.latitude"], "event.point.@lat");
+        assert_eq!(f["position.longitude"], "event.point.@lon");
         assert_eq!(f["classification.cot_type"], "event.@type");
         assert_eq!(f["callsign"]["path"], "event.detail.contact.@callsign");
         assert_eq!(f["observed_at"]["path"], "event.@time");
         assert_eq!(s.mapping["rules"][0]["key"], "event.@uid");
-        assert_eq!(s.identifiers[0]["scheme"], "cot-uid");
     }
 }

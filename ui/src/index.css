@@ -968,6 +968,11 @@ body {
   padding: 0 var(--space-md);
 }
 
+.flow-step-action {
+  display: flex;
+  margin-top: 2px;
+}
+
 /* What the dry run passed through a step: in → out. */
 .flow-step-counts {
   font-size: 10px;

@@ -8,7 +8,7 @@
  * Entity links, Affiliation, Tracker and Throttle steps take observations; Output and NATS topics
  * take them and pass nothing on.
  */
-import type { PluginInfo, SourceProblem, SourceSpec } from '../../../api/client'
+import type { PluginInfo, Proposal, SourceProblem, SourceSpec } from '../../../api/client'
 import { DEFAULT_LINKS } from '../../../lib/pipeline'
 
 type Obj = Record<string, unknown>
@@ -56,17 +56,17 @@ const DATA: Record<StepType, { takes: Data | null; gives: Data | null }> = {
 export const takes = (t: StepType) => DATA[t].takes
 export const gives = (t: StepType) => DATA[t].gives
 
-/** Each step's name, and the group the palette lists it under. */
-export const STEPS: Record<Exclude<StepType, 'input'>, { label: string; group: 'Records' | 'Observations' | 'Outputs' }> = {
-  reject: { label: 'Reject', group: 'Records' },
-  map: { label: 'Map', group: 'Records' },
-  filter: { label: 'Filter', group: 'Observations' },
-  registry: { label: 'Entity links', group: 'Observations' },
-  affiliation: { label: 'Affiliation', group: 'Observations' },
-  tracker: { label: 'Tracker', group: 'Observations' },
-  throttle: { label: 'Throttle', group: 'Observations' },
+/** Each step's name, and the group the step list shows it under: the usual steps first, the rest under "More steps". */
+export const STEPS: Record<Exclude<StepType, 'input'>, { label: string; group: 'Steps' | 'Outputs' | 'More steps' }> = {
+  map: { label: 'Map', group: 'Steps' },
+  filter: { label: 'Filter', group: 'Steps' },
+  throttle: { label: 'Throttle', group: 'Steps' },
   output: { label: 'Output', group: 'Outputs' },
   nats: { label: 'NATS topic', group: 'Outputs' },
+  reject: { label: 'Reject', group: 'More steps' },
+  registry: { label: 'Entity links', group: 'More steps' },
+  affiliation: { label: 'Affiliation', group: 'More steps' },
+  tracker: { label: 'Tracker', group: 'More steps' },
 }
 
 /** The word under a step's heading. */
@@ -266,6 +266,94 @@ export function freePlace(flow: Flow, at: { x: number; y: number }): { x: number
   let p = { x: Math.round(at.x), y: Math.round(at.y) }
   for (let i = 0; i < 50 && taken(p); i++) p = { ...p, y: p.y + ROW }
   return p
+}
+
+/** A step card's size on the workspace, for where its connections start and end. */
+const CARD_W = 220
+const CARD_MID = 40
+
+/** Distance from `p` to the segment `a`–`b`. */
+function toSegment(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len = dx * dx + dy * dy
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len))
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+}
+
+/**
+ * The flow with step `id` (just dropped, not yet connected) joined in: dropped onto a connection it
+ * can sit in, it goes between the two steps; dropped just right of a step's output that can feed it,
+ * it is connected from there; otherwise it stays loose.
+ */
+export function joinDropped(flow: Flow, id: string): Flow {
+  const node = flow.nodes.find((n) => n.id === id)
+  if (!node?.position || flow.edges.some((e) => e.source === id || e.target === id)) return flow
+  const at = (n: FlowNode) => n.position ?? { x: 0, y: 0 }
+  const out = (n: FlowNode) => ({ x: at(n).x + CARD_W, y: at(n).y + CARD_MID })
+  const into = (n: FlowNode) => ({ x: at(n).x, y: at(n).y + CARD_MID })
+  const mid = { x: at(node).x + CARD_W / 2, y: at(node).y + CARD_MID }
+  // Onto a connection: it takes what the source gives and gives what the target takes.
+  let best: { edge: FlowEdge; d: number } | null = null
+  for (const e of flow.edges) {
+    const a = flow.nodes.find((n) => n.id === e.source)
+    const b = flow.nodes.find((n) => n.id === e.target)
+    if (!a || !b || gives(a.type) !== takes(node.type) || gives(node.type) !== takes(b.type)) continue
+    const d = toSegment(mid, out(a), into(b))
+    if (d < 60 && (!best || d < best.d)) best = { edge: e, d }
+  }
+  if (best) {
+    const { source, target } = best.edge
+    return {
+      ...flow,
+      edges: [...flow.edges.filter((e) => e !== best.edge), { source, target: id }, { source: id, target }],
+    }
+  }
+  // Beside a step's output: up to a card's width to its right, about level with it.
+  const near = flow.nodes
+    .filter((n) => n.id !== id && canConnect(flow, n.id, id))
+    .map((n) => ({ n, dx: into(node).x - out(n).x, dy: Math.abs(into(node).y - out(n).y) }))
+    .filter((c) => c.dx >= -40 && c.dx <= CARD_W + 40 && c.dy <= 90)
+    .sort((a, b) => a.dx + a.dy - (b.dx + b.dy))[0]
+  return near ? { ...flow, edges: [...flow.edges, { source: near.n.id, target: id }] } : flow
+}
+
+/**
+ * Where a field dropped on a Map goes: where the server's analysis of the captured samples proposed
+ * (the probe's suggestion, from the values themselves), else an extension field named after it
+ * (`ext.<name>`) for the user to place. Nothing here knows any particular feed's field names.
+ */
+export function guessTarget(path: string, proposals: Proposal[] = []): string {
+  const reads = (spec: unknown): boolean =>
+    spec === path || (typeof spec === 'object' && spec !== null && ((spec as { path?: unknown }).path === path || JSON.stringify(spec).includes(`"${path}"`)))
+  const proposed = proposals.filter((p) => reads(p.spec)).sort((a, b) => b.confidence - a.confidence)[0]
+  if (proposed) return proposed.target
+  const leaf = (path.split('.').pop() ?? path).replace(/^@/, '')
+  const name = leaf
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return `ext.${name || 'field'}`
+}
+
+/**
+ * A Map's settings with `path` mapped to `target` in its first reporting rule (a rule is started if
+ * it has none). `key` (a capture can propose a field as the track key) sets that rule's key.
+ */
+export function mapField(config: unknown, path: string, target: string): unknown {
+  const c = (config ?? {}) as { mapping?: { rules?: Record<string, unknown>[] } & Record<string, unknown> } & Record<string, unknown>
+  const mapping = { ...(c.mapping ?? {}), rules: [...(c.mapping?.rules ?? [])] }
+  let at = mapping.rules.findIndex((r) => r.kind !== 'static')
+  if (at < 0) {
+    mapping.rules.push({ name: 'main', key: '', fields: {} })
+    at = mapping.rules.length - 1
+  }
+  const rule = { ...mapping.rules[at] }
+  if (target === 'key') rule.key = path
+  else rule.fields = { ...((rule.fields as Record<string, unknown>) ?? {}), [target]: path }
+  mapping.rules[at] = rule
+  return { ...c, mapping }
 }
 
 export interface NodeProblems {

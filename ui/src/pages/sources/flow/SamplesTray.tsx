@@ -66,7 +66,8 @@ export function SamplesTray({
           <InfoTip label="Samples">
             A dry run of the source as edited (not yet saved) over its stored samples, as they leave the selected step. In the table,
             fields the step added or changed are tinted and ones it removed are struck through. Click a sample to follow it through the
-            flow: the steps it passed light up, and the one that dropped it says why. Nothing is published.
+            flow: the steps it passed light up, and the one that dropped it says why. On the input, drag a column onto a Map to map that
+            field. Nothing is published.
           </InfoTip>
           <SegmentedControl
             aria-label="Samples view"
@@ -101,6 +102,8 @@ export function SamplesTray({
             pinned={PINNED}
             // A Map makes observations out of records: everything would differ.
             showChanges={node.type !== 'input' && node.type !== 'map'}
+            // A record's fields can be dragged onto a Map to map them.
+            draggableColumns={node.type === 'input' || node.type === 'reject'}
             selectedId={selected}
             onRowClick={(id) => onFollow(sampleOf(id) === followed ? null : sampleOf(id))}
             empty="No stored samples. Capture some on the input."

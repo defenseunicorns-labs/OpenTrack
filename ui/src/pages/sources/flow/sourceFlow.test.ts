@@ -6,8 +6,11 @@ import {
   defaultConfig,
   flowOf,
   freePlace,
+  guessTarget,
   idFromName,
+  joinDropped,
   laidOut,
+  mapField,
   newSourceSpec,
   nextNodeId,
   nodeTitle,
@@ -153,5 +156,77 @@ describe('problemsByNode', () => {
     )
     expect(p.byNode).toEqual({ input: ['the host is not set'], map: ['mapping has no rules'] })
     expect(p.general).toEqual(['not shown', 'source name must not be empty'])
+  })
+})
+
+describe('joinDropped', () => {
+  // input → map → output, in a row 300 apart.
+  const line = (): Flow => ({
+    nodes: [
+      { id: 'input', type: 'input', position: { x: 0, y: 0 } },
+      { id: 'map', type: 'map', config: defaultConfig('map'), position: { x: 300, y: 0 } },
+      { id: 'output', type: 'output', position: { x: 600, y: 0 } },
+    ],
+    edges: [
+      { source: 'input', target: 'map' },
+      { source: 'map', target: 'output' },
+    ],
+  })
+  const drop = (f: Flow, n: Flow['nodes'][number]) => joinDropped({ ...f, nodes: [...f.nodes, n] }, n.id)
+
+  it('puts a step dropped on a connection between its two steps', () => {
+    const f = drop(line(), { id: 'filter', type: 'filter', config: {}, position: { x: 420, y: 10 } })
+    expect(f.edges).toEqual([
+      { source: 'input', target: 'map' },
+      { source: 'map', target: 'filter' },
+      { source: 'filter', target: 'output' },
+    ])
+  })
+
+  it('does not put a step on a connection carrying the wrong data', () => {
+    // A Filter takes observations; input → map carries records.
+    const f = drop(line(), { id: 'filter', type: 'filter', config: {}, position: { x: 110, y: 0 } })
+    expect(f.edges.some((e) => e.target === 'filter' && e.source === 'input')).toBe(false)
+  })
+
+  it('connects a step dropped just right of an output that can feed it', () => {
+    const f = drop(line(), { id: 'nats', type: 'nats', config: { subject: 'x' }, position: { x: 560, y: 70 } })
+    expect(f.edges).toContainEqual({ source: 'map', target: 'nats' })
+  })
+
+  it('leaves a step dropped far from everything loose', () => {
+    const f = drop(line(), { id: 'throttle', type: 'throttle', config: {}, position: { x: 1400, y: 900 } })
+    expect(f.edges).toEqual(line().edges)
+  })
+})
+
+describe('a field dropped on a Map', () => {
+  it('goes where the capture proposed, else to an extension field named after it', () => {
+    const proposals = [
+      { target: 'kinematics.speed_mps', spec: { path: 'body.velocity', transforms: ['knots'] }, confidence: 0.9, reason: '' },
+      { target: 'position.latitude', spec: 'body.y', confidence: 0.8, reason: '' },
+      { target: 'key', spec: 'body.ref', confidence: 0.7, reason: '' },
+    ]
+    expect(guessTarget('body.velocity', proposals)).toBe('kinematics.speed_mps')
+    expect(guessTarget('body.y', proposals)).toBe('position.latitude')
+    expect(guessTarget('body.ref', proposals)).toBe('key')
+    // No proposal: never guessed from a name.
+    expect(guessTarget('body.latitude')).toBe('ext.latitude')
+    expect(guessTarget('record.StatusCode')).toBe('ext.status_code')
+    expect(guessTarget('event.@ref')).toBe('ext.ref')
+  })
+
+  it("lands in the Map's first reporting rule, which is started if it has none", () => {
+    const fresh = mapField({ mapping: { rules: [] } }, 'lat', 'position.latitude') as { mapping: { rules: unknown[] } }
+    expect(fresh.mapping.rules).toEqual([{ name: 'main', key: '', fields: { 'position.latitude': 'lat' } }])
+    const keyed = mapField(fresh, 'id', 'key') as { mapping: { rules: { key: string }[] } }
+    expect(keyed.mapping.rules[0].key).toBe('id')
+    const withStatic = mapField(
+      { mapping: { rules: [{ name: 's', kind: 'static', key: 'id', fields: {} }, { name: 'p', key: 'id', fields: { name: 'n' } }] } },
+      'lon',
+      'position.longitude',
+    ) as { mapping: { rules: { fields: Record<string, string> }[] } }
+    expect(withStatic.mapping.rules[1].fields).toEqual({ name: 'n', 'position.longitude': 'lon' })
+    expect(withStatic.mapping.rules[0].fields).toEqual({})
   })
 })

@@ -57,8 +57,8 @@ impl Default for StaticJoinSpec {
     }
 }
 
-/// Derive affiliation from a country code, e.g. a registry flag or the
-/// ICAO address block. Country lists are configuration, not code.
+/// Derive affiliation from a country code, e.g. a registry flag or one
+/// derived from an identifier. Country lists are configuration, not code.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AffiliationStage {
@@ -1332,7 +1332,7 @@ mod tests {
                 {"source": "m", "target": "north"}, {"source": "north", "target": "pub"}
             ]),
         );
-        let mut p = Pipeline::new("ais", spec).unwrap();
+        let mut p = Pipeline::new("feed", spec).unwrap();
         let reg = reg();
         let rec = |id: u32, lat: f64, name: Option<&str>| {
             let mut r = json!({"id": id, "lat": lat, "lon": -117.0, "ts": "2026-09-24T12:00:00Z"});
@@ -1386,7 +1386,7 @@ mod tests {
                 {"source": "f", "target": "out"}, {"source": "m", "target": "raw"}
             ]),
         );
-        let mut p = Pipeline::new("ais", spec).unwrap();
+        let mut p = Pipeline::new("feed", spec).unwrap();
         let body = json!([{"id": 1, "lat": 32.0, "lon": 1.0, "ts": "2026-09-24T12:00:00Z"},
                           {"id": 2, "lat": 40.0, "lon": 1.0, "ts": "2026-09-24T12:00:00Z"},
                           {"nothing": true}]);
@@ -1414,7 +1414,7 @@ mod tests {
                 {"source": "f", "target": "out"}, {"source": "m", "target": "raw"}
             ]),
         );
-        let mut p = Pipeline::new("ais", spec).unwrap();
+        let mut p = Pipeline::new("feed", spec).unwrap();
         let mut trace = Trace::new(5);
         let body = json!([{"id": 1, "lat": 32.0, "lon": 1.0, "ts": "2026-09-24T12:00:00Z"},
                           {"id": 2, "lat": 40.0, "lon": 1.0, "ts": "2026-09-24T12:00:00Z"}]);

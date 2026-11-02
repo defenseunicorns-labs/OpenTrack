@@ -105,7 +105,7 @@ pub struct IdentifierSpec {
 
 /// What a target field holds, for coercion and validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FieldType {
+pub(crate) enum FieldType {
     Text,
     Number,
     Time,
@@ -169,6 +169,11 @@ fn target_type(field: &str) -> Option<FieldType> {
         return (!key.is_empty() && !key.contains('.')).then_some(FieldType::Text);
     }
     TARGETS.iter().find(|(f, _)| *f == field).map(|(_, t)| *t)
+}
+
+/// Every core field with what it holds, for the probe's suggestions.
+pub(crate) fn targets() -> &'static [(&'static str, FieldType)] {
+    TARGETS
 }
 
 /// Names of every mappable core field, for the UI.

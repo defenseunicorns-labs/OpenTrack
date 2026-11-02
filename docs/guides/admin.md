@@ -972,7 +972,13 @@ pipelines", and `docs/examples/`.
 
 **Capturing samples.** **Capture samples** (on the input's settings) connects with the transport
 as set and captures what arrives; the codec it detects and a mapping it suggests are offered on
-the input and the Map, applied only when chosen. Choosing Cursor-on-Target XML on a TCP transport frames by the end tag `</event>` (CoT
+the input and the Map, applied only when chosen. The suggestion knows no feed's field names: it
+reads the values (two fractional coordinates side by side, the one past ±90 the longitude; times;
+the track key, fixed-length ids distinct per track; CoT types) and fields named like an OpenTrack
+field whose values fit (a `course` of degrees, a `callsign`), assuming OpenTrack's unit. It never
+suggests identifiers, unit conversions or a line of bearing; add those on the Map. Dragging a
+column of the input's samples onto a Map maps that field where the suggestion put it, or to an
+extension field named after it. Choosing Cursor-on-Target XML on a TCP transport frames by the end tag `</event>` (CoT
 events arrive back to back, often over several lines). A probe that connects but captures nothing
 says why it may be: **no bytes arrived** (the feed is idle; the port needs TLS, since a TLS server
 waits silently for a handshake; or the port only takes data in, as a TAK Server input does), or
