@@ -20,7 +20,7 @@ import { useCan } from '../../auth/context'
 import { InfoTip } from '../../components/InfoTip'
 import { errorMessage } from '../../lib/format'
 import { SOURCE_STATES_INFO, sourceState } from '../../lib/sourceState'
-import { MAX_TRACED_SAMPLES, TRACED_SAMPLES } from '../../lib/trace'
+import { MAX_TRACED_SAMPLES, sampleTrail, TRACED_SAMPLES } from '../../lib/trace'
 import { FeedPanel } from './flow/FeedPanel'
 import { NodePanel } from './flow/NodePanel'
 import { SamplesTray } from './flow/SamplesTray'
@@ -159,6 +159,8 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
   const [capturing, setCapturing] = useState(false)
   const [nonce, setNonce] = useState(0)
   const [trayOpen, setTrayOpen] = useState(true)
+  // A traced sample followed through the flow (from 0).
+  const [followed, setFollowed] = useState<number | null>(null)
 
   // A source from before flows has no places for its steps: they are laid out once, as loaded.
   const adopt = useCallback((r: SourceRow) => {
@@ -209,6 +211,8 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
     if (spec) edit(withFlow(spec, f))
   }
 
+  const trail = useMemo(() => (followed === null ? null : sampleTrail(live.preview?.trace, followed)), [followed, live.preview])
+
   const nodes: FlowCanvasNode[] = useMemo(() => {
     if (!spec) return []
     return flow.nodes.map((n) => ({
@@ -224,9 +228,10 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
         summary: nodeSummary(spec, n),
         problems: byNode.byNode[n.id] ?? [],
         counts: live.preview?.steps?.[n.id],
+        trail: trail ? (trail[n.id] ?? 'absent') : undefined,
       } satisfies StepView,
     }))
-  }, [spec, flow, current, byNode, live.preview])
+  }, [spec, flow, current, byNode, live.preview, trail])
 
   const edges: FlowCanvasEdge[] = useMemo(
     () =>
@@ -234,9 +239,19 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
         const eid = `${e.source}->${e.target}`
         // What crossed it in the dry run: what its target took in.
         const crossed = live.preview?.steps?.[e.target]?.in
-        return { id: eid, source: e.source, target: e.target, selected: selectedEdges.has(eid), label: crossed === undefined ? undefined : String(crossed) }
+        // A followed sample's way through: from a step it passed to one it reached.
+        const taken = trail ? trail[e.source]?.state === 'passed' && !!trail[e.target] : undefined
+        return {
+          id: eid,
+          source: e.source,
+          target: e.target,
+          selected: selectedEdges.has(eid),
+          label: crossed === undefined ? undefined : String(crossed),
+          animated: taken,
+          className: taken === undefined ? undefined : taken ? 'flow-edge-taken' : 'flow-edge-faded',
+        }
       }),
-    [flow, selectedEdges, live.preview],
+    [flow, selectedEdges, live.preview, trail],
   )
 
   const transportType = spec?.transport.type
@@ -477,6 +492,8 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
             error={live.error}
             open={trayOpen}
             onOpenChange={setTrayOpen}
+            followed={followed}
+            onFollow={setFollowed}
           />
           {/* A step's settings (or the feed's) open over the right of the page, resizable. */}
           <SideNav

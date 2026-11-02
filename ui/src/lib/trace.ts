@@ -139,6 +139,22 @@ export function sampleRows(trace: PreviewTrace | undefined, stageId: string, par
   })
 }
 
+/** Where one traced sample went: each step it passed, the one that dropped or held it, and why. */
+export type TrailMark = { state: 'passed' | 'dropped' | 'held'; note?: string }
+
+/** The trail of traced sample `index` (as `sampleRows` numbers them, from 0), by step id. */
+export function sampleTrail(trace: PreviewTrace | undefined, index: number): Record<string, TrailMark> {
+  const s = trace?.samples[index]
+  const out: Record<string, TrailMark> = {}
+  for (const x of s?.stages ?? []) {
+    if (x.id === 'publish') continue
+    if (x.dropped?.length) out[x.id] = { state: 'dropped', note: x.dropped.join(' · ') }
+    else if (x.held) out[x.id] = { state: 'held', note: 'waiting for the rest of its scan' }
+    else if (x.items.length) out[x.id] = { state: 'passed' }
+  }
+  return out
+}
+
 /** The counts on one line, as `frames 5 · records 5 · emitted 4`. */
 export function countsLine(result: PreviewResult | null): string {
   const counts = Object.entries(result?.counts ?? {}).filter(([k]) => !k.startsWith('rejected:') && !k.startsWith('grade:'))

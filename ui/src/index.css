@@ -979,6 +979,34 @@ body {
   color: var(--status-warning);
 }
 
+/* Following a sample: the steps it never reached fade, the step that dropped it says why. */
+.flow-step[data-trail='absent'] {
+  opacity: 0.4;
+}
+
+.flow-step-trail {
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--color-destructive);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.flow-step-trail[data-state='held'] {
+  color: var(--status-warning);
+}
+
+.react-flow__edge.flow-edge-taken .react-flow__edge-path {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+
+.react-flow__edge.flow-edge-faded {
+  opacity: 0.3;
+}
+
 .source-editor-json {
   flex: 1;
   min-height: 0;

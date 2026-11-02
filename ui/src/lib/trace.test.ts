@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PreviewTrace } from '../api/client'
-import { countsLine, sampleRows, samplesAt } from './trace'
+import { countsLine, sampleRows, sampleTrail, samplesAt } from './trace'
 
 // Frame 0 decodes to three records (samples #1–#3), frame 1 does not decode (#4), frame 2 is
 // binary (#5), frame 3 gives #6.
@@ -168,5 +168,33 @@ describe('sampleRows', () => {
   it("shows the input's records with no step before, and its decode errors", () => {
     const rows = sampleRows(trace, 'input', undefined, ['input'])
     expect(rows.map((r) => r.value ?? r.dropped)).toEqual([{ n: 1 }, { n: 2 }, 'decode error: bad'])
+  })
+})
+
+describe('sampleTrail', () => {
+  it('marks the steps a sample passed and the one that dropped it', () => {
+    const trace = {
+      frames: [],
+      samples: [
+        {
+          frame: 0,
+          stages: [
+            { id: 'input', items: [{ n: 1 }] },
+            { id: 'map', items: [{ k: 1 }] },
+            { id: 'f', items: [], dropped: ['drop_if matched'] },
+            { id: 'raw', items: [{ k: 1 }] },
+            { id: 'out', items: [] },
+            { id: 'publish', items: [] },
+          ],
+        },
+      ],
+    }
+    expect(sampleTrail(trace, 0)).toEqual({
+      input: { state: 'passed' },
+      map: { state: 'passed' },
+      f: { state: 'dropped', note: 'drop_if matched' },
+      raw: { state: 'passed' },
+    })
+    expect(sampleTrail(trace, 5)).toEqual({})
   })
 })
