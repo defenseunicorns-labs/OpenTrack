@@ -5,7 +5,6 @@ import { InfoTip } from '../../../components/InfoTip'
 import { sampleFields } from '../../../lib/conditions'
 import { filterInput } from '../../../lib/trace'
 import { MapEditor } from '../designer/MapEditor'
-import { StageSamples } from '../designer/StageSamples'
 import { AffiliationForm, FilterForm, JoinForm, RegistryForm, RejectForm, ThrottleForm, TrackerForm } from '../designer/StageForms'
 import { SenderAuth } from '../SenderAuth'
 import { TransportForm } from '../TransportForm'
@@ -28,8 +27,8 @@ const STEP_HELP: Record<StepType, string> = {
 }
 
 /**
- * The settings of one step, and its samples as they leave it. The input's are the source's
- * transport and codec; the others' are the step's own.
+ * The settings of one step. The input's are the source's transport and codec; the others' are the
+ * step's own. Its samples are in the tray under the workspace.
  */
 export function NodePanel({
   spec,
@@ -39,7 +38,6 @@ export function NodePanel({
   schema,
   plugins,
   preview,
-  previewError,
   probe,
   capturing,
   readOnly,
@@ -56,7 +54,6 @@ export function NodePanel({
   schema: SchemaOverview | null
   plugins: PluginInfo[]
   preview: PreviewResult | null
-  previewError: string | null
   probe: ProbeResult | null
   capturing: boolean
   readOnly: boolean
@@ -234,28 +231,17 @@ export function NodePanel({
             {settings}
           </fieldset>
         )}
-        <div className="value-row">
-          <h3 className="subhead">
-            Samples
-            <InfoTip label="Samples">
-              A dry run of the source as edited (not yet saved) over its stored samples, as they leave this step. Nothing is published.
+        {node.type === 'input' && (
+          <div className="value-row">
+            <Button size="sm" variant="secondary" icon={<TbDownload />} disabled={capturing || readOnly} onClick={onCapture}>
+              {capturing ? 'Capturing…' : 'Capture samples'}
+            </Button>
+            <InfoTip label="Capture samples">
+              Connect with these settings and take up to 20 frames or 15 s of the live feed, whichever comes first. They replace the
+              source&apos;s stored samples.
             </InfoTip>
-          </h3>
-          <span className="spacer" />
-          {node.type === 'input' && (
-            <>
-              <Button size="sm" variant="secondary" icon={<TbDownload />} disabled={capturing || readOnly} onClick={onCapture}>
-                {capturing ? 'Capturing…' : 'Capture samples'}
-              </Button>
-              <InfoTip label="Capture samples">
-                Connect with these settings and take up to 20 frames or 15 s of the live feed, whichever comes first. They replace the
-                source&apos;s stored samples.
-              </InfoTip>
-            </>
-          )}
-        </div>
-        {previewError && <div className="error-text">{previewError}</div>}
-        {preview && <StageSamples result={preview} stageId={node.type === 'output' ? 'publish' : node.id} path={path} />}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -102,6 +102,43 @@ export function samplesAt(trace: PreviewTrace | undefined, stageId: string, path
   })
 }
 
+/** One traced sample at a step, for a table: what the step passed on, and what reached it. */
+export interface SampleRow {
+  id: string
+  label: string
+  /** What the step passed on (one row per item when it passed on several). */
+  value?: unknown
+  /** What reached the step, for what it changed. */
+  before?: unknown
+  /** Why nothing came out here: dropped where and why, held, or not in the flow. */
+  dropped?: string
+}
+
+/**
+ * The traced samples at `stageId` as table rows, each beside what its step before (`parentId`)
+ * passed on. A sample with nothing at the step says why, from the steps on `path`.
+ */
+export function sampleRows(trace: PreviewTrace | undefined, stageId: string, parentId?: string, path?: string[]): SampleRow[] {
+  // The input's samples are frames in `samplesAt`; here they are the records it decoded.
+  const views = stageId === 'input' ? [] : samplesAt(trace, stageId, path)
+  const samples = (trace?.samples ?? []).slice(0, TRACED_SAMPLES)
+  return samples.flatMap((s, i): SampleRow[] => {
+    const at = s.stages.find((x) => x.id === stageId)
+    const before = parentId ? s.stages.find((x) => x.id === parentId)?.items : undefined
+    const items = at?.items ?? []
+    if (!items.length) {
+      const why = (stageId === 'input' ? (at?.dropped ?? []) : (views[i]?.notes ?? [])).join(' · ') || 'Nothing came out of this step.'
+      return [{ id: `${i}`, label: `#${i + 1}`, dropped: at ? why : 'This step was not in the flow the preview ran.' }]
+    }
+    return items.map((item, j) => ({
+      id: `${i}-${j}`,
+      label: items.length > 1 ? `#${i + 1}.${j + 1}` : `#${i + 1}`,
+      value: item,
+      before: before ? (before[j] ?? before[0]) : undefined,
+    }))
+  })
+}
+
 /** The counts on one line, as `frames 5 · records 5 · emitted 4`. */
 export function countsLine(result: PreviewResult | null): string {
   const counts = Object.entries(result?.counts ?? {}).filter(([k]) => !k.startsWith('rejected:') && !k.startsWith('grade:'))

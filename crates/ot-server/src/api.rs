@@ -561,11 +561,13 @@ async fn validate_source(
         None => pipeline.flush(last, true, &registry),
     };
     observations.extend(flushed.observations);
+    let steps = pipeline.step_counts();
     let counts: BTreeMap<String, u64> = pipeline.take_counts().pairs().into_iter().collect();
     let mut body = json!({
         "valid": valid,
         "problems": problems,
         "counts": counts,
+        "steps": steps,
         "errors": errors,
         "observations": observations,
     });

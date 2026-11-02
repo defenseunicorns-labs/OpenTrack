@@ -9,6 +9,8 @@ export interface StepView extends Record<string, unknown> {
   title: string
   summary: string
   problems: string[]
+  /** What the dry run passed through it: taken in and passed on. */
+  counts?: { in: number; out: number }
 }
 
 /**
@@ -19,12 +21,14 @@ export interface StepView extends Record<string, unknown> {
 export function StepNode({ data, selected, isConnectable }: NodeProps) {
   const step = data as StepView
   const failing = step.problems.length > 0
+  // A step that takes samples and passes none on is worth a look (a Filter that drops everything).
+  const stops = !!step.counts && step.counts.in > 0 && step.counts.out === 0
   return (
     <div
       className="flow-step"
       data-failing={failing || undefined}
       style={{
-        border: `1px solid ${failing ? 'var(--color-destructive)' : selected ? 'var(--color-accent)' : 'var(--border-strong)'}`,
+        border: `1px solid ${failing ? 'var(--color-destructive)' : selected ? 'var(--color-accent)' : stops ? 'var(--status-warning)' : 'var(--border-strong)'}`,
       }}
     >
       {takes(step.type) && <Handle type="target" position={Position.Left} isConnectable={isConnectable} />}
@@ -36,6 +40,11 @@ export function StepNode({ data, selected, isConnectable }: NodeProps) {
         <span className="flow-step-kind">{KIND_WORD[step.type]}</span>
       </div>
       {step.summary && <span className="flow-step-summary">{step.summary}</span>}
+      {step.counts && (
+        <span className="flow-step-counts" data-stops={stops || undefined} title={`${step.counts.in} in, ${step.counts.out} out over the stored samples`}>
+          {step.counts.in} → {step.counts.out}
+        </span>
+      )}
       {failing && (
         <span role="alert" className="flow-step-problem" title={step.problems.join('\n')}>
           {step.problems[0]}

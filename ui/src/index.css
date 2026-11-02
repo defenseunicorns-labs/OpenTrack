@@ -935,10 +935,39 @@ body {
 .source-workspace {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 .source-workspace-canvas {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+.samples-tray-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs) 0;
+}
+
+.samples-tray-body > .value-row,
+.samples-tray-body > .error-text {
+  padding: 0 var(--space-md);
+}
+
+/* What the dry run passed through a step: in → out. */
+.flow-step-counts {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+}
+
+.flow-step-counts[data-stops] {
+  color: var(--status-warning);
 }
 
 .source-editor-json {

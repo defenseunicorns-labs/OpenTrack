@@ -999,8 +999,10 @@ export interface PreviewObservation extends Observation {
 export interface PreviewResult {
   /** Whether the source is complete; a draft is dry-run as far as it can be. */
   valid: boolean
-  /** What stops the source running, each on its stage. */
+  /** What stops the source running, each on its step. */
   problems?: SourceProblem[]
+  /** What each step took in and passed on over all the stored samples, by step id. */
+  steps?: Record<string, { in: number; out: number }>
   counts?: Record<string, number>
   errors?: string[]
   observations?: PreviewObservation[]
@@ -1029,7 +1031,7 @@ export interface TraceFrameView {
 export interface TraceSample {
   /** Index in `frames` of the frame it came from. */
   frame: number
-  /** The pipeline's stages after the transport, in order (ids as in `pipelineStages`), ending with `publish`. */
+  /** The flow's steps, input first, in the order they are met (by step id), ending with `publish`. */
   stages: TraceStage[]
 }
 

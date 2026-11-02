@@ -305,6 +305,8 @@ pub struct Pipeline {
     /// Extension field types for the mappings' schema version.
     schema: Option<crate::schema::ExtensionSchema>,
     pub counts: Counts,
+    /// What each step took and passed on, in `spec.nodes` order.
+    step_counts: Vec<StepCount>,
     /// Run before the Output when no Entity links step comes before it.
     default_registry: RegistryStage,
     /// The last value sent to each (entity, field), so a feed repeating a
@@ -336,6 +338,16 @@ enum Run {
     },
     Output,
     Nats(String),
+}
+
+/// What one step took in and passed on: frames and records for the input,
+/// records or observations for the rest, and what an output delivered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct StepCount {
+    #[serde(rename = "in")]
+    pub taken: u64,
+    #[serde(rename = "out")]
+    pub passed: u64,
 }
 
 /// What passes between steps: a record, or an observation's JSON form.
@@ -464,6 +476,7 @@ impl Pipeline {
             .copied()
             .filter(|&i| matches!(steps[i], Run::Map { .. }))
             .or_else(|| steps.iter().position(|s| matches!(s, Run::Map { .. })));
+        let spec_len = spec.nodes.len();
         Ok(Self {
             source_id: source_id.into(),
             codec: Codec::new(spec.codec.clone())
@@ -477,6 +490,7 @@ impl Pipeline {
             order,
             schema: None,
             counts: Counts::default(),
+            step_counts: vec![StepCount::default(); spec_len],
             default_registry: RegistryStage::default(),
             entity_sent: HashMap::new(),
             keep_plots: false,
@@ -547,6 +561,17 @@ impl Pipeline {
         Duration::from_secs(secs)
     }
 
+    /// What each step took in and passed on so far, by step id (for a dry
+    /// run: the counts on the editor's steps and connections).
+    pub fn step_counts(&self) -> std::collections::BTreeMap<String, StepCount> {
+        self.spec
+            .nodes
+            .iter()
+            .zip(&self.step_counts)
+            .map(|(n, c)| (n.id.clone(), *c))
+            .collect()
+    }
+
     /// Take and reset the counters.
     pub fn take_counts(&mut self) -> Counts {
         std::mem::take(&mut self.counts)
@@ -596,6 +621,7 @@ impl Pipeline {
     ) -> Output {
         let mut out = Output::default();
         self.counts.frames += 1;
+        self.step_counts[self.input].taken += 1;
         if let Some(t) = trace.as_deref_mut() {
             t.start_frame();
         }
@@ -675,6 +701,7 @@ impl Pipeline {
         out: &mut Output,
         trace: &mut Option<&mut Trace>,
     ) {
+        self.step_counts[at].passed += 1;
         let n = self.children[at].len();
         for i in 0..n {
             let c = self.children[at][i];
@@ -696,6 +723,7 @@ impl Pipeline {
         out: &mut Output,
         trace: &mut Option<&mut Trace>,
     ) {
+        self.step_counts[at].taken += 1;
         let id = self.spec.nodes[at].id.clone();
         let mut sample = match (trace.as_deref_mut(), item.sample) {
             (Some(t), Some(s)) => t.samples.get_mut(s),
@@ -821,6 +849,7 @@ impl Pipeline {
                     return;
                 };
                 self.counts.emitted += 1;
+                self.step_counts[at].passed += 1;
                 if let Some(f) = sample {
                     f.obs(&id, &obs);
                     f.emitted.push(obs.clone());
@@ -830,6 +859,7 @@ impl Pipeline {
             }
             Run::Nats(subject) => {
                 self.counts.published += 1;
+                self.step_counts[at].passed += 1;
                 if let Some(f) = sample {
                     f.item(&id, || item.value.clone());
                 }
@@ -1340,6 +1370,34 @@ mod tests {
             (p.counts.emitted, p.counts.published, p.counts.filtered),
             (1, 3, 2)
         );
+    }
+
+    #[test]
+    fn each_step_counts_what_it_took_and_passed_on() {
+        let spec = flow(
+            json!([
+                {"id": "m", "type": "map", "config": pos_map()},
+                {"id": "f", "type": "filter", "config": {"drop_if": {"path": "position.latitude", "gt": 33}}},
+                {"id": "out", "type": "output"},
+                {"id": "raw", "type": "nats", "config": {"subject": "raw"}}
+            ]),
+            json!([
+                {"source": "input", "target": "m"}, {"source": "m", "target": "f"},
+                {"source": "f", "target": "out"}, {"source": "m", "target": "raw"}
+            ]),
+        );
+        let mut p = Pipeline::new("ais", spec).unwrap();
+        let body = json!([{"id": 1, "lat": 32.0, "lon": 1.0, "ts": "2026-09-24T12:00:00Z"},
+                          {"id": 2, "lat": 40.0, "lon": 1.0, "ts": "2026-09-24T12:00:00Z"},
+                          {"nothing": true}]);
+        p.process(&Frame::new(body.to_string().into_bytes()), &Reg::new());
+        let c = p.step_counts();
+        let at = |id: &str| (c[id].taken, c[id].passed);
+        assert_eq!(at("input"), (1, 3), "one frame, three records");
+        assert_eq!(at("m"), (3, 2), "one record matched no rule");
+        assert_eq!(at("f"), (2, 1));
+        assert_eq!(at("out"), (1, 1));
+        assert_eq!(at("raw"), (2, 2));
     }
 
     #[test]

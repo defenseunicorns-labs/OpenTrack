@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PreviewTrace } from '../api/client'
-import { countsLine, samplesAt } from './trace'
+import { countsLine, sampleRows, samplesAt } from './trace'
 
 // Frame 0 decodes to three records (samples #1–#3), frame 1 does not decode (#4), frame 2 is
 // binary (#5), frame 3 gives #6.
@@ -131,5 +131,42 @@ describe('big frames and stage notes', () => {
     const [atPublish] = samplesAt(big, 'publish')
     expect(atPublish.notes).toEqual([])
     expect(atPublish.blocks).toHaveLength(1)
+  })
+})
+
+describe('sampleRows', () => {
+  const trace = {
+    frames: [{ format: 'json' as const, bytes: 10, content: {} }],
+    samples: [
+      {
+        frame: 0,
+        stages: [
+          { id: 'input', items: [{ n: 1 }] },
+          { id: 'map', items: [{ key: '1', lat: 1 }] },
+          { id: 'filter', items: [{ key: '1', lat: 1 }] },
+        ],
+      },
+      {
+        frame: 0,
+        stages: [
+          { id: 'input', items: [{ n: 2 }] },
+          { id: 'map', items: [{ key: '2', lat: 40 }] },
+          { id: 'filter', items: [], dropped: ['drop_if matched'] },
+        ],
+      },
+      { frame: 0, stages: [{ id: 'input', items: [], dropped: ['decode error: bad'] }, { id: 'map', items: [] }, { id: 'filter', items: [] }] },
+    ],
+  }
+
+  it('puts each sample beside what reached the step, and says why one did not come out', () => {
+    const rows = sampleRows(trace, 'filter', 'map', ['input', 'map', 'filter'])
+    expect(rows[0]).toEqual({ id: '0-0', label: '#1', value: { key: '1', lat: 1 }, before: { key: '1', lat: 1 } })
+    expect(rows[1]).toEqual({ id: '1', label: '#2', dropped: 'dropped by Filter: drop_if matched' })
+    expect(rows[2].dropped).toBe('dropped by Input: decode error: bad')
+  })
+
+  it("shows the input's records with no step before, and its decode errors", () => {
+    const rows = sampleRows(trace, 'input', undefined, ['input'])
+    expect(rows.map((r) => r.value ?? r.dropped)).toEqual([{ n: 1 }, { n: 2 }, 'decode error: bad'])
   })
 })
