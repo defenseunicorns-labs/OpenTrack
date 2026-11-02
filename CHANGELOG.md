@@ -35,6 +35,16 @@
 - **The add-source wizard, the source drawer and the pipeline designer** are replaced by the
   source editor.
 
+### Fixed
+
+- **Copy public key works on plain HTTP.** Settings → Nodes copied with the Clipboard API, which
+  browsers offer only on HTTPS or localhost: on a node reached by its address the button did
+  nothing, and the page showed only the fingerprint, so the fingerprint got pasted as the key. The
+  page now shows the whole public key to select, the copy falls back to selecting it (as the API
+  token's does), and the pin dialog says so when a fingerprint is pasted.
+- **A refused change says why in the audit record.** `change_refused` carries the `reason` the
+  caller was given (up to 300 characters).
+
 ## 1.0.0, 2026-10-06
 
 The first open-source release, under the MIT License. 1.0 carries everything up to 0.4.7, plus the

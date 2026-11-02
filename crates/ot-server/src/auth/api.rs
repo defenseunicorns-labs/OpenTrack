@@ -1744,6 +1744,22 @@ mod tests {
         assert_eq!(has("access_denied", "failure"), 1, "{got:?}");
         assert_eq!(has("access_refused", "failure"), 1, "{got:?}");
         assert!(has("change_refused", "failure") >= 1, "{got:?}");
+        // A refused change says why, as the caller was told.
+        let rows = body["rows"]
+            .as_array()
+            .or_else(|| body["records"].as_array())
+            .or_else(|| body.as_array())
+            .unwrap();
+        let refused = rows
+            .iter()
+            .find(|r| r["op"] == "change_refused" && r["detail"]["path"] == "/auth/users")
+            .expect("the refused account");
+        assert!(
+            refused["detail"]["reason"]
+                .as_str()
+                .is_some_and(|r| !r.is_empty()),
+            "{refused}"
+        );
         assert!(has("read_security_object", "success") >= 1, "{got:?}");
         let token_uses = body.to_string().matches("api_token").count();
         assert!(token_uses >= 1, "{body}");

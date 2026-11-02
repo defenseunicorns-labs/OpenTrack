@@ -7,6 +7,7 @@ import { InfoTip } from '../../components/InfoTip'
 import { errorMessage, fmtTime } from '../../lib/format'
 import { INPUT } from '../../lib/valueSpec'
 import { SettingsRow } from './SettingsRow'
+import { copyText } from '../../lib/clipboard'
 
 const ROLE_FIELDS = ROLES.map((name) => ({ name }))
 const asRole = (v: string | null): Role => (ROLES as readonly string[]).includes(v ?? '') ? (v as Role) : 'viewer'
@@ -193,7 +194,7 @@ function NewToken({ accounts, onClose, onMade }: { accounts: Account[]; onClose:
     }
   }
   const copy = () =>
-    navigator.clipboard.writeText(token ?? '').then(
+    copyText(token ?? '').then(
       () => toast({ variant: 'success', title: 'Copied', message: 'The token is on the clipboard.' }),
       () => toast({ variant: 'error', title: 'Not copied', message: 'Select the token and copy it.' }),
     )

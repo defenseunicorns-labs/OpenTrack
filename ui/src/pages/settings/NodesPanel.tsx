@@ -4,6 +4,8 @@ import { Badge, Button, CollapsiblePanel, DataTable, Input, Modal, SaveButton, T
 import { api, DEFAULT_SYNC, type PinnedKey, type SyncKeys, type SyncSettings, type SyncStatus } from '../../api/client'
 import { useCan } from '../../auth/context'
 import { InfoTip } from '../../components/InfoTip'
+import { copyText } from '../../lib/clipboard'
+import { looksLikeFingerprint } from '../../lib/syncKey'
 import { errorMessage, fmtTime } from '../../lib/format'
 import { INPUT } from '../../lib/valueSpec'
 import { SettingsRow as Row } from './SettingsRow'
@@ -58,9 +60,9 @@ export function NodesPanel({
   const loadKeys = useCallback(() => api.syncKeys().then(setKeys, () => {}), [])
   useEffect(() => void loadKeys(), [loadKeys])
   const copyKey = () =>
-    navigator.clipboard.writeText(keys?.public_key ?? '').then(
+    copyText(keys?.public_key ?? '').then(
       () => toast({ variant: 'success', title: 'Copied', message: "This node's public key is on the clipboard." }),
-      () => toast({ variant: 'error', title: 'Not copied', message: 'Select the key and copy it.' }),
+      () => toast({ variant: 'error', title: 'Not copied', message: 'Select the public key above and copy it.' }),
     )
   const removeKey = async (site: string) => {
     if (!window.confirm(`Remove the key pinned for ${site}? Its messages are refused until a key is pinned again.`)) return
@@ -168,13 +170,22 @@ export function NodesPanel({
         </Row>
         <Row
           label="This node's key"
-          hint="Every sync message this node sends is signed with this key. Give the public key to each other node's admin to pin; compare the fingerprint over another channel (a phone call, the deployment plan)."
+          hint="Every sync message this node sends is signed with this key. Give the public key (the ed25519: line) to each other node's admin to pin; compare the fingerprint over another channel (a phone call, the deployment plan)."
         >
-          <div className="num-row">
-            <span className="mono">{keys?.fingerprint ?? '—'}</span>
-            <Button size="sm" variant="ghost" icon={<TbCopy />} onClick={copyKey} disabled={!keys}>
-              Copy public key
-            </Button>
+          <div className="node-key">
+            <div className="num-row">
+              <span className="muted">Public key</span>
+              <code className="mono node-key-text" aria-label="This node's public key">
+                {keys?.public_key ?? '—'}
+              </code>
+              <Button size="sm" variant="ghost" icon={<TbCopy />} onClick={copyKey} disabled={!keys}>
+                Copy
+              </Button>
+            </div>
+            <div className="num-row">
+              <span className="muted">Fingerprint</span>
+              <span className="mono">{keys?.fingerprint ?? '—'}</span>
+            </div>
           </div>
         </Row>
         <Row label="Receive only" hint="Apply other nodes' track management here, but accept none from this node's own users: for a node with no operator, such as a drone.">
@@ -250,6 +261,7 @@ function PinKeyModal({ site, current, onClose, onPinned }: { site: string; curre
   const { toast } = useToast()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  const fingerprint = looksLikeFingerprint(text)
   const save = async () => {
     setBusy(true)
     try {
@@ -272,11 +284,16 @@ function PinKeyModal({ site, current, onClose, onPinned }: { site: string; curre
         </div>
         {current && <span className="muted mono">Now: {current.fingerprint ?? current.public_key}</span>}
         <Input aria-label={`Public key of ${site}`} placeholder="ed25519:…" value={text} onChange={(ev) => setText(ev.target.value)} />
+        {fingerprint && (
+          <div className="error-text">
+            That is {site}&apos;s fingerprint, not its key. Copy the public key (the ed25519: line) from {site}&apos;s Settings → Nodes.
+          </div>
+        )}
         <div className="num-row" style={{ justifyContent: 'flex-end' }}>
           <Button size="sm" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button size="sm" onClick={save} disabled={busy || text.trim() === ''}>
+          <Button size="sm" onClick={save} disabled={busy || text.trim() === '' || fingerprint}>
             Pin
           </Button>
         </div>

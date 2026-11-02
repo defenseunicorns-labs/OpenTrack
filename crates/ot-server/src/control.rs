@@ -414,6 +414,11 @@ impl From<ot_store::StoreError> for ApiError {
     }
 }
 
+/// Why a request was refused (a 4xx's message), on the response for the
+/// audit record's `change_refused` (auth::access::after).
+#[derive(Clone, Debug)]
+pub(crate) struct RefusedBecause(pub String);
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         // A server-side failure's text (SQLite, Redis, file paths) stays in
@@ -429,14 +434,17 @@ impl IntoResponse for ApiError {
             )
                 .into_response();
         }
-        match self.problems {
+        let because = RefusedBecause(self.message.clone());
+        let mut res = match self.problems {
             Some(problems) => (
                 self.status,
                 Json(json!({ "error": self.message, "problems": problems })),
             )
                 .into_response(),
             None => (self.status, Json(json!({ "error": self.message }))).into_response(),
-        }
+        };
+        res.extensions_mut().insert(because);
+        res
     }
 }
 

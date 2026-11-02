@@ -749,7 +749,11 @@ async fn gate(
     }
     req.extensions_mut().insert(user.clone());
     let res = next.run(req).await;
-    access::after(s, &user, method, api_path, res.status(), ip).await;
+    let because = res
+        .extensions()
+        .get::<crate::control::RefusedBecause>()
+        .map(|r| r.0.as_str());
+    access::after(s, &user, method, api_path, res.status(), because, ip).await;
     (res, email)
 }
 

@@ -1120,3 +1120,17 @@ body {
   font-size: 10px;
   color: var(--color-destructive);
 }
+
+/* Settings → Nodes: this node's public key, whole and selectable, over its fingerprint. */
+.node-key {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.node-key-text {
+  user-select: all;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}

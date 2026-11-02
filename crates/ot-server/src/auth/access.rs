@@ -101,6 +101,16 @@ fn event(actor: &str, op: &str, ip: &str, detail: Value) -> AuditEvent {
     AuditEvent::new(actor, op).ip(ip).detail(detail)
 }
 
+/// A refused change's detail: what was asked, and why it was refused when
+/// the handler said (cut to 300 characters).
+fn refused_detail(method: &Method, path: &str, status: StatusCode, because: Option<&str>) -> Value {
+    let mut d = json!({ "method": method.as_str(), "path": path, "status": status.as_u16() });
+    if let Some(r) = because.filter(|r| !r.is_empty()) {
+        d["reason"] = json!(r.chars().take(300).collect::<String>());
+    }
+    d
+}
+
 /// Record what a request that passed the gate did.
 pub async fn after(
     s: &AppState,
@@ -108,6 +118,7 @@ pub async fn after(
     method: &Method,
     path: &str,
     status: StatusCode,
+    because: Option<&str>,
     ip: &str,
 ) {
     let now = chrono::Utc::now().timestamp_millis();
@@ -131,7 +142,7 @@ pub async fn after(
                 &user.email,
                 "change_refused",
                 ip,
-                json!({ "method": method.as_str(), "path": path, "status": status.as_u16() }),
+                refused_detail(method, path, status, because),
             )
             .failure(),
         )
