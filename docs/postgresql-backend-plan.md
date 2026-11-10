@@ -27,6 +27,11 @@ retain their existing roles.
    remain append-only and continue to serve SQLite deployments. PostgreSQL
    constraints, JSON operations, generated IDs, and audit protections need
    explicit PostgreSQL equivalents.
+   The PostgreSQL client must use OpenTrack's FIPS-approved cryptography for
+   password authentication and TLS. The standard Rust `postgres` driver adds
+   separate SHA-2 and MD5 implementations, so it is not suitable without a
+   reviewed crypto integration. A libpq-based client linked to the runtime's
+   OpenSSL FIPS provider is a candidate and needs build and runtime checks.
 3. Implement the same store operations against PostgreSQL. Use transactions
    for each decision and its graph/audit changes. Allocate UIDs atomically;
    concurrent OpenTrack processes must never issue the same UID. The engine
