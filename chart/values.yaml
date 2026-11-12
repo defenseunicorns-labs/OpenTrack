@@ -14,9 +14,14 @@ resources:
     memory: 2Gi
 
 storage:
-  # PostgreSQL becomes available only after the OpenTrack runtime backend lands.
   backend: sqlite
   size: 2Gi
+  postgres:
+    host: pg-cluster.postgres.svc.cluster.local
+    port: 5432
+    database: opentrack
+    credentialsSecret: opentrack.opentrack.pg-cluster.credentials.postgresql.acid.zalan.do
+    sslmode: require
 
 valkey:
   url: redis://valkey-primary.valkey-opentrack.svc.cluster.local:6379

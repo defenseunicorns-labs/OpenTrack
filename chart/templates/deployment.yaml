@@ -42,6 +42,25 @@ spec:
               value: {{ .Values.siteCode | quote }}
             - name: OT_SQLITE_PATH
               value: /data/opentrack.db
+            - name: OT_DB_BACKEND
+              value: {{ .Values.storage.backend | quote }}
+            {{- if eq .Values.storage.backend "postgres" }}
+            - name: OT_POSTGRES_HOST
+              value: {{ .Values.storage.postgres.host | quote }}
+            - name: OT_POSTGRES_PORT
+              value: {{ .Values.storage.postgres.port | quote }}
+            - name: OT_POSTGRES_DATABASE
+              value: {{ .Values.storage.postgres.database | quote }}
+            - name: OT_POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.storage.postgres.credentialsSecret }}
+                  key: username
+            - name: OT_POSTGRES_PASSWORD_FILE
+              value: /etc/opentrack/postgres/password
+            - name: OT_POSTGRES_SSLMODE
+              value: {{ .Values.storage.postgres.sslmode | quote }}
+            {{- end }}
             - name: OT_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
@@ -84,6 +103,11 @@ spec:
             - name: nats-ca
               mountPath: /etc/opentrack/nats
               readOnly: true
+            {{- if eq .Values.storage.backend "postgres" }}
+            - name: postgres-password
+              mountPath: /etc/opentrack/postgres
+              readOnly: true
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
@@ -117,3 +141,11 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        {{- if eq .Values.storage.backend "postgres" }}
+        - name: postgres-password
+          secret:
+            secretName: {{ .Values.storage.postgres.credentialsSecret }}
+            items:
+              - key: password
+                path: password
+        {{- end }}
