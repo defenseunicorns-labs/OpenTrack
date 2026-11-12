@@ -391,6 +391,9 @@ BEGIN
 END $$;
 CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit
 FOR EACH ROW EXECUTE FUNCTION audit_guard_update();
+-- TRUNCATE does not fire row-level DELETE triggers in PostgreSQL.
+CREATE TRIGGER audit_no_truncate BEFORE TRUNCATE ON audit
+FOR EACH STATEMENT EXECUTE FUNCTION audit_guard_update();
 
 CREATE FUNCTION audit_guard_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

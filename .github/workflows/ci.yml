@@ -44,6 +44,29 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  postgres-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: >-
+          docker run -d --name postgres-schema
+          -e POSTGRES_USER=opentrack -e POSTGRES_PASSWORD=test
+          -e POSTGRES_DB=opentrack postgres:16
+      - run: |
+          for attempt in {1..30}; do
+            if docker exec postgres-schema pg_isready -U opentrack -d opentrack; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec postgres-schema pg_isready -U opentrack -d opentrack
+          docker exec -e PGPASSWORD=test -i postgres-schema \
+            psql -U opentrack -d opentrack -v ON_ERROR_STOP=1 -1 -f - \
+            < crates/ot-store/postgres/0001_init.sql
+          docker exec -e PGPASSWORD=test -i postgres-schema \
+            psql -U opentrack -d opentrack -v ON_ERROR_STOP=1 -f - \
+            < crates/ot-store/postgres/verify_schema.sql
+
   supply-chain:
     runs-on: ubuntu-latest
     steps:

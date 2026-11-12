@@ -55,3 +55,13 @@ live Redis-compatible store; its NATS package provides the JetStream output.
 The UDS package and bundle are separate from this OpenTrack backend change.
 They should be built only after the backend passes PostgreSQL integration
 tests, so a deployed OpenTrack instance never silently falls back to SQLite.
+
+## Schema verification
+
+The `postgres-schema` CI job applies `crates/ot-store/postgres/0001_init.sql`
+to a fresh PostgreSQL 16 database as its owner, then runs
+`crates/ot-store/postgres/verify_schema.sql`. The verification checks JSON
+validation, generated sync IDs, case-insensitive email uniqueness, audit
+immutability (including `TRUNCATE`), and the authorized audit purge path.
+It rolls back its fixtures. This verifies the schema foundation; the runtime
+backend and end-to-end OpenTrack flows still require the work listed above.
