@@ -80,5 +80,5 @@ packages:
     ref: 2.14.3-uds.2-unicorn
     repository: ghcr.io/uds-packages/private/nats
   - name: opentrack
-    path: ../
+    path: ../build/
     ref: 0.1.0

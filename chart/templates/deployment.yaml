@@ -43,7 +43,10 @@ spec:
             - name: OT_SQLITE_PATH
               value: /data/opentrack.db
             - name: OT_REDIS_URL
-              value: {{ .Values.valkey.url | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.valkey.urlSecret }}
+                  key: url
             - name: OT_REDIS_PASSWORD_FILE
               value: /etc/opentrack/valkey/password
             - name: OT_NATS_URL

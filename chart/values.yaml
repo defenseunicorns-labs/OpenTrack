@@ -20,6 +20,8 @@ storage:
 
 valkey:
   url: redis://valkey-primary.valkey-opentrack.svc.cluster.local:6379
+  host: valkey-primary.valkey-opentrack.svc.cluster.local:6379
+  urlSecret: opentrack-valkey-url
   passwordSecret: opentrack-valkey-password
   passwordKey: password
 

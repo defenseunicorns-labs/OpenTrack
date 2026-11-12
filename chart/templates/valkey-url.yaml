@@ -1,0 +1,13 @@
+{{- $source := lookup "v1" "Secret" .Release.Namespace .Values.valkey.passwordSecret -}}
+{{- $password := "" -}}
+{{- if $source -}}
+{{- $password = index $source.data .Values.valkey.passwordKey | b64dec -}}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.valkey.urlSecret }}
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+stringData:
+  url: {{ printf "redis://:%s@%s" ($password | urlquery) .Values.valkey.host | quote }}
