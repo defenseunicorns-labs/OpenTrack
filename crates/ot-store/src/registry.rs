@@ -623,6 +623,10 @@ pub(crate) fn restore_entity(
 
 impl Db {
     pub fn entity(&self, id: &str) -> Result<Option<Entity>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.entity(id)?);
+        }
         load(self.connection(), id)
     }
 
@@ -911,6 +915,10 @@ impl Db {
 
     /// Every identifier of every active entity, with the entity's fields.
     pub fn registry_rows(&self) -> Result<Vec<RegistryRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_rows()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT i.scheme, i.value, e.id, i.expected_name
              FROM registry_identifiers i JOIN registry_entities e ON e.id = i.entity_id
@@ -941,6 +949,10 @@ impl Db {
 
     /// Changes whenever the registry does; lookup snapshots poll it.
     pub fn registry_version(&self) -> Result<String> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_version()?);
+        }
         Ok(self.connection().query_row(
             "SELECT (SELECT count(*) FROM registry_entities) || ':' ||
                     (SELECT coalesce(max(updated_at_ms), 0) FROM registry_entities) || ':' ||

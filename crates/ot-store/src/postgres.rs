@@ -18,6 +18,8 @@ mod graph;
 mod groups;
 #[path = "postgres_plugins.rs"]
 mod plugins;
+#[path = "postgres_registry.rs"]
+mod registry;
 #[path = "postgres_schema.rs"]
 mod schema;
 #[path = "postgres_sources.rs"]
@@ -871,6 +873,8 @@ mod tests {
         assert!(selected.latest_published_schema().unwrap() >= 1);
         assert!(!selected.schema_versions().unwrap().is_empty());
         assert!(selected.groups().unwrap().is_empty());
+        assert!(selected.registry_rows().unwrap().is_empty());
+        assert!(selected.registry_version().unwrap().contains(':'));
         assert!(selected.user_by_email(&email).unwrap().is_some());
         assert_eq!(selected.auth_settings().unwrap(), settings);
         assert_eq!(selected.app_settings().unwrap(), app);
