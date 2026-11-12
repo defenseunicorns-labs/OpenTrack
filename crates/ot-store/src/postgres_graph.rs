@@ -2,11 +2,142 @@
 
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Nullable, Text};
-use ot_core::Uid;
+use ot_core::{SiteCode, Uid};
 use serde_json::{Value, json};
 
-use super::{PgControlStore, PostgresError};
-use crate::graph::{EdgeKind, EdgeRecord};
+use super::{PgControlStore, PostgresError, record_decision};
+use crate::Decision;
+use crate::graph::{self, EdgeKind, EdgeRecord, NodeKind};
+
+#[derive(QueryableByName)]
+struct IdRow {
+    #[diesel(sql_type = BigInt)]
+    id: i64,
+}
+
+#[derive(QueryableByName)]
+struct SequenceRow {
+    #[diesel(sql_type = BigInt)]
+    sequence: i64,
+}
+
+#[derive(QueryableByName)]
+struct KindRow {
+    #[diesel(sql_type = Text)]
+    kind: String,
+}
+
+fn upsert_node(
+    connection: &mut diesel::pg::PgConnection,
+    kind: NodeKind,
+    key: &str,
+    now: i64,
+) -> Result<i64, PostgresError> {
+    let row: IdRow = diesel::sql_query(
+        "INSERT INTO nodes (kind, key, created_at_ms) VALUES ($1, $2, $3)
+         ON CONFLICT (kind, key) DO UPDATE SET kind = excluded.kind RETURNING id",
+    )
+    .bind::<Text, _>(kind.as_str())
+    .bind::<Text, _>(key)
+    .bind::<BigInt, _>(now)
+    .get_result(connection)?;
+    Ok(row.id)
+}
+
+fn live_system_node(
+    connection: &mut diesel::pg::PgConnection,
+    uid: Uid,
+) -> Result<i64, PostgresError> {
+    let rows: Vec<IdRow> = diesel::sql_query(
+        "SELECT id FROM nodes WHERE kind = 'system_track' AND key = $1
+         AND retired_at_ms IS NULL",
+    )
+    .bind::<Text, _>(uid.to_string())
+    .load(connection)?;
+    rows.into_iter()
+        .next()
+        .map(|row| row.id)
+        .ok_or_else(|| PostgresError::NotFound(format!("live system track {uid}")))
+}
+
+fn add_edge(
+    connection: &mut diesel::pg::PgConnection,
+    kind: EdgeKind,
+    src: i64,
+    dst: i64,
+    decision_id: i64,
+    attrs: &Value,
+    now: i64,
+) -> Result<i64, PostgresError> {
+    let (want_src, want_dst) = match kind {
+        EdgeKind::ReportsFor | EdgeKind::CandidateOf => {
+            (NodeKind::SourceTrack, NodeKind::SystemTrack)
+        }
+        EdgeKind::MergedInto | EdgeKind::PairedWith => {
+            (NodeKind::SystemTrack, NodeKind::SystemTrack)
+        }
+        EdgeKind::DoNotPair => (NodeKind::SourceTrack, NodeKind::SourceTrack),
+        EdgeKind::Carries => (NodeKind::SourceTrack, NodeKind::Identifier),
+        EdgeKind::ResolvesTo => (NodeKind::Identifier, NodeKind::Entity),
+        EdgeKind::MemberOf => (NodeKind::SystemTrack, NodeKind::Group),
+    };
+    for (node, want) in [(src, want_src), (dst, want_dst)] {
+        let row: KindRow = diesel::sql_query("SELECT kind FROM nodes WHERE id = $1")
+            .bind::<BigInt, _>(node)
+            .get_result(connection)?;
+        if row.kind != want.as_str() {
+            return Err(PostgresError::Conflict(format!(
+                "{} cannot connect a {} node (expected {})",
+                kind.as_str(),
+                row.kind,
+                want.as_str()
+            )));
+        }
+    }
+    let row: IdRow = diesel::sql_query(
+        "INSERT INTO edges (kind, src, dst, attrs, valid_from_ms, decision_id)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+    )
+    .bind::<Text, _>(kind.as_str())
+    .bind::<BigInt, _>(src)
+    .bind::<BigInt, _>(dst)
+    .bind::<Text, _>(attrs.to_string())
+    .bind::<BigInt, _>(now)
+    .bind::<BigInt, _>(decision_id)
+    .get_result(connection)?;
+    Ok(row.id)
+}
+
+fn open_system_track(
+    connection: &mut diesel::pg::PgConnection,
+    uid: Uid,
+    source_id: &str,
+    source_track_key: &str,
+    decision: &Decision,
+) -> Result<i64, PostgresError> {
+    let now = crate::sqlite::now_ms();
+    let decision_id = record_decision(connection, decision)?;
+    let sys = upsert_node(connection, NodeKind::SystemTrack, &uid.to_string(), now)?;
+    diesel::sql_query("UPDATE nodes SET retired_at_ms = NULL WHERE id = $1")
+        .bind::<BigInt, _>(sys)
+        .execute(connection)?;
+    let src = upsert_node(
+        connection,
+        NodeKind::SourceTrack,
+        &graph::source_track_key(source_id, source_track_key),
+        now,
+    )?;
+    add_edge(
+        connection,
+        EdgeKind::ReportsFor,
+        src,
+        sys,
+        decision_id,
+        &json!({"pairing": "auto", "confidence": 1.0}),
+        now,
+    )?;
+    Ok(decision_id)
+}
 
 #[derive(QueryableByName)]
 struct ReportRow {
@@ -63,6 +194,165 @@ struct DecisionRow {
 }
 
 impl PgControlStore {
+    pub fn create_system_track(
+        &mut self,
+        site: SiteCode,
+        source_id: &str,
+        source_track_key: &str,
+        decision: &Decision,
+    ) -> Result<(Uid, i64), PostgresError> {
+        self.connection
+            .transaction::<(Uid, i64), PostgresError, _>(|connection| {
+                let row: SequenceRow = diesel::sql_query(
+                    "INSERT INTO uid_sequences (site, next_sequence) VALUES ($1, 2)
+                 ON CONFLICT (site) DO UPDATE SET next_sequence = uid_sequences.next_sequence + 1
+                 RETURNING next_sequence - 1 AS sequence",
+                )
+                .bind::<Text, _>(site.as_str())
+                .get_result(connection)?;
+                let uid = Uid::new(site, row.sequence as u64)?;
+                let decision_id =
+                    open_system_track(connection, uid, source_id, source_track_key, decision)?;
+                Ok((uid, decision_id))
+            })
+    }
+
+    pub fn adopt_system_track(
+        &mut self,
+        uid: Uid,
+        source_id: &str,
+        source_track_key: &str,
+        decision: &Decision,
+    ) -> Result<i64, PostgresError> {
+        self.connection
+            .transaction::<i64, PostgresError, _>(|connection| {
+                open_system_track(connection, uid, source_id, source_track_key, decision)
+            })
+    }
+
+    pub fn pair_source_track(
+        &mut self,
+        source_id: &str,
+        source_track_key: &str,
+        uid: Uid,
+        attrs: &Value,
+        decision: &Decision,
+    ) -> Result<i64, PostgresError> {
+        self.connection
+            .transaction::<i64, PostgresError, _>(|connection| {
+                let now = crate::sqlite::now_ms();
+                let sys = live_system_node(connection, uid)?;
+                let decision_id = record_decision(connection, decision)?;
+                let src = upsert_node(
+                    connection,
+                    NodeKind::SourceTrack,
+                    &graph::source_track_key(source_id, source_track_key),
+                    now,
+                )?;
+                diesel::sql_query(
+                    "UPDATE edges SET valid_to_ms = greatest($2, valid_from_ms), ended_by = $3
+                 WHERE src = $1 AND kind = 'REPORTS_FOR' AND valid_to_ms IS NULL",
+                )
+                .bind::<BigInt, _>(src)
+                .bind::<BigInt, _>(now)
+                .bind::<BigInt, _>(decision_id)
+                .execute(connection)?;
+                add_edge(
+                    connection,
+                    EdgeKind::ReportsFor,
+                    src,
+                    sys,
+                    decision_id,
+                    attrs,
+                    now,
+                )?;
+                Ok(decision_id)
+            })
+    }
+
+    pub fn note_source_track(
+        &mut self,
+        source_id: &str,
+        source_track_key: &str,
+        attrs: &Value,
+    ) -> Result<(), PostgresError> {
+        self.connection
+            .transaction::<(), PostgresError, _>(|connection| {
+                let now = crate::sqlite::now_ms();
+                let node = upsert_node(
+                    connection,
+                    NodeKind::SourceTrack,
+                    &graph::source_track_key(source_id, source_track_key),
+                    now,
+                )?;
+                diesel::sql_query(
+                    "UPDATE nodes SET attrs = (attrs::jsonb || $2::jsonb)::text WHERE id = $1",
+                )
+                .bind::<BigInt, _>(node)
+                .bind::<Text, _>(attrs.to_string())
+                .execute(connection)?;
+                Ok(())
+            })
+    }
+
+    pub fn end_source_track(
+        &mut self,
+        source_id: &str,
+        source_track_key: &str,
+        decision: &Decision,
+    ) -> Result<Option<i64>, PostgresError> {
+        self.connection
+            .transaction::<Option<i64>, PostgresError, _>(|connection| {
+                let key = graph::source_track_key(source_id, source_track_key);
+                let rows: Vec<IdRow> = diesel::sql_query(
+                    "SELECT n.id FROM nodes n JOIN edges e ON e.src = n.id
+                 WHERE n.kind = 'source_track' AND n.key = $1
+                   AND e.kind = 'REPORTS_FOR' AND e.valid_to_ms IS NULL LIMIT 1",
+                )
+                .bind::<Text, _>(&key)
+                .load(connection)?;
+                let Some(src) = rows.into_iter().next().map(|row| row.id) else {
+                    return Ok(None);
+                };
+                let now = crate::sqlite::now_ms();
+                let decision_id = record_decision(connection, decision)?;
+                diesel::sql_query(
+                    "UPDATE edges SET valid_to_ms = greatest($2, valid_from_ms), ended_by = $3
+                 WHERE src = $1 AND kind = 'REPORTS_FOR' AND valid_to_ms IS NULL",
+                )
+                .bind::<BigInt, _>(src)
+                .bind::<BigInt, _>(now)
+                .bind::<BigInt, _>(decision_id)
+                .execute(connection)?;
+                Ok(Some(decision_id))
+            })
+    }
+
+    pub fn retire_system_track(
+        &mut self,
+        uid: Uid,
+        decision: &Decision,
+    ) -> Result<i64, PostgresError> {
+        self.connection
+            .transaction::<i64, PostgresError, _>(|connection| {
+                let now = crate::sqlite::now_ms();
+                let node = live_system_node(connection, uid)?;
+                let decision_id = record_decision(connection, decision)?;
+                diesel::sql_query(
+                    "UPDATE edges SET valid_to_ms = greatest($2, valid_from_ms), ended_by = $3
+                 WHERE (src = $1 OR dst = $1) AND valid_to_ms IS NULL",
+                )
+                .bind::<BigInt, _>(node)
+                .bind::<BigInt, _>(now)
+                .bind::<BigInt, _>(decision_id)
+                .execute(connection)?;
+                diesel::sql_query("UPDATE nodes SET retired_at_ms = $2 WHERE id = $1")
+                    .bind::<BigInt, _>(node)
+                    .bind::<BigInt, _>(now)
+                    .execute(connection)?;
+                Ok(decision_id)
+            })
+    }
     pub fn live_reports(&mut self) -> Result<Vec<(String, Uid)>, PostgresError> {
         let rows: Vec<ReportRow> = diesel::sql_query(
             "SELECT s.key AS source, d.key AS uid FROM edges e

@@ -881,7 +881,65 @@ mod tests {
             selected.decision(selected_decision).unwrap().unwrap()["op"],
             "pg_dispatch_test"
         );
-        assert!(selected.live_reports().unwrap().is_empty());
+        selected.live_reports().unwrap();
+        let site = ot_core::SiteCode::new("OTK").unwrap();
+        let graph_source = format!("pg-graph-{unique}");
+        let (uid, decision_id) = selected
+            .create_system_track(
+                site,
+                &graph_source,
+                "track-1",
+                crate::Decision::new("test", "create_system_track"),
+            )
+            .unwrap();
+        assert!(decision_id > 0);
+        assert!(
+            selected
+                .live_reports()
+                .unwrap()
+                .contains(&(format!("{graph_source}/track-1"), uid))
+        );
+        selected
+            .note_source_track(
+                &graph_source,
+                "track-1",
+                &serde_json::json!({"tracker": "test"}),
+            )
+            .unwrap();
+        assert_eq!(
+            selected.explain(uid).unwrap()[0].src_attrs["tracker"],
+            "test"
+        );
+        selected
+            .pair_source_track(
+                &graph_source,
+                "track-2",
+                uid,
+                &serde_json::json!({"pairing": "operator"}),
+                crate::Decision::new("test", "pair"),
+            )
+            .unwrap();
+        assert_eq!(selected.explain(uid).unwrap().len(), 2);
+        assert!(
+            selected
+                .end_source_track(
+                    &graph_source,
+                    "track-2",
+                    crate::Decision::new("test", "end_source_track"),
+                )
+                .unwrap()
+                .is_some()
+        );
+        selected
+            .retire_system_track(uid, crate::Decision::new("test", "retire_system_track"))
+            .unwrap();
+        assert!(
+            selected
+                .live_reports()
+                .unwrap()
+                .iter()
+                .all(|(_, track)| *track != uid)
+        );
         let plugin_name = format!("pg-plugin-{unique}");
         let manifest = serde_json::json!({"kinds": ["tracker"]});
         let grants = serde_json::json!({});

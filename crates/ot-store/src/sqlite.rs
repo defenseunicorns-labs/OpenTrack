@@ -236,6 +236,10 @@ impl Db {
         source_track_key: &str,
         decision: Decision,
     ) -> Result<(Uid, i64)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.create_system_track(site, source_id, source_track_key, &decision)?);
+        }
         self.write(|tx| {
             let uid = allocate_uid(tx, site)?;
             let decision_id = open_system_track(tx, uid, source_id, source_track_key, &decision)?;
@@ -253,12 +257,20 @@ impl Db {
         source_track_key: &str,
         decision: Decision,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.adopt_system_track(uid, source_id, source_track_key, &decision)?);
+        }
         self.write(|tx| open_system_track(tx, uid, source_id, source_track_key, &decision))
     }
 
     /// Retire a system track: record the decision, close every live edge
     /// touching it and mark the node retired. Returns the decision id.
     pub fn retire_system_track(&mut self, uid: Uid, decision: Decision) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.retire_system_track(uid, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let node: i64 = tx
@@ -294,6 +306,10 @@ impl Db {
         attrs: &Value,
         decision: Decision,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.pair_source_track(source_id, source_track_key, uid, attrs, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let sys = live_system_node(tx, uid)?;
@@ -322,6 +338,10 @@ impl Db {
         source_track_key: &str,
         attrs: &Value,
     ) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.note_source_track(source_id, source_track_key, attrs)?);
+        }
         self.write(|tx| {
             let node = graph::upsert_node(
                 tx,
@@ -342,6 +362,10 @@ impl Db {
         source_track_key: &str,
         decision: Decision,
     ) -> Result<Option<i64>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.end_source_track(source_id, source_track_key, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let key = graph::source_track_key(source_id, source_track_key);
