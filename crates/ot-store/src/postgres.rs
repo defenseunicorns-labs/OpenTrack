@@ -898,6 +898,11 @@ mod tests {
         );
         selected.live_reports().unwrap();
         let site = ot_core::SiteCode::new("OTK").unwrap();
+        assert_eq!(selected.sync_next_seq(site).unwrap(), 1);
+        assert!(selected.sync_peer_keys().unwrap().is_empty());
+        assert!(selected.sync_pending().unwrap().is_empty());
+        assert_eq!(selected.sync_expire_pending(0).unwrap(), 0);
+        assert_eq!(selected.registry_counts().unwrap()["identifiers"], 0);
         let graph_source = format!("pg-graph-{unique}");
         let (uid, decision_id) = selected
             .create_system_track(

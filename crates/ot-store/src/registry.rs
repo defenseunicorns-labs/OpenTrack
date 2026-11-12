@@ -990,6 +990,10 @@ impl Db {
     }
 
     pub fn registry_counts(&self) -> Result<Value> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_counts()?);
+        }
         let (active, retired, ids): (i64, i64, i64) = self.connection().query_row(
             "SELECT (SELECT count(*) FROM registry_entities WHERE status = 'active'),
                     (SELECT count(*) FROM registry_entities WHERE status = 'retired'),

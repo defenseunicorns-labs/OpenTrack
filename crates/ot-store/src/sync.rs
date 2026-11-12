@@ -65,6 +65,10 @@ fn entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
 impl Db {
     /// The sequence this node's next entry gets.
     pub fn sync_next_seq(&self, site: SiteCode) -> Result<u64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_next_seq(site)?);
+        }
         let max: Option<i64> = self.connection().query_row(
             "SELECT max(seq) FROM sync_log WHERE site = ?1",
             [site.as_str()],
@@ -385,6 +389,10 @@ pub struct PeerKey {
 impl Db {
     /// Every pinned peer key, by site code.
     pub fn sync_peer_keys(&self) -> Result<Vec<PeerKey>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_peer_keys()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT site, public_key, pinned_by, pinned_at_ms FROM sync_peer_keys ORDER BY site",
         )?;

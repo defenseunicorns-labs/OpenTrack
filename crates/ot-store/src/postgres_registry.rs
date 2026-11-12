@@ -52,6 +52,27 @@ struct IdentifierRow {
 }
 
 impl PgControlStore {
+    pub fn registry_counts(&mut self) -> Result<Value, PostgresError> {
+        #[derive(QueryableByName)]
+        struct Counts {
+            #[diesel(sql_type = BigInt)]
+            active: i64,
+            #[diesel(sql_type = BigInt)]
+            retired: i64,
+            #[diesel(sql_type = BigInt)]
+            identifiers: i64,
+        }
+        let counts: Counts = diesel::sql_query(
+            "SELECT (SELECT count(*) FROM registry_entities WHERE status = 'active')::bigint AS active,
+                    (SELECT count(*) FROM registry_entities WHERE status = 'retired')::bigint AS retired,
+                    (SELECT count(*) FROM registry_identifiers)::bigint AS identifiers",
+        )
+        .get_result(&mut self.connection)?;
+        Ok(
+            json!({"active": counts.active, "retired": counts.retired, "identifiers": counts.identifiers}),
+        )
+    }
+
     pub fn entity(&mut self, id: &str) -> Result<Option<Entity>, PostgresError> {
         let rows: Vec<EntityRow> = diesel::sql_query(
             "SELECT id, name, status, class_name, domain, affiliation, track_type,
