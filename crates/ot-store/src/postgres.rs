@@ -53,6 +53,12 @@ struct DecisionId {
     id: i64,
 }
 
+#[derive(QueryableByName)]
+struct VersionText {
+    #[diesel(sql_type = Text)]
+    version: String,
+}
+
 fn record_decision(
     connection: &mut PgConnection,
     decision: &Decision,
@@ -160,6 +166,50 @@ impl PgControlStore {
             })
     }
 
+    pub fn correlation_settings(&mut self) -> Result<Option<Value>, PostgresError> {
+        let rows: Vec<SettingsRow> =
+            diesel::sql_query("SELECT settings FROM correlation_settings WHERE id = 1")
+                .load(&mut self.connection)?;
+        rows.first()
+            .map(|row| serde_json::from_str(&row.settings).map_err(PostgresError::from))
+            .transpose()
+    }
+
+    pub fn save_correlation_settings(
+        &mut self,
+        settings: &Value,
+        decision: &Decision,
+    ) -> Result<i64, PostgresError> {
+        self.connection
+            .transaction::<i64, PostgresError, _>(|connection| {
+                let id = record_decision(connection, decision)?;
+                diesel::sql_query(
+                    "INSERT INTO correlation_settings (id, settings, updated_at_ms, decision_id)
+                     VALUES (1, $1, $2, $3) ON CONFLICT(id) DO UPDATE SET
+                     settings = excluded.settings, updated_at_ms = excluded.updated_at_ms,
+                     decision_id = excluded.decision_id",
+                )
+                .bind::<Text, _>(settings.to_string())
+                .bind::<BigInt, _>(crate::sqlite::now_ms())
+                .bind::<BigInt, _>(id)
+                .execute(connection)?;
+                Ok(id)
+            })
+    }
+
+    pub fn correlation_version(&mut self) -> Result<String, PostgresError> {
+        let row: VersionText = diesel::sql_query(
+            "SELECT ((SELECT coalesce(max(updated_at_ms), 0) FROM correlation_settings)::text
+                    || ':' ||
+                    (SELECT count(*) FROM edges WHERE kind = 'DO_NOT_PAIR'
+                     AND valid_to_ms IS NULL)::text || ':' ||
+                    (SELECT coalesce(max(id), 0) FROM edges
+                     WHERE kind = 'DO_NOT_PAIR')::text) AS version",
+        )
+        .get_result(&mut self.connection)?;
+        Ok(row.version)
+    }
+
     fn migrate(&mut self) -> Result<(), PostgresError> {
         let table: TableName =
             diesel::sql_query("SELECT to_regclass('public.control_schema_version')::text AS name")
@@ -216,5 +266,14 @@ mod tests {
                 .get_result(&mut second.connection)
                 .unwrap();
         assert!(!decision.evidence.contains("example.test/key"));
+        let correlation = serde_json::json!({"threshold": 0.8});
+        let decision = crate::Decision::new("test", "correlation_settings");
+        let id = second
+            .save_correlation_settings(&correlation, &decision)
+            .unwrap();
+        assert!(id > 0);
+        assert_eq!(second.correlation_settings().unwrap(), Some(correlation));
+        let version = second.correlation_version().unwrap();
+        assert!(version.ends_with(":0:0"), "{version}");
     }
 }
