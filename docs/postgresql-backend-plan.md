@@ -52,9 +52,11 @@ owner through that package, place credentials in the OpenTrack namespace, and
 configure the PostgreSQL backend from a Secret. UDS Data's Valkey remains the
 live Redis-compatible store; its NATS package provides the JetStream output.
 
-The UDS package and bundle are separate from this OpenTrack backend change.
-They should be built only after the backend passes PostgreSQL integration
-tests, so a deployed OpenTrack instance never silently falls back to SQLite.
+The UDS package and bundle are scaffolded alongside this backend change.
+They currently deploy the SQLite runtime with a persistent volume while
+provisioning the PostgreSQL database for later use. The Helm chart rejects
+`storage.backend: postgres` until the backend passes PostgreSQL integration
+tests, so a deployment cannot claim PostgreSQL storage while opening SQLite.
 
 ## Schema verification
 
