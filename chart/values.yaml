@@ -27,6 +27,7 @@ valkey:
 
 nats:
   url: tls://nats.nats.svc.cluster.local:4222
+  tlsFirst: true
   caConfigMap: nats-ca-bundle
   caKey: ca.crt
   # Optional explicit PEM. At install time the chart copies the NATS package's
@@ -36,5 +37,10 @@ nats:
 sso:
   enabled: true
   metadataUrl: http://keycloak-http.keycloak.svc.cluster.local:8080/realms/uds/protocol/saml/descriptor
+
+auth:
+  # Optional bootstrap Secret with email and password keys. Once an account
+  # exists, OpenTrack ignores these values.
+  bootstrapSecret: opentrack-bootstrap-admin
 
 siteCode: OTK

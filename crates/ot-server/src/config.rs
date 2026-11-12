@@ -139,6 +139,14 @@ pub struct NatsArgs {
     #[arg(long = "nats-ca", env = "OT_NATS_CA")]
     pub ca: Option<PathBuf>,
 
+    /// Establish TLS before reading the server INFO (NATS `handshake_first`).
+    #[arg(
+        long = "nats-tls-first",
+        env = "OT_NATS_TLS_FIRST",
+        default_value_t = false
+    )]
+    pub tls_first: bool,
+
     /// Mutual TLS: this client certificate (PEM) and `--nats-key`.
     #[arg(long = "nats-cert", env = "OT_NATS_CERT", requires = "key")]
     pub cert: Option<PathBuf>,
@@ -188,6 +196,7 @@ impl Common {
             user: n.user.clone(),
             password: n.password.clone(),
             tls_ca: n.ca.clone().filter(|p| !p.as_os_str().is_empty()),
+            tls_first: n.tls_first,
             tls_cert: n.cert.clone().filter(|p| !p.as_os_str().is_empty()),
             tls_key: n.key.clone().filter(|p| !p.as_os_str().is_empty()),
             stream: n.stream.clone(),

@@ -42,6 +42,18 @@ spec:
               value: {{ .Values.siteCode | quote }}
             - name: OT_SQLITE_PATH
               value: /data/opentrack.db
+            - name: OT_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.bootstrapSecret }}
+                  key: email
+                  optional: true
+            - name: OT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.bootstrapSecret }}
+                  key: password
+                  optional: true
             - name: OT_REDIS_URL
               valueFrom:
                 secretKeyRef:
@@ -53,6 +65,8 @@ spec:
               value: {{ .Values.nats.url | quote }}
             - name: OT_NATS_CA
               value: /etc/opentrack/nats/ca.crt
+            - name: OT_NATS_TLS_FIRST
+              value: {{ .Values.nats.tlsFirst | quote }}
             {{- if .Values.sso.enabled }}
             - name: OT_SAML_IDP_METADATA_URL
               value: {{ .Values.sso.metadataUrl | quote }}
