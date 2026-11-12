@@ -852,5 +852,22 @@ mod tests {
         assert!(second.sources_version().unwrap().contains(':'));
         second.delete_source(&source_id, "test").unwrap();
         assert!(second.get_source(&source_id).unwrap().is_none());
+        let mut selected = crate::Db::open_postgres(&url).unwrap();
+        assert_eq!(selected.schema_version().unwrap(), 1);
+        assert!(selected.user_by_email(&email).unwrap().is_some());
+        assert_eq!(selected.auth_settings().unwrap(), settings);
+        assert_eq!(selected.app_settings().unwrap(), app);
+        assert!(selected.correlation_settings().unwrap().is_some());
+        assert!(
+            selected
+                .list_sources()
+                .unwrap()
+                .iter()
+                .all(|s| s.id != source_id)
+        );
+        let selected_decision = selected
+            .record(&crate::Decision::new("test", "pg_dispatch_test"))
+            .unwrap();
+        assert!(selected_decision > 0);
     }
 }

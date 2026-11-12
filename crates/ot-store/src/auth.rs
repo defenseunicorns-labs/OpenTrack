@@ -179,6 +179,10 @@ fn user(r: &Row<'_>) -> rusqlite::Result<User> {
 
 impl Db {
     pub fn users(&self) -> Result<Vec<User>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.users()?);
+        }
         let mut st = self
             .connection()
             .prepare(&format!("SELECT {USER_COLUMNS} FROM users ORDER BY email"))?;
@@ -187,12 +191,20 @@ impl Db {
     }
 
     pub fn user_count(&self) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.user_count()?);
+        }
         Ok(self
             .connection()
             .query_row("SELECT count(*) FROM users", [], |r| r.get(0))?)
     }
 
     pub fn user(&self, id: &str) -> Result<Option<User>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.user(id)?);
+        }
         Ok(self
             .connection()
             .query_row(
@@ -204,6 +216,10 @@ impl Db {
     }
 
     pub fn user_by_email(&self, email: &str) -> Result<Option<User>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.user_by_email(email)?);
+        }
         Ok(self
             .connection()
             .query_row(
@@ -228,6 +244,10 @@ impl Db {
     }
 
     pub fn create_user(&mut self, u: &NewUser<'_>) -> Result<User> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.create_user(u)?);
+        }
         let now = now_ms();
         let email = u.email.trim();
         if self.user_by_email(email)?.is_some() {
@@ -260,6 +280,10 @@ impl Db {
         role: Option<&str>,
         active: Option<bool>,
     ) -> Result<User> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.update_user(id, name, role, active)?);
+        }
         let now = now_ms();
         let n = self.connection().execute(
             "UPDATE users SET name = coalesce(?2, name), role = coalesce(?3, role),
@@ -429,6 +453,10 @@ impl Db {
     /// A good sign-in: returns the previous good one and the failures
     /// since, and clears them.
     pub fn note_login_success(&mut self, id: &str) -> Result<(Option<i64>, i64)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.note_login_success(id)?);
+        }
         let now = now_ms();
         self.write(|tx| {
             let prev: (Option<i64>, i64) = tx.query_row(
@@ -526,6 +554,10 @@ impl Db {
 
     /// Begin a session.
     pub fn create_session(&mut self, s: &NewSession<'_>) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.create_session(s)?);
+        }
         let now = now_ms();
         self.connection().execute(
             "INSERT INTO sessions (id, user_id, created_at_ms, last_seen_ms, expires_at_ms, ip,
@@ -547,6 +579,10 @@ impl Db {
     }
 
     pub fn session(&self, id: &str) -> Result<Option<Session>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.session(id)?);
+        }
         Ok(self
             .connection()
             .query_row(
@@ -568,6 +604,10 @@ impl Db {
         ended: bool,
         limit: usize,
     ) -> Result<Vec<Session>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sessions(user_id, ended, limit)?);
+        }
         let mut st = self.connection().prepare(&format!(
             "SELECT {SESSION_COLUMNS} FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE (?1 IS NULL OR s.user_id = ?1)
@@ -594,6 +634,10 @@ impl Db {
 
     /// End a session; false when it had ended already.
     pub fn end_session(&mut self, id: &str, reason: &str) -> Result<bool> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.end_session(id, reason)?);
+        }
         Ok(self.connection().execute(
             "UPDATE sessions SET ended_at_ms = ?2, end_reason = ?3 WHERE id = ?1 AND ended_at_ms IS NULL",
             params![id, now_ms(), reason],
@@ -704,6 +748,10 @@ impl Db {
 
     /// Revoke one session token (sign out), and forget expired revocations.
     pub fn revoke_token(&mut self, jti: &str, expires_at_ms: i64) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.revoke_token(jti, expires_at_ms)?);
+        }
         let now = now_ms();
         self.connection().execute(
             "INSERT OR IGNORE INTO revoked_tokens (jti, expires_at_ms) VALUES (?1, ?2)",
@@ -716,6 +764,10 @@ impl Db {
 
     /// Whether a token id was revoked: signed out, or an API token revoked.
     pub fn token_revoked(&self, jti: &str) -> Result<bool> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.token_revoked(jti)?);
+        }
         Ok(self.connection().query_row(
             "SELECT EXISTS (SELECT 1 FROM revoked_tokens WHERE jti = ?1)
                  OR EXISTS (SELECT 1 FROM api_tokens WHERE jti = ?1 AND revoked_at_ms IS NOT NULL)",
@@ -782,6 +834,10 @@ impl Db {
 
     /// The sign-in settings (an empty object before any save).
     pub fn auth_settings(&self) -> Result<Value> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.auth_settings()?);
+        }
         let text: Option<String> = self
             .connection()
             .query_row("SELECT settings FROM auth_settings WHERE id = 1", [], |r| {
@@ -795,6 +851,10 @@ impl Db {
     }
 
     pub fn put_auth_settings(&mut self, settings: &Value) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.put_auth_settings(settings)?);
+        }
         self.connection().execute(
             "INSERT INTO auth_settings (id, settings, updated_at_ms) VALUES (1, ?1, ?2)
              ON CONFLICT(id) DO UPDATE SET settings = excluded.settings, updated_at_ms = excluded.updated_at_ms",

@@ -381,6 +381,10 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AuditRow> {
 impl Db {
     /// Record an event in its own transaction.
     pub fn audit(&mut self, e: &AuditEvent) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.audit(e)?);
+        }
         self.write(|tx| append_event(tx, e, now_ms()))
     }
 
@@ -536,6 +540,10 @@ impl Db {
 
     /// The chain's newest sequence number and hash.
     pub fn audit_head(&self) -> Result<(i64, String)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.audit_head()?);
+        }
         head(self.connection())
     }
 }

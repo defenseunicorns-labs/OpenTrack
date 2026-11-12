@@ -366,12 +366,16 @@ impl Common {
         }
     }
 
-    /// A new connection to the SQLite database.
+    /// A new connection to the selected control database.
     pub fn open_new_db(&self) -> anyhow::Result<ot_store::Db> {
-        anyhow::ensure!(
-            self.db_backend == DbBackend::Sqlite,
-            "PostgreSQL control store is not implemented yet"
-        );
+        if self.db_backend == DbBackend::Postgres {
+            #[cfg(feature = "postgres")]
+            return Ok(ot_store::Db::open_postgres(
+                &self.postgres.connection_url()?,
+            )?);
+            #[cfg(not(feature = "postgres"))]
+            anyhow::bail!("this build has no PostgreSQL support");
+        }
         if let Some(dir) = self.sqlite.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }

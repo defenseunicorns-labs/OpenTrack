@@ -9,6 +9,10 @@ use crate::sqlite::{Db, Decision, Result, now_ms, record_decision};
 impl Db {
     /// The saved instance settings (an empty object before any save).
     pub fn app_settings(&self) -> Result<Value> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.app_settings()?);
+        }
         let text: Option<String> = self
             .connection()
             .query_row("SELECT settings FROM app_settings WHERE id = 1", [], |r| {
@@ -25,6 +29,10 @@ impl Db {
     /// The decision log, which every viewer reads, gets them without the
     /// basemap tile URL (it may carry a key): only whether one is set.
     pub fn put_app_settings(&mut self, settings: &Value, actor: &str) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.put_app_settings(settings, actor)?);
+        }
         let mut evidence = settings.clone();
         if let Some(u) = evidence.get_mut("basemap_tiles_url")
             && u.as_str().is_some_and(|s| !s.is_empty())

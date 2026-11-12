@@ -81,6 +81,10 @@ pub const CORRELATION_OPS: &[&str] = &[
 impl Db {
     /// The saved settings, if an operator has saved any.
     pub fn correlation_settings(&self) -> Result<Option<Value>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.correlation_settings()?);
+        }
         let raw: Option<String> = self
             .connection()
             .query_row(
@@ -97,6 +101,10 @@ impl Db {
         settings: &Value,
         decision: Decision,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.save_correlation_settings(settings, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let d = record_decision(tx, &decision, now)?;
@@ -114,6 +122,10 @@ impl Db {
     /// Changes when settings or "do not pair" decisions change, so the engine
     /// reloads only then.
     pub fn correlation_version(&self) -> Result<String> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.correlation_version()?);
+        }
         Ok(self.connection().query_row(
             "SELECT (SELECT coalesce(max(updated_at_ms), 0) FROM correlation_settings) || ':' ||
                     (SELECT count(*) FROM edges WHERE kind = 'DO_NOT_PAIR' AND valid_to_ms IS NULL) || ':' ||
