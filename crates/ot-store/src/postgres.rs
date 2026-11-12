@@ -9,6 +9,7 @@ use diesel::sql_types::{BigInt, Nullable, Text};
 use serde_json::Value;
 
 use crate::Decision;
+use crate::auth::{NewSession, NewUser, Session, User};
 
 const INITIAL_SCHEMA: &str = include_str!("../postgres/0001_init.sql");
 const SUPPORTED_SCHEMA: i64 = 1;
@@ -27,6 +28,10 @@ pub enum PostgresError {
     TooNew { found: i64, supported: i64 },
     #[error("PostgreSQL control schema version is missing")]
     MissingVersion,
+    #[error("account already exists: {0}")]
+    Conflict(String),
+    #[error("account not found: {0}")]
+    NotFound(String),
 }
 
 #[derive(QueryableByName)]
@@ -58,6 +63,127 @@ struct VersionText {
     #[diesel(sql_type = Text)]
     version: String,
 }
+
+#[derive(QueryableByName)]
+struct UserRow {
+    #[diesel(sql_type = Text)]
+    id: String,
+    #[diesel(sql_type = Text)]
+    email: String,
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = Text)]
+    role: String,
+    #[diesel(sql_type = BigInt)]
+    active: i64,
+    #[diesel(sql_type = Text)]
+    origin: String,
+    #[diesel(sql_type = BigInt)]
+    has_password: i64,
+    #[diesel(sql_type = BigInt)]
+    created_at_ms: i64,
+    #[diesel(sql_type = BigInt)]
+    updated_at_ms: i64,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    last_login_at_ms: Option<i64>,
+    #[diesel(sql_type = BigInt)]
+    tokens_valid_from_ms: i64,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    password_changed_at_ms: Option<i64>,
+    #[diesel(sql_type = BigInt)]
+    must_change_password: i64,
+    #[diesel(sql_type = BigInt)]
+    failed_logins: i64,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    locked_until_ms: Option<i64>,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    active_since_ms: Option<i64>,
+    #[diesel(sql_type = Nullable<Text>)]
+    disabled_reason: Option<String>,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    expires_at_ms: Option<i64>,
+}
+
+#[derive(QueryableByName)]
+struct SessionRow {
+    #[diesel(sql_type = Text)]
+    id: String,
+    #[diesel(sql_type = Text)]
+    user_id: String,
+    #[diesel(sql_type = Text)]
+    user_email: String,
+    #[diesel(sql_type = BigInt)]
+    created_at_ms: i64,
+    #[diesel(sql_type = BigInt)]
+    last_seen_ms: i64,
+    #[diesel(sql_type = BigInt)]
+    expires_at_ms: i64,
+    #[diesel(sql_type = Nullable<Text>)]
+    ip: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    user_agent: Option<String>,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    ended_at_ms: Option<i64>,
+    #[diesel(sql_type = Nullable<Text>)]
+    end_reason: Option<String>,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    prev_login_at_ms: Option<i64>,
+    #[diesel(sql_type = BigInt)]
+    failed_before: i64,
+}
+
+impl From<SessionRow> for Session {
+    fn from(row: SessionRow) -> Self {
+        Self {
+            id: row.id,
+            user_id: row.user_id,
+            user_email: row.user_email,
+            created_at_ms: row.created_at_ms,
+            last_seen_ms: row.last_seen_ms,
+            expires_at_ms: row.expires_at_ms,
+            ip: row.ip,
+            user_agent: row.user_agent,
+            ended_at_ms: row.ended_at_ms,
+            end_reason: row.end_reason,
+            prev_login_at_ms: row.prev_login_at_ms,
+            failed_before: row.failed_before,
+        }
+    }
+}
+
+impl From<UserRow> for User {
+    fn from(row: UserRow) -> Self {
+        Self {
+            id: row.id,
+            email: row.email,
+            name: row.name,
+            role: row.role,
+            active: row.active != 0,
+            origin: row.origin,
+            has_password: row.has_password != 0,
+            created_at_ms: row.created_at_ms,
+            updated_at_ms: row.updated_at_ms,
+            last_login_at_ms: row.last_login_at_ms,
+            tokens_valid_from_ms: row.tokens_valid_from_ms,
+            password_changed_at_ms: row.password_changed_at_ms,
+            must_change_password: row.must_change_password != 0,
+            failed_logins: row.failed_logins,
+            locked_until_ms: row.locked_until_ms,
+            active_since_ms: row.active_since_ms,
+            disabled_reason: row.disabled_reason,
+            expires_at_ms: row.expires_at_ms,
+        }
+    }
+}
+
+const USER_COLUMNS: &str = "id, email, name, role, active, origin,
+    (CASE WHEN password_hash IS NULL THEN 0 ELSE 1 END)::bigint AS has_password,
+    created_at_ms, updated_at_ms, last_login_at_ms, tokens_valid_from_ms,
+    password_changed_at_ms, must_change_password, failed_logins, locked_until_ms,
+    active_since_ms, disabled_reason, expires_at_ms";
+const SESSION_COLUMNS: &str = "s.id, s.user_id, u.email AS user_email,
+    s.created_at_ms, s.last_seen_ms, s.expires_at_ms, s.ip, s.user_agent,
+    s.ended_at_ms, s.end_reason, s.prev_login_at_ms, s.failed_before";
 
 fn record_decision(
     connection: &mut PgConnection,
@@ -101,6 +227,246 @@ impl PgControlStore {
             .first()
             .map(|v| v.version)
             .ok_or(PostgresError::MissingVersion)
+    }
+
+    pub fn users(&mut self) -> Result<Vec<User>, PostgresError> {
+        let rows: Vec<UserRow> =
+            diesel::sql_query(format!("SELECT {USER_COLUMNS} FROM users ORDER BY email"))
+                .load(&mut self.connection)?;
+        Ok(rows.into_iter().map(User::from).collect())
+    }
+
+    pub fn user_count(&mut self) -> Result<i64, PostgresError> {
+        let row: SchemaVersion = diesel::sql_query("SELECT count(*) AS version FROM users")
+            .get_result(&mut self.connection)?;
+        Ok(row.version)
+    }
+
+    pub fn user(&mut self, id: &str) -> Result<Option<User>, PostgresError> {
+        let rows: Vec<UserRow> =
+            diesel::sql_query(format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1"))
+                .bind::<Text, _>(id)
+                .load(&mut self.connection)?;
+        Ok(rows.into_iter().next().map(User::from))
+    }
+
+    pub fn user_by_email(&mut self, email: &str) -> Result<Option<User>, PostgresError> {
+        let rows: Vec<UserRow> = diesel::sql_query(format!(
+            "SELECT {USER_COLUMNS} FROM users WHERE lower(email) = lower($1)"
+        ))
+        .bind::<Text, _>(email)
+        .load(&mut self.connection)?;
+        Ok(rows.into_iter().next().map(User::from))
+    }
+
+    pub fn create_user(&mut self, user: &NewUser<'_>) -> Result<User, PostgresError> {
+        let email = user.email.trim();
+        if self.user_by_email(email)?.is_some() {
+            return Err(PostgresError::Conflict(email.into()));
+        }
+        let now = crate::sqlite::now_ms();
+        self.connection
+            .transaction::<(), PostgresError, _>(|connection| {
+                diesel::sql_query(
+                    "INSERT INTO users (id, email, name, role, password_hash, origin,
+                 created_at_ms, updated_at_ms, password_changed_at_ms, active_since_ms)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $7,
+                         CASE WHEN $5 IS NULL THEN NULL ELSE $7 END, $7)",
+                )
+                .bind::<Text, _>(user.id)
+                .bind::<Text, _>(email)
+                .bind::<Text, _>(user.name.trim())
+                .bind::<Text, _>(user.role)
+                .bind::<Nullable<Text>, _>(user.password_hash)
+                .bind::<Text, _>(user.origin)
+                .bind::<BigInt, _>(now)
+                .execute(connection)?;
+                if let Some(hash) = user.password_hash {
+                    diesel::sql_query(
+                    "INSERT INTO password_history (user_id, hash, set_at_ms) VALUES ($1, $2, $3)",
+                )
+                .bind::<Text, _>(user.id)
+                .bind::<Text, _>(hash)
+                .bind::<BigInt, _>(now)
+                .execute(connection)?;
+                }
+                Ok(())
+            })?;
+        self.user(user.id)?
+            .ok_or_else(|| PostgresError::NotFound(user.id.into()))
+    }
+
+    pub fn update_user(
+        &mut self,
+        id: &str,
+        name: Option<&str>,
+        role: Option<&str>,
+        active: Option<bool>,
+    ) -> Result<User, PostgresError> {
+        let now = crate::sqlite::now_ms();
+        let active = active.map(i64::from);
+        let changed = diesel::sql_query(
+            "UPDATE users SET name = coalesce($2, name), role = coalesce($3, role),
+             updated_at_ms = $5,
+             tokens_valid_from_ms = CASE WHEN $4 = 0 THEN $5 ELSE tokens_valid_from_ms END,
+             active_since_ms = CASE WHEN $4 = 1 AND active = 0 THEN $5 ELSE active_since_ms END,
+             disabled_reason = CASE WHEN $4 = 1 THEN NULL ELSE disabled_reason END,
+             active = coalesce($4, active) WHERE id = $1",
+        )
+        .bind::<Text, _>(id)
+        .bind::<Nullable<Text>, _>(name.map(str::trim))
+        .bind::<Nullable<Text>, _>(role)
+        .bind::<Nullable<BigInt>, _>(active)
+        .bind::<BigInt, _>(now)
+        .execute(&mut self.connection)?;
+        if changed == 0 {
+            return Err(PostgresError::NotFound(id.into()));
+        }
+        if active == Some(0) {
+            diesel::sql_query(
+                "UPDATE sessions SET ended_at_ms = $2, end_reason = 'disabled'
+                 WHERE user_id = $1 AND ended_at_ms IS NULL",
+            )
+            .bind::<Text, _>(id)
+            .bind::<BigInt, _>(now)
+            .execute(&mut self.connection)?;
+            diesel::sql_query(
+                "UPDATE api_tokens SET revoked_at_ms = $2
+                 WHERE user_id = $1 AND revoked_at_ms IS NULL",
+            )
+            .bind::<Text, _>(id)
+            .bind::<BigInt, _>(now)
+            .execute(&mut self.connection)?;
+        }
+        self.user(id)?
+            .ok_or_else(|| PostgresError::NotFound(id.into()))
+    }
+
+    pub fn record(&mut self, decision: &Decision) -> Result<i64, PostgresError> {
+        record_decision(&mut self.connection, decision)
+    }
+
+    pub fn note_login_success(&mut self, id: &str) -> Result<(Option<i64>, i64), PostgresError> {
+        #[derive(QueryableByName)]
+        struct PreviousLogin {
+            #[diesel(sql_type = Nullable<BigInt>)]
+            last_login_at_ms: Option<i64>,
+            #[diesel(sql_type = BigInt)]
+            failed_since_login: i64,
+        }
+        let now = crate::sqlite::now_ms();
+        self.connection
+            .transaction::<(Option<i64>, i64), PostgresError, _>(|connection| {
+                let previous: PreviousLogin = diesel::sql_query(
+                    "SELECT last_login_at_ms, failed_since_login FROM users
+                     WHERE id = $1 FOR UPDATE",
+                )
+                .bind::<Text, _>(id)
+                .get_result(connection)?;
+                diesel::sql_query(
+                    "UPDATE users SET last_login_at_ms = $2, failed_logins = 0,
+                     failed_window_from_ms = NULL, failed_since_login = 0,
+                     locked_until_ms = NULL WHERE id = $1",
+                )
+                .bind::<Text, _>(id)
+                .bind::<BigInt, _>(now)
+                .execute(connection)?;
+                Ok((previous.last_login_at_ms, previous.failed_since_login))
+            })
+    }
+
+    pub fn create_session(&mut self, session: &NewSession<'_>) -> Result<(), PostgresError> {
+        let now = crate::sqlite::now_ms();
+        let user_agent = session
+            .user_agent
+            .map(|agent| agent.chars().take(512).collect::<String>());
+        diesel::sql_query(
+            "INSERT INTO sessions (id, user_id, created_at_ms, last_seen_ms,
+             expires_at_ms, ip, user_agent, prev_login_at_ms, failed_before)
+             VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind::<Text, _>(session.id)
+        .bind::<Text, _>(session.user_id)
+        .bind::<BigInt, _>(now)
+        .bind::<BigInt, _>(session.expires_at_ms)
+        .bind::<Nullable<Text>, _>(session.ip)
+        .bind::<Nullable<Text>, _>(user_agent)
+        .bind::<Nullable<BigInt>, _>(session.prev_login_at_ms)
+        .bind::<BigInt, _>(session.failed_before)
+        .execute(&mut self.connection)?;
+        Ok(())
+    }
+
+    pub fn session(&mut self, id: &str) -> Result<Option<Session>, PostgresError> {
+        let rows: Vec<SessionRow> = diesel::sql_query(format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions s JOIN users u ON u.id = s.user_id
+             WHERE s.id = $1"
+        ))
+        .bind::<Text, _>(id)
+        .load(&mut self.connection)?;
+        Ok(rows.into_iter().next().map(Session::from))
+    }
+
+    pub fn sessions(
+        &mut self,
+        user_id: Option<&str>,
+        ended: bool,
+        limit: usize,
+    ) -> Result<Vec<Session>, PostgresError> {
+        let rows: Vec<SessionRow> = diesel::sql_query(format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions s JOIN users u ON u.id = s.user_id
+             WHERE ($1::text IS NULL OR s.user_id = $1)
+               AND ($2::bigint = 1 OR (s.ended_at_ms IS NULL AND s.expires_at_ms > $3))
+             ORDER BY s.created_at_ms DESC LIMIT $4"
+        ))
+        .bind::<Nullable<Text>, _>(user_id)
+        .bind::<BigInt, _>(i64::from(ended))
+        .bind::<BigInt, _>(crate::sqlite::now_ms())
+        .bind::<BigInt, _>(limit as i64)
+        .load(&mut self.connection)?;
+        Ok(rows.into_iter().map(Session::from).collect())
+    }
+
+    pub fn end_session(&mut self, id: &str, reason: &str) -> Result<bool, PostgresError> {
+        let changed = diesel::sql_query(
+            "UPDATE sessions SET ended_at_ms = $2, end_reason = $3
+             WHERE id = $1 AND ended_at_ms IS NULL",
+        )
+        .bind::<Text, _>(id)
+        .bind::<BigInt, _>(crate::sqlite::now_ms())
+        .bind::<Text, _>(reason)
+        .execute(&mut self.connection)?;
+        Ok(changed != 0)
+    }
+
+    pub fn revoke_token(&mut self, jti: &str, expires_at_ms: i64) -> Result<(), PostgresError> {
+        diesel::sql_query(
+            "INSERT INTO revoked_tokens (jti, expires_at_ms) VALUES ($1, $2)
+             ON CONFLICT (jti) DO NOTHING",
+        )
+        .bind::<Text, _>(jti)
+        .bind::<BigInt, _>(expires_at_ms)
+        .execute(&mut self.connection)?;
+        diesel::sql_query("DELETE FROM revoked_tokens WHERE expires_at_ms < $1")
+            .bind::<BigInt, _>(crate::sqlite::now_ms())
+            .execute(&mut self.connection)?;
+        Ok(())
+    }
+
+    pub fn token_revoked(&mut self, jti: &str) -> Result<bool, PostgresError> {
+        #[derive(QueryableByName)]
+        struct Revocation {
+            #[diesel(sql_type = diesel::sql_types::Bool)]
+            revoked: bool,
+        }
+        let row: Revocation = diesel::sql_query(
+            "SELECT (EXISTS (SELECT 1 FROM revoked_tokens WHERE jti = $1)
+                    OR EXISTS (SELECT 1 FROM api_tokens
+                               WHERE jti = $1 AND revoked_at_ms IS NOT NULL)) AS revoked",
+        )
+        .bind::<Text, _>(jti)
+        .get_result(&mut self.connection)?;
+        Ok(row.revoked)
     }
 
     pub fn auth_settings(&mut self) -> Result<Value, PostgresError> {
@@ -275,5 +641,50 @@ mod tests {
         assert_eq!(second.correlation_settings().unwrap(), Some(correlation));
         let version = second.correlation_version().unwrap();
         assert!(version.ends_with(":0:0"), "{version}");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let id = format!("pg-test-{unique}");
+        let email = format!("pg-test-{unique}@example.test");
+        let created = second
+            .create_user(&crate::NewUser {
+                id: &id,
+                email: &email,
+                name: "PG test",
+                role: "viewer",
+                password_hash: None,
+                origin: "saml",
+            })
+            .unwrap();
+        assert_eq!(created.email, email);
+        assert_eq!(created.origin, "saml");
+        assert!(!created.has_password);
+        assert_eq!(second.user(&id).unwrap(), Some(created));
+        let updated = second.update_user(&id, None, Some("admin"), None).unwrap();
+        assert_eq!(updated.role, "admin");
+        assert_eq!(second.user_by_email(&email).unwrap(), Some(updated));
+        assert!(second.user_count().unwrap() > 0);
+        assert!(second.users().unwrap().iter().any(|u| u.id == id));
+        let session_id = format!("pg-session-{unique}");
+        let expires_at_ms = crate::sqlite::now_ms() + 60_000;
+        second
+            .create_session(&crate::auth::NewSession {
+                id: &session_id,
+                user_id: &id,
+                expires_at_ms,
+                ip: Some("127.0.0.1"),
+                user_agent: Some("PG test"),
+                prev_login_at_ms: None,
+                failed_before: 0,
+            })
+            .unwrap();
+        assert_eq!(second.session(&session_id).unwrap().unwrap().user_id, id);
+        assert_eq!(second.sessions(Some(&id), false, 10).unwrap().len(), 1);
+        assert!(!second.token_revoked(&session_id).unwrap());
+        assert!(second.end_session(&session_id, "test").unwrap());
+        assert!(!second.end_session(&session_id, "test").unwrap());
+        second.revoke_token(&session_id, expires_at_ms).unwrap();
+        assert!(second.token_revoked(&session_id).unwrap());
     }
 }
