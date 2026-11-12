@@ -39,7 +39,9 @@ retain their existing roles.
 4. Make status, metrics, backup/restore guidance, session and sync key storage,
    and first-admin setup backend-aware. A PostgreSQL deployment should not
    require a writable SQLite volume. Any non-database files still need a
-   persistent data directory or an explicit secret.
+   persistent data directory or an explicit secret. `OT_DATA_DIR` now separates
+   the session key, site password list, and plugin files from the SQLite path;
+   when unset, it retains the existing SQLite-directory behavior.
 5. Test the full API and engine flows with both backends. PostgreSQL tests
    need a real server and should cover concurrent UID allocation, decision
    undo, audit integrity, source revision history, and restart recovery.

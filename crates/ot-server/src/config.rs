@@ -179,12 +179,15 @@ pub struct NatsArgs {
 
 impl Common {
     pub fn data_dir(&self) -> &std::path::Path {
-        self.data_dir.as_deref().unwrap_or_else(|| {
-            self.sqlite
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(std::path::Path::new("."))
-        })
+        self.data_dir
+            .as_deref()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                self.sqlite
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(std::path::Path::new("."))
+            })
     }
     /// This instance's identity, stamped into each message's `publisher`.
     pub fn node_id(&self) -> String {
