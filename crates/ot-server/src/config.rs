@@ -4,11 +4,22 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use ot_core::SiteCode;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum DbBackend {
+    #[default]
+    Sqlite,
+    Postgres,
+}
 
 #[derive(Debug, Clone, Args)]
 pub struct Common {
+    /// Control database backend. SQLite remains the standalone default.
+    #[arg(long = "db-backend", env = "OT_DB_BACKEND", value_enum, default_value_t = DbBackend::Sqlite)]
+    pub db_backend: DbBackend,
+
     /// SQLite database file (created and migrated on start).
     #[arg(long, env = "OT_SQLITE_PATH", default_value = "data/opentrack.db")]
     pub sqlite: PathBuf,
@@ -245,6 +256,10 @@ impl Common {
 
     /// A new connection to the SQLite database.
     pub fn open_new_db(&self) -> anyhow::Result<ot_store::Db> {
+        anyhow::ensure!(
+            self.db_backend == DbBackend::Sqlite,
+            "PostgreSQL control store is not implemented yet"
+        );
         if let Some(dir) = self.sqlite.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }

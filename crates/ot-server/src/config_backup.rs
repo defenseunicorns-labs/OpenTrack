@@ -793,6 +793,7 @@ pub(crate) mod tests {
         Common {
             sqlite: dir.join("ot.db"),
             data_dir: None,
+            db_backend: crate::config::DbBackend::Sqlite,
             redis: "redis://127.0.0.1:9".into(),
             redis_ca: None,
             redis_password_file: None,

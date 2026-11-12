@@ -10,6 +10,9 @@ retain their existing roles.
 - Keep SQLite as the default backend for existing installations.
 - Add a PostgreSQL connection setting for new deployments. Selecting it must
   not open or create a SQLite database.
+- `OT_DB_BACKEND` now defaults to `sqlite`. Selecting `postgres` fails at
+  startup until the PostgreSQL implementation is complete, rather than
+  silently using SQLite.
 - Target fresh PostgreSQL databases in the first implementation. Importing an
   existing SQLite database is a separate migration task.
 - Keep the current REST API, track output contract, audit chain, UID behavior,

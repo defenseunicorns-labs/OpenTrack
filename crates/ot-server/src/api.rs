@@ -944,6 +944,7 @@ mod tests {
         let common = Common {
             sqlite: ":memory:".into(),
             data_dir: None,
+            db_backend: crate::config::DbBackend::Sqlite,
             redis: url.clone(),
             redis_ca: None,
             redis_password_file: None,
