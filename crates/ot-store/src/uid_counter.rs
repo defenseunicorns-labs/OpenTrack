@@ -54,6 +54,10 @@ pub struct UidCounterAdvanced {
 impl Db {
     /// The sequence the next UID of `site` gets.
     pub fn uid_next_sequence(&self, site: SiteCode) -> Result<u64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.uid_next_sequence(site)?);
+        }
         let next: Option<i64> = self
             .connection()
             .query_row(
@@ -69,6 +73,10 @@ impl Db {
     /// system tracks and groups, the decision log (which outlives a purge
     /// of the graph) and the multi-node log.
     pub fn uid_sightings(&self, site: SiteCode) -> Result<Vec<UidSighting>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.uid_sightings(site)?);
+        }
         let conn = self.connection();
         let mut out = Vec::new();
         // Keys are the UID itself, zero padded, so the largest sorts last.
@@ -123,6 +131,10 @@ impl Db {
         sightings: &[UidSighting],
         checked: serde_json::Value,
     ) -> Result<Option<UidCounterAdvanced>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.advance_uid_counter(site, sightings, checked)?);
+        }
         self.write(|tx| {
             let before: u64 = tx
                 .query_row(

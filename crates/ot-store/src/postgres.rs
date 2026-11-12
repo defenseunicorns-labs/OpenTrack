@@ -18,6 +18,8 @@ mod graph;
 mod plugins;
 #[path = "postgres_sources.rs"]
 mod sources;
+#[path = "postgres_uid.rs"]
+mod uid;
 use crate::audit::{AuditEvent, GENESIS, row_hash};
 use crate::auth::{NewSession, NewUser, Session, User};
 
@@ -940,6 +942,19 @@ mod tests {
                 .iter()
                 .all(|(_, track)| *track != uid)
         );
+        let next = selected.uid_next_sequence(site).unwrap();
+        assert!(next > uid.sequence());
+        assert!(!selected.uid_sightings(site).unwrap().is_empty());
+        let advanced = selected
+            .advance_uid_counter(
+                site,
+                &[crate::UidSighting::new("test", "external", next + 5)],
+                serde_json::json!({"test": "checked"}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(advanced.after, next + 6);
+        assert_eq!(selected.uid_next_sequence(site).unwrap(), next + 6);
         let plugin_name = format!("pg-plugin-{unique}");
         let manifest = serde_json::json!({"kinds": ["tracker"]});
         let grants = serde_json::json!({});
