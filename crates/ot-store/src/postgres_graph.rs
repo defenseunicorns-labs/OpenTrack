@@ -27,6 +27,28 @@ struct KindRow {
     kind: String,
 }
 
+#[derive(QueryableByName)]
+struct MovedEdge {
+    #[diesel(sql_type = BigInt)]
+    src: i64,
+    #[diesel(sql_type = Text)]
+    attrs: String,
+}
+
+#[derive(QueryableByName)]
+struct CarriedEdge {
+    #[diesel(sql_type = Text)]
+    kind: String,
+    #[diesel(sql_type = BigInt)]
+    other: i64,
+}
+
+#[derive(QueryableByName)]
+struct ExistsRow {
+    #[diesel(sql_type = diesel::sql_types::Bool)]
+    exists: bool,
+}
+
 fn upsert_node(
     connection: &mut diesel::pg::PgConnection,
     kind: NodeKind,
@@ -348,6 +370,104 @@ impl PgControlStore {
                 .execute(connection)?;
                 diesel::sql_query("UPDATE nodes SET retired_at_ms = $2 WHERE id = $1")
                     .bind::<BigInt, _>(node)
+                    .bind::<BigInt, _>(now)
+                    .execute(connection)?;
+                Ok(decision_id)
+            })
+    }
+
+    pub fn merge_system_tracks(
+        &mut self,
+        from: Uid,
+        into: Uid,
+        decision: &Decision,
+    ) -> Result<i64, PostgresError> {
+        if from == into {
+            return Err(PostgresError::Conflict(format!(
+                "cannot merge {from} into itself"
+            )));
+        }
+        self.connection
+            .transaction::<i64, PostgresError, _>(|connection| {
+                let now = crate::sqlite::now_ms();
+                let from_node = live_system_node(connection, from)?;
+                let into_node = live_system_node(connection, into)?;
+                let decision_id = record_decision(connection, decision)?;
+                let carried: Vec<CarriedEdge> = diesel::sql_query(
+                    "SELECT kind, CASE WHEN src = $1 THEN dst ELSE src END AS other
+                 FROM edges WHERE (src = $1 OR dst = $1)
+                   AND kind IN ('MEMBER_OF', 'PAIRED_WITH') AND valid_to_ms IS NULL",
+                )
+                .bind::<BigInt, _>(from_node)
+                .load(connection)?;
+                let moved: Vec<MovedEdge> = diesel::sql_query(
+                    "SELECT src, attrs FROM edges WHERE dst = $1
+                 AND kind = 'REPORTS_FOR' AND valid_to_ms IS NULL",
+                )
+                .bind::<BigInt, _>(from_node)
+                .load(connection)?;
+                diesel::sql_query(
+                    "UPDATE edges SET valid_to_ms = greatest($2, valid_from_ms), ended_by = $3
+                 WHERE (src = $1 OR dst = $1) AND valid_to_ms IS NULL",
+                )
+                .bind::<BigInt, _>(from_node)
+                .bind::<BigInt, _>(now)
+                .bind::<BigInt, _>(decision_id)
+                .execute(connection)?;
+                for edge in moved {
+                    let attrs = serde_json::from_str(&edge.attrs).unwrap_or(Value::Null);
+                    add_edge(
+                        connection,
+                        EdgeKind::ReportsFor,
+                        edge.src,
+                        into_node,
+                        decision_id,
+                        &attrs,
+                        now,
+                    )?;
+                }
+                add_edge(
+                    connection,
+                    EdgeKind::MergedInto,
+                    from_node,
+                    into_node,
+                    decision_id,
+                    &json!({}),
+                    now,
+                )?;
+                for edge in carried {
+                    let pairing = edge.kind == "PAIRED_WITH";
+                    if pairing && edge.other == into_node {
+                        continue;
+                    }
+                    let exists: ExistsRow = diesel::sql_query(
+                        "SELECT EXISTS (SELECT 1 FROM edges WHERE kind = $1
+                     AND valid_to_ms IS NULL AND
+                     ((src = $2 AND dst = $3) OR (src = $3 AND dst = $2))) AS exists",
+                    )
+                    .bind::<Text, _>(&edge.kind)
+                    .bind::<BigInt, _>(into_node)
+                    .bind::<BigInt, _>(edge.other)
+                    .get_result(connection)?;
+                    if !exists.exists {
+                        let kind = if pairing {
+                            EdgeKind::PairedWith
+                        } else {
+                            EdgeKind::MemberOf
+                        };
+                        add_edge(
+                            connection,
+                            kind,
+                            into_node,
+                            edge.other,
+                            decision_id,
+                            &json!({}),
+                            now,
+                        )?;
+                    }
+                }
+                diesel::sql_query("UPDATE nodes SET retired_at_ms = $2 WHERE id = $1")
+                    .bind::<BigInt, _>(from_node)
                     .bind::<BigInt, _>(now)
                     .execute(connection)?;
                 Ok(decision_id)

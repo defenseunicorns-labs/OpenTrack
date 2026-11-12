@@ -955,6 +955,38 @@ mod tests {
             .unwrap();
         assert_eq!(advanced.after, next + 6);
         assert_eq!(selected.uid_next_sequence(site).unwrap(), next + 6);
+        let (from_uid, _) = selected
+            .create_system_track(
+                site,
+                &graph_source,
+                "merge-from",
+                crate::Decision::new("test", "create_system_track"),
+            )
+            .unwrap();
+        let (into_uid, _) = selected
+            .create_system_track(
+                site,
+                &graph_source,
+                "merge-into",
+                crate::Decision::new("test", "create_system_track"),
+            )
+            .unwrap();
+        selected
+            .merge_system_tracks(from_uid, into_uid, crate::Decision::new("test", "merge"))
+            .unwrap();
+        assert!(
+            selected
+                .live_reports()
+                .unwrap()
+                .contains(&(format!("{graph_source}/merge-from"), into_uid))
+        );
+        assert!(
+            selected
+                .explain(into_uid)
+                .unwrap()
+                .iter()
+                .any(|edge| edge.kind == crate::EdgeKind::MergedInto)
+        );
         let plugin_name = format!("pg-plugin-{unique}");
         let manifest = serde_json::json!({"kinds": ["tracker"]});
         let grants = serde_json::json!({});

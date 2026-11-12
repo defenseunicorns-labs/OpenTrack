@@ -400,6 +400,10 @@ impl Db {
     /// `MERGED_INTO` edge keeps it resolvable as an alias. One transaction;
     /// returns the decision id.
     pub fn merge_system_tracks(&mut self, from: Uid, into: Uid, decision: Decision) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.merge_system_tracks(from, into, &decision)?);
+        }
         if from == into {
             return Err(StoreError::Conflict(format!(
                 "cannot merge {from} into itself"
