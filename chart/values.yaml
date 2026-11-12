@@ -38,6 +38,7 @@ sso:
   enabled: true
   metadataUrl: http://keycloak-http.keycloak.svc.cluster.local:8080/realms/uds/protocol/saml/descriptor
   publicOrigin: ""
+  adminGroup: /C-UAS/OpenTrack Admin
 
 auth:
   # Optional bootstrap Secret with email and password keys. Once an account

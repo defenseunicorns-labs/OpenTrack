@@ -564,8 +564,10 @@ async fn serve(common: Common, mut args: ServeArgs) -> anyhow::Result<()> {
                 .map_err(anyhow::Error::msg)?;
         }
         auth_settings.saml.role_attribute = "Role".into();
+        let admin_group = std::env::var("OT_SAML_ADMIN_GROUP")
+            .unwrap_or_else(|_| "/UDS Core/Admin".into());
         auth_settings.saml.role_mapping = vec![auth::settings::RoleMap {
-            value: "/UDS Core/Admin".into(),
+            value: admin_group,
             role: auth::Role::Admin,
         }];
         auth_settings.saml.default_role = Some(auth::Role::Viewer);

@@ -73,5 +73,5 @@ spec:
           config:
             attribute.name: Role
             full.path: "true"
-            single: "true"
+            single: "false"
   {{- end }}
