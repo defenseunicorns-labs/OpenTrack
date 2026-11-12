@@ -9,6 +9,9 @@ use diesel::sql_types::{BigInt, Nullable, Text};
 use serde_json::Value;
 
 use crate::Decision;
+
+#[path = "postgres_sources.rs"]
+mod sources;
 use crate::audit::{AuditEvent, GENESIS, row_hash};
 use crate::auth::{NewSession, NewUser, Session, User};
 
@@ -29,9 +32,9 @@ pub enum PostgresError {
     TooNew { found: i64, supported: i64 },
     #[error("PostgreSQL control schema version is missing")]
     MissingVersion,
-    #[error("account already exists: {0}")]
+    #[error("conflict: {0}")]
     Conflict(String),
-    #[error("account not found: {0}")]
+    #[error("not found: {0}")]
     NotFound(String),
 }
 
@@ -807,5 +810,47 @@ mod tests {
         assert!(!second.end_session(&session_id, "test").unwrap());
         second.revoke_token(&session_id, expires_at_ms).unwrap();
         assert!(second.token_revoked(&session_id).unwrap());
+        let source_id = format!("pg-source-{unique}");
+        let spec = serde_json::json!({"transport": {"kind": "mqtt", "password": "secret"}});
+        let source = second
+            .put_source(
+                &crate::SourceWrite {
+                    id: &source_id,
+                    name: "PG source",
+                    transport: "mqtt",
+                    codec: "json",
+                    priority: 100,
+                    spec: &spec,
+                    problems: &serde_json::json!([]),
+                },
+                "test",
+            )
+            .unwrap();
+        assert_eq!(source.revision, 1);
+        assert!(!source.enabled);
+        assert_eq!(second.source_revisions(&source_id).unwrap().len(), 1);
+        assert!(
+            second
+                .set_source_enabled(&source_id, true, None, "test")
+                .unwrap()
+                .enabled
+        );
+        assert!(
+            second
+                .set_raw_output(&source_id, Some("raw.test"), "test")
+                .unwrap()
+                .raw_subject
+                .is_some()
+        );
+        assert!(
+            second
+                .list_sources()
+                .unwrap()
+                .iter()
+                .any(|s| s.id == source_id)
+        );
+        assert!(second.sources_version().unwrap().contains(':'));
+        second.delete_source(&source_id, "test").unwrap();
+        assert!(second.get_source(&source_id).unwrap().is_none());
     }
 }
