@@ -17,6 +17,10 @@ pub struct Common {
     #[arg(long, env = "OT_REDIS_URL", default_value = "redis://127.0.0.1:6379")]
     pub redis: String,
 
+    /// File containing the Redis password, for Kubernetes Secret mounts.
+    #[arg(long, env = "OT_REDIS_PASSWORD_FILE")]
+    pub redis_password_file: Option<PathBuf>,
+
     /// TLS to Redis (with a `rediss://` URL): the CA (PEM) that signed the
     /// server's certificate, instead of the system roots.
     #[arg(long = "redis-ca", env = "OT_REDIS_CA")]
@@ -257,7 +261,16 @@ impl Common {
         } else {
             None
         };
-        let mut r = ot_store::RedisStore::connect_tls(&self.redis, self.keys(), tls).await?;
+        let redis_url = if let Some(path) = &self.redis_password_file {
+            let password = std::fs::read_to_string(path)?;
+            let mut url = url::Url::parse(&self.redis)?;
+            url.set_password(Some(password.trim_end_matches(['\r', '\n'])))
+                .map_err(|_| anyhow::anyhow!("OT_REDIS_URL cannot hold a password"))?;
+            url.to_string()
+        } else {
+            self.redis.clone()
+        };
+        let mut r = ot_store::RedisStore::connect_tls(&redis_url, self.keys(), tls).await?;
         r.obs_window = std::time::Duration::from_secs(self.obs_window_secs.max(10));
         Ok(r)
     }

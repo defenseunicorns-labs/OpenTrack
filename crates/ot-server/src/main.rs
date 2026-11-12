@@ -525,8 +525,33 @@ async fn serve(common: Common, mut args: ServeArgs) -> anyhow::Result<()> {
             args.admin_password.as_deref(),
         )?;
     }
-    let auth_settings: auth::AuthSettings =
+    let mut auth_settings: auth::AuthSettings =
         serde_json::from_value(db.auth_settings()?).context("the saved sign-in settings")?;
+    if let Ok(metadata_url) = std::env::var("OT_SAML_IDP_METADATA_URL")
+        && !metadata_url.trim().is_empty()
+    {
+        let metadata = reqwest::get(&metadata_url)
+            .await
+            .context("fetching SAML identity-provider metadata")?
+            .error_for_status()
+            .context("SAML identity-provider metadata response")?
+            .text()
+            .await?;
+        auth_settings.saml.enabled = true;
+        auth_settings.saml.idp_metadata_xml = metadata;
+        auth_settings
+            .saml
+            .read_metadata()
+            .map_err(anyhow::Error::msg)?;
+        auth_settings.saml.role_attribute = "Role".into();
+        auth_settings.saml.role_mapping = vec![auth::settings::RoleMap {
+            value: "/UDS Core/Admin".into(),
+            role: auth::Role::Admin,
+        }];
+        auth_settings.saml.default_role = Some(auth::Role::Viewer);
+        auth_settings.saml.allow_admin = true;
+        auth_settings.validate().map_err(anyhow::Error::msg)?;
+    }
     let secret = auth::load_secret(&common, args.session_secret.as_deref())?;
     let state = control::AppState {
         db: Arc::new(Mutex::new(db)),

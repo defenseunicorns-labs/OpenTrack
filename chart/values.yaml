@@ -1,0 +1,38 @@
+domain: uds.dev
+
+image:
+  repository: localhost:5000/opentrack
+  tag: uds-dev
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 2Gi
+
+storage:
+  # PostgreSQL becomes available only after the OpenTrack runtime backend lands.
+  backend: sqlite
+  size: 2Gi
+
+valkey:
+  url: redis://valkey-primary.valkey-opentrack.svc.cluster.local:6379
+  passwordSecret: opentrack-valkey-password
+  passwordKey: password
+
+nats:
+  url: tls://nats.nats.svc.cluster.local:4222
+  caConfigMap: nats-ca-bundle
+  caKey: ca.crt
+  # Optional explicit PEM. At install time the chart copies the NATS package's
+  # CA ConfigMap into this namespace when this is empty.
+  caPem: ""
+
+sso:
+  enabled: true
+  metadataUrl: http://keycloak-http.keycloak.svc.cluster.local:8080/realms/uds/protocol/saml/descriptor
+
+siteCode: OTK

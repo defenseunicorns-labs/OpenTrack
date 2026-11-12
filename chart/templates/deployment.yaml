@@ -1,0 +1,98 @@
+{{- if ne .Values.storage.backend "sqlite" }}
+{{- fail "OpenTrack PostgreSQL runtime is not implemented yet; refusing to deploy a SQLite process as PostgreSQL" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentrack
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opentrack
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opentrack
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: opentrack
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["all"]
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: OT_BIND
+              value: 0.0.0.0:8090
+            - name: OT_PUBLIC_URL
+              value: "https://opentrack.{{ .Values.domain }}"
+            - name: OT_SITE_CODE
+              value: {{ .Values.siteCode | quote }}
+            - name: OT_SQLITE_PATH
+              value: /data/opentrack.db
+            - name: OT_REDIS_URL
+              value: {{ .Values.valkey.url | quote }}
+            - name: OT_REDIS_PASSWORD_FILE
+              value: /etc/opentrack/valkey/password
+            - name: OT_NATS_URL
+              value: {{ .Values.nats.url | quote }}
+            - name: OT_NATS_CA
+              value: /etc/opentrack/nats/ca.crt
+            {{- if .Values.sso.enabled }}
+            - name: OT_SAML_IDP_METADATA_URL
+              value: {{ .Values.sso.metadataUrl | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: valkey-password
+              mountPath: /etc/opentrack/valkey
+              readOnly: true
+            - name: nats-ca
+              mountPath: /etc/opentrack/nats
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: opentrack-data
+        - name: valkey-password
+          secret:
+            secretName: {{ .Values.valkey.passwordSecret }}
+            items:
+              - key: {{ .Values.valkey.passwordKey }}
+                path: password
+        - name: nats-ca
+          configMap:
+            name: opentrack-nats-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

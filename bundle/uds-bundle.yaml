@@ -1,0 +1,84 @@
+kind: UDSBundle
+metadata:
+  description: OpenTrack with UDS Data PostgreSQL, Valkey, and NATS services
+  name: opentrack-data
+  source: https://github.com/defenseunicorns-labs/OpenTrack
+  url: https://github.com/defenseunicorns-labs/OpenTrack
+  vendor: Defense Unicorns Labs
+  version: 0.1.0
+packages:
+  - name: valkey
+    namespace: valkey-opentrack
+    overrides:
+      valkey:
+        uds-valkey-config:
+          values:
+            - path: additionalNetworkAllow
+              value:
+                - description: Allow OpenTrack to use its Valkey store
+                  direction: Ingress
+                  port: 6379
+                  remoteNamespace: opentrack
+                  remoteSelector:
+                    app.kubernetes.io/name: opentrack
+                  selector:
+                    app.kubernetes.io/name: valkey
+            - path: copyPassword
+              value:
+                enabled: true
+                namespace: opentrack
+                secretKey: password
+                secretName: opentrack-valkey-password
+    ref: 8.1.9-uds.0-unicorn
+    repository: ghcr.io/uds-packages/private/valkey
+  - name: postgres-operator
+    overrides:
+      postgres-operator:
+        uds-postgres-config:
+          values:
+            - path: postgresql
+              value:
+                databases:
+                  opentrack: opentrack.opentrack
+                enabled: true
+                ingress:
+                  - remoteNamespace: opentrack
+                    remoteSelector:
+                      app.kubernetes.io/name: opentrack
+                numberOfInstances: 1
+                teamId: uds
+                users:
+                  opentrack.opentrack: []
+                version: "16"
+                volume:
+                  size: 10Gi
+    ref: 1.15.1-uds.27-unicorn
+    repository: ghcr.io/uds-packages/private/postgres-operator
+  - name: nats
+    namespace: nats
+    overrides:
+      nats:
+        nats:
+          values:
+            - path: config
+              value:
+                jetstream:
+                  enabled: true
+                  fileStore:
+                    pvc:
+                      size: 1Gi
+        uds-nats-config:
+          values:
+            - path: jetstream
+              value:
+                enabled: true
+            - path: network
+              value:
+                monitoring:
+                  jetstream:
+                    enabled: true
+    ref: 2.14.3-uds.2-unicorn
+    repository: ghcr.io/uds-packages/private/nats
+  - name: opentrack
+    path: ../
+    ref: 0.1.0
