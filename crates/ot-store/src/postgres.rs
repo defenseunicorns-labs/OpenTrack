@@ -10,6 +10,8 @@ use serde_json::Value;
 
 use crate::Decision;
 
+#[path = "postgres_plugins.rs"]
+mod plugins;
 #[path = "postgres_sources.rs"]
 mod sources;
 use crate::audit::{AuditEvent, GENESIS, row_hash};
@@ -869,5 +871,39 @@ mod tests {
             .record(&crate::Decision::new("test", "pg_dispatch_test"))
             .unwrap();
         assert!(selected_decision > 0);
+        let plugin_name = format!("pg-plugin-{unique}");
+        let manifest = serde_json::json!({"kinds": ["tracker"]});
+        let grants = serde_json::json!({});
+        let plugin = selected
+            .put_plugin(
+                &crate::PluginWrite {
+                    name: &plugin_name,
+                    version: "1",
+                    manifest: &manifest,
+                    wasm: None,
+                    address: Some("127.0.0.1:9000"),
+                    grants: &grants,
+                    secret: Some("test-secret"),
+                },
+                "test",
+            )
+            .unwrap();
+        assert_eq!(plugin.secret.as_deref(), Some("test-secret"));
+        assert!(selected.plugins_version().unwrap().contains(':'));
+        assert!(
+            selected
+                .list_plugins()
+                .unwrap()
+                .iter()
+                .any(|p| p.name == plugin_name)
+        );
+        assert!(
+            !selected
+                .set_plugin(&plugin_name, Some(false), None, "test")
+                .unwrap()
+                .enabled
+        );
+        selected.delete_plugin(&plugin_name, "test").unwrap();
+        assert!(selected.get_plugin(&plugin_name).unwrap().is_none());
     }
 }
