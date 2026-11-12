@@ -543,6 +543,26 @@ async fn serve(common: Common, mut args: ServeArgs) -> anyhow::Result<()> {
             .saml
             .read_metadata()
             .map_err(anyhow::Error::msg)?;
+        if let Ok(public_origin) = std::env::var("OT_SAML_IDP_PUBLIC_ORIGIN")
+            && !public_origin.trim().is_empty()
+        {
+            let internal_origin = url::Url::parse(&auth_settings.saml.sso_url)
+                .context("SAML identity-provider sign-in URL")?
+                .origin()
+                .ascii_serialization();
+            let public_origin = url::Url::parse(&public_origin)
+                .context("OT_SAML_IDP_PUBLIC_ORIGIN")?
+                .origin()
+                .ascii_serialization();
+            auth_settings.saml.idp_metadata_xml = auth_settings
+                .saml
+                .idp_metadata_xml
+                .replace(&internal_origin, &public_origin);
+            auth_settings
+                .saml
+                .read_metadata()
+                .map_err(anyhow::Error::msg)?;
+        }
         auth_settings.saml.role_attribute = "Role".into();
         auth_settings.saml.role_mapping = vec![auth::settings::RoleMap {
             value: "/UDS Core/Admin".into(),

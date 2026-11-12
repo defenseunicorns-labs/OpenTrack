@@ -5,7 +5,7 @@ metadata:
   source: https://github.com/defenseunicorns-labs/OpenTrack
   url: https://github.com/defenseunicorns-labs/OpenTrack
   vendor: Defense Unicorns Labs
-  version: 0.1.1
+  version: 0.1.2
 packages:
   - name: valkey
     namespace: valkey-opentrack
@@ -81,4 +81,4 @@ packages:
     repository: ghcr.io/uds-packages/private/nats
   - name: opentrack
     path: ../build/
-    ref: 0.1.1
+    ref: 0.1.2

@@ -2,7 +2,7 @@ domain: uds.dev
 
 image:
   repository: localhost:5000/opentrack
-  tag: uds-dev-0.1.1
+  tag: uds-dev-0.1.2
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -37,6 +37,7 @@ nats:
 sso:
   enabled: true
   metadataUrl: http://keycloak-http.keycloak.svc.cluster.local:8080/realms/uds/protocol/saml/descriptor
+  publicOrigin: ""
 
 auth:
   # Optional bootstrap Secret with email and password keys. Once an account

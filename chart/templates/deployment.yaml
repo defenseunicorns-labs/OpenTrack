@@ -70,6 +70,8 @@ spec:
             {{- if .Values.sso.enabled }}
             - name: OT_SAML_IDP_METADATA_URL
               value: {{ .Values.sso.metadataUrl | quote }}
+            - name: OT_SAML_IDP_PUBLIC_ORIGIN
+              value: {{ default (printf "https://sso.%s" .Values.domain) .Values.sso.publicOrigin | quote }}
             {{- end }}
           volumeMounts:
             - name: data
