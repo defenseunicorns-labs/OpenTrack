@@ -398,6 +398,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let common = cli.common;
     match cli.command {
         Command::Migrate => {
+            if common.db_backend == config::DbBackend::Postgres {
+                #[cfg(feature = "postgres")]
+                {
+                    let mut db = ot_store::postgres::PgControlStore::connect(
+                        &common.postgres.connection_url()?,
+                    )?;
+                    println!("postgres: schema version {}", db.schema_version()?);
+                    return Ok(());
+                }
+                #[cfg(not(feature = "postgres"))]
+                anyhow::bail!("this build has no PostgreSQL support");
+            }
             let db = common.open_db()?;
             println!(
                 "{}: schema version {}",

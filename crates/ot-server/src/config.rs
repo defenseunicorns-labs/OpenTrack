@@ -109,7 +109,7 @@ pub struct PostgresArgs {
         env = "OT_POSTGRES_USER",
         default_value = "opentrack"
     )]
-    pub user: String,
+    pub db_user: String,
 
     /// Kubernetes Secret mount; never put the password in command arguments.
     #[arg(long = "postgres-password-file", env = "OT_POSTGRES_PASSWORD_FILE")]
@@ -132,7 +132,7 @@ impl Default for PostgresArgs {
             host: "127.0.0.1".into(),
             port: 5432,
             database: "opentrack".into(),
-            user: "opentrack".into(),
+            db_user: "opentrack".into(),
             password_file: None,
             sslmode: "verify-full".into(),
             sslrootcert: None,
@@ -140,6 +140,7 @@ impl Default for PostgresArgs {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl PostgresArgs {
     pub fn password(&self) -> anyhow::Result<String> {
         let path = self.password_file.as_ref().ok_or_else(|| {
@@ -152,9 +153,27 @@ impl PostgresArgs {
         anyhow::ensure!(!password.is_empty(), "PostgreSQL password file is empty");
         Ok(password.to_owned())
     }
+
+    pub fn connection_url(&self) -> anyhow::Result<String> {
+        let mut url = url::Url::parse("postgresql://localhost")?;
+        url.set_host(Some(&self.host))?;
+        url.set_port(Some(self.port))
+            .map_err(|_| anyhow::anyhow!("invalid PostgreSQL port"))?;
+        url.set_username(&self.db_user)
+            .map_err(|_| anyhow::anyhow!("invalid PostgreSQL username"))?;
+        url.set_password(Some(&self.password()?))
+            .map_err(|_| anyhow::anyhow!("invalid PostgreSQL password"))?;
+        url.set_path(&self.database);
+        url.query_pairs_mut().append_pair("sslmode", &self.sslmode);
+        if let Some(cert) = &self.sslrootcert {
+            url.query_pairs_mut()
+                .append_pair("sslrootcert", &cert.to_string_lossy());
+        }
+        Ok(url.to_string())
+    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "postgres"))]
 mod postgres_args_tests {
     use super::PostgresArgs;
 

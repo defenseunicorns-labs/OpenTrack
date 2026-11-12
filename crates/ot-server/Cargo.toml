@@ -61,6 +61,7 @@ tracing-opentelemetry.workspace = true
 # (`--no-default-features`): accounts, API tokens and OpenStare sign-in stay.
 default = ["saml"]
 saml = ["dep:samael", "dep:flate2"]
+postgres = ["ot-store/postgres"]
 
 [dev-dependencies]
 http-body-util = "0.1"
