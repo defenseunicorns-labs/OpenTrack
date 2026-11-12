@@ -388,6 +388,10 @@ impl Db {
 
     /// Require (or stop requiring) a new password at the next sign-in.
     pub fn set_must_change_password(&mut self, id: &str, must: bool) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.set_must_change_password(id, must)?);
+        }
         self.connection().execute(
             "UPDATE users SET must_change_password = ?2 WHERE id = ?1",
             params![id, must],
@@ -493,6 +497,10 @@ impl Db {
     /// (except those listed by email), ending their sessions. Returns them
     /// as they were.
     pub fn disable_inactive(&mut self, cutoff_ms: i64, exempt: &[String]) -> Result<Vec<User>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.disable_inactive(cutoff_ms, exempt)?);
+        }
         let stale: Vec<User> = self
             .users()?
             .into_iter()
@@ -534,6 +542,10 @@ impl Db {
     /// `now_ms`, ending their sessions and revoking their API tokens.
     /// Returns them as they were.
     pub fn disable_expired(&mut self, now_ms: i64) -> Result<Vec<User>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.disable_expired(now_ms)?);
+        }
         let due: Vec<User> = self
             .users()?
             .into_iter()
@@ -620,6 +632,10 @@ impl Db {
 
     /// Save when sessions were last used (batched by the server).
     pub fn touch_sessions(&mut self, seen: &[(String, i64)]) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.touch_sessions(seen)?);
+        }
         self.write(|tx| {
             let mut st = tx.prepare(
                 "UPDATE sessions SET last_seen_ms = max(last_seen_ms, ?2)
@@ -651,6 +667,10 @@ impl Db {
         reason: &str,
         except: Option<&str>,
     ) -> Result<Vec<String>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.end_user_sessions(user_id, reason, except)?);
+        }
         let mut st = self.connection().prepare(
             "UPDATE sessions SET ended_at_ms = ?2, end_reason = ?3
              WHERE user_id = ?1 AND ended_at_ms IS NULL AND (?4 IS NULL OR id <> ?4)
@@ -670,6 +690,10 @@ impl Db {
         idle_before_ms: i64,
         admin_idle_before_ms: i64,
     ) -> Result<Vec<Session>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.end_stale_sessions(idle_before_ms, admin_idle_before_ms)?);
+        }
         let now = now_ms();
         self.write(|tx| {
             let mut st = tx.prepare(&format!(

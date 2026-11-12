@@ -10,6 +10,8 @@ use serde_json::Value;
 
 use crate::Decision;
 
+#[path = "postgres_auth_maintenance.rs"]
+mod auth_maintenance;
 #[path = "postgres_plugins.rs"]
 mod plugins;
 #[path = "postgres_sources.rs"]
@@ -905,5 +907,24 @@ mod tests {
         );
         selected.delete_plugin(&plugin_name, "test").unwrap();
         assert!(selected.get_plugin(&plugin_name).unwrap().is_none());
+        selected.set_must_change_password(&id, true).unwrap();
+        assert!(selected.user(&id).unwrap().unwrap().must_change_password);
+        selected
+            .touch_sessions(&[(session_id.clone(), crate::sqlite::now_ms())])
+            .unwrap();
+        assert!(
+            selected
+                .end_stale_sessions(0, 0)
+                .unwrap()
+                .iter()
+                .all(|s| s.id != session_id)
+        );
+        assert!(
+            selected
+                .disable_expired(crate::sqlite::now_ms())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(selected.disable_inactive(0, &[]).unwrap().is_empty());
     }
 }
