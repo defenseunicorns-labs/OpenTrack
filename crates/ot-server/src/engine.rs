@@ -3246,8 +3246,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let common = Common {
             sqlite: dir.path().join("ot.db"),
+            data_dir: None,
             redis: url,
             redis_ca: None,
+            redis_password_file: None,
             redis_cert: None,
             redis_key: None,
             redis_namespace: format!(
@@ -3263,6 +3265,7 @@ mod tests {
                 user: None,
                 password: None,
                 ca: None,
+                tls_first: false,
                 cert: None,
                 key: None,
                 stream: "TRACKS".into(),

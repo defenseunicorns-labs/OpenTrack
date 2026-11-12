@@ -46,12 +46,7 @@ pub fn is_loaded(name: &str) -> bool {
 /// The data directory (beside the database): a unix socket under it needs
 /// no plugin secret.
 pub fn data_dir(common: &Common) -> PathBuf {
-    common
-        .sqlite
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(std::path::Path::new("."))
-        .to_path_buf()
+    common.data_dir().to_path_buf()
 }
 
 /// An external plugin at `address`, as this node connects to it.

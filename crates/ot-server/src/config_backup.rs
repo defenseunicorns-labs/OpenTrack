@@ -792,8 +792,10 @@ pub(crate) mod tests {
     pub(crate) fn common(dir: &Path) -> Common {
         Common {
             sqlite: dir.join("ot.db"),
+            data_dir: None,
             redis: "redis://127.0.0.1:9".into(),
             redis_ca: None,
+            redis_password_file: None,
             redis_cert: None,
             redis_key: None,
             redis_namespace: "unused".into(),
@@ -805,6 +807,7 @@ pub(crate) mod tests {
                 user: None,
                 password: None,
                 ca: None,
+                tls_first: false,
                 cert: None,
                 key: None,
                 stream: "TRACKS".into(),

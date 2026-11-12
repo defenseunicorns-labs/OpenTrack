@@ -378,14 +378,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let role = cli.command.role();
     let telemetry = telemetry::init(role, !cli.command.is_server(), &cli.common);
-    // A site's own list of common passwords sits beside the database.
-    if let Some(dir) = cli.common.sqlite.parent() {
-        auth::password::set_site_dir(if dir.as_os_str().is_empty() {
-            std::path::Path::new(".")
-        } else {
-            dir
-        });
-    }
+    // A site's own list of common passwords sits in the data directory.
+    auth::password::set_site_dir(cli.common.data_dir());
     tracing::debug!("cryptography: AWS-LC FIPS module in FIPS mode");
     #[cfg(feature = "saml")]
     auth::openssl_fips();
@@ -564,8 +558,8 @@ async fn serve(common: Common, mut args: ServeArgs) -> anyhow::Result<()> {
                 .map_err(anyhow::Error::msg)?;
         }
         auth_settings.saml.role_attribute = "Role".into();
-        let admin_group = std::env::var("OT_SAML_ADMIN_GROUP")
-            .unwrap_or_else(|_| "/UDS Core/Admin".into());
+        let admin_group =
+            std::env::var("OT_SAML_ADMIN_GROUP").unwrap_or_else(|_| "/UDS Core/Admin".into());
         auth_settings.saml.role_mapping = vec![auth::settings::RoleMap {
             value: admin_group,
             role: auth::Role::Admin,

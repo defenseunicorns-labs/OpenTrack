@@ -331,11 +331,7 @@ pub fn load_secret(common: &Common, env: Option<&str>) -> anyhow::Result<Vec<u8>
         );
         return Ok(s.as_bytes().to_vec());
     }
-    let dir = common
-        .sqlite
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let dir = common.data_dir();
     let path = dir.join("session.key");
     if let Ok(s) = std::fs::read_to_string(&path) {
         let s = s.trim();

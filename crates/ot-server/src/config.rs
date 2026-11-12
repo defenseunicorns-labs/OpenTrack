@@ -13,6 +13,11 @@ pub struct Common {
     #[arg(long, env = "OT_SQLITE_PATH", default_value = "data/opentrack.db")]
     pub sqlite: PathBuf,
 
+    /// Directory for the session key, site password list, and plugin files.
+    /// Defaults to the SQLite database directory for existing installations.
+    #[arg(long, env = "OT_DATA_DIR")]
+    pub data_dir: Option<PathBuf>,
+
     /// Redis URL.
     #[arg(long, env = "OT_REDIS_URL", default_value = "redis://127.0.0.1:6379")]
     pub redis: String,
@@ -173,6 +178,14 @@ pub struct NatsArgs {
 }
 
 impl Common {
+    pub fn data_dir(&self) -> &std::path::Path {
+        self.data_dir.as_deref().unwrap_or_else(|| {
+            self.sqlite
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(std::path::Path::new("."))
+        })
+    }
     /// This instance's identity, stamped into each message's `publisher`.
     pub fn node_id(&self) -> String {
         format!("opentrack-{}", self.site)
