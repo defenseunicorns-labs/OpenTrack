@@ -3247,6 +3247,7 @@ mod tests {
         let common = Common {
             sqlite: dir.path().join("ot.db"),
             data_dir: None,
+            postgres: Default::default(),
             db_backend: crate::config::DbBackend::Sqlite,
             redis: url,
             redis_ca: None,

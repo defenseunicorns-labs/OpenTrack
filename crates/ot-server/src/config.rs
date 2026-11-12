@@ -29,6 +29,9 @@ pub struct Common {
     #[arg(long, env = "OT_DATA_DIR")]
     pub data_dir: Option<PathBuf>,
 
+    #[command(flatten)]
+    pub postgres: PostgresArgs,
+
     /// Redis URL.
     #[arg(long, env = "OT_REDIS_URL", default_value = "redis://127.0.0.1:6379")]
     pub redis: String,
@@ -76,6 +79,96 @@ pub struct Common {
     /// A connection a long-running role keeps open for `open_db` to hand out.
     #[arg(skip)]
     pub shared_db: SharedDb,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct PostgresArgs {
+    #[arg(
+        long = "postgres-host",
+        env = "OT_POSTGRES_HOST",
+        default_value = "127.0.0.1"
+    )]
+    pub host: String,
+
+    #[arg(
+        long = "postgres-port",
+        env = "OT_POSTGRES_PORT",
+        default_value_t = 5432
+    )]
+    pub port: u16,
+
+    #[arg(
+        long = "postgres-database",
+        env = "OT_POSTGRES_DATABASE",
+        default_value = "opentrack"
+    )]
+    pub database: String,
+
+    #[arg(
+        long = "postgres-user",
+        env = "OT_POSTGRES_USER",
+        default_value = "opentrack"
+    )]
+    pub user: String,
+
+    /// Kubernetes Secret mount; never put the password in command arguments.
+    #[arg(long = "postgres-password-file", env = "OT_POSTGRES_PASSWORD_FILE")]
+    pub password_file: Option<PathBuf>,
+
+    #[arg(
+        long = "postgres-sslmode",
+        env = "OT_POSTGRES_SSLMODE",
+        default_value = "verify-full"
+    )]
+    pub sslmode: String,
+
+    #[arg(long = "postgres-sslrootcert", env = "OT_POSTGRES_SSLROOTCERT")]
+    pub sslrootcert: Option<PathBuf>,
+}
+
+impl Default for PostgresArgs {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".into(),
+            port: 5432,
+            database: "opentrack".into(),
+            user: "opentrack".into(),
+            password_file: None,
+            sslmode: "verify-full".into(),
+            sslrootcert: None,
+        }
+    }
+}
+
+impl PostgresArgs {
+    pub fn password(&self) -> anyhow::Result<String> {
+        let path = self.password_file.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("OT_POSTGRES_PASSWORD_FILE is required for PostgreSQL")
+        })?;
+        let password = std::fs::read_to_string(path).map_err(|e| {
+            anyhow::anyhow!("reading PostgreSQL password file {}: {e}", path.display())
+        })?;
+        let password = password.trim_end_matches(['\r', '\n']);
+        anyhow::ensure!(!password.is_empty(), "PostgreSQL password file is empty");
+        Ok(password.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod postgres_args_tests {
+    use super::PostgresArgs;
+
+    #[test]
+    fn password_comes_from_a_file_without_trimming_password_characters() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("password");
+        std::fs::write(&path, "space at end \n").unwrap();
+        let args = PostgresArgs {
+            password_file: Some(path),
+            ..Default::default()
+        };
+        assert_eq!(args.password().unwrap(), "space at end ");
+    }
 }
 
 /// One SQLite connection kept open and shared. Opening a connection per

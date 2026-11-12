@@ -998,6 +998,7 @@ mod tests {
         let common = Common {
             sqlite: ":memory:".into(),
             data_dir: None,
+            postgres: Default::default(),
             db_backend: crate::config::DbBackend::Sqlite,
             redis: url.clone(),
             redis_ca: None,

@@ -13,6 +13,10 @@ retain their existing roles.
 - `OT_DB_BACKEND` now defaults to `sqlite`. Selecting `postgres` fails at
   startup until the PostgreSQL implementation is complete, rather than
   silently using SQLite.
+- PostgreSQL connection options are `OT_POSTGRES_HOST`, `OT_POSTGRES_PORT`,
+  `OT_POSTGRES_DATABASE`, `OT_POSTGRES_USER`, `OT_POSTGRES_PASSWORD_FILE`,
+  `OT_POSTGRES_SSLMODE`, and `OT_POSTGRES_SSLROOTCERT`. The password is read
+  from a Secret-mounted file; these settings are not used in SQLite mode.
 - Target fresh PostgreSQL databases in the first implementation. Importing an
   existing SQLite database is a separate migration task.
 - Keep the current REST API, track output contract, audit chain, UID behavior,
