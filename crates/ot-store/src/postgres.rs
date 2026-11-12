@@ -8,6 +8,8 @@ use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Nullable, Text};
 use serde_json::Value;
 
+use crate::Decision;
+
 const INITIAL_SCHEMA: &str = include_str!("../postgres/0001_init.sql");
 const SUPPORTED_SCHEMA: i64 = 1;
 
@@ -43,6 +45,31 @@ struct SchemaVersion {
 struct SettingsRow {
     #[diesel(sql_type = Text)]
     settings: String,
+}
+
+#[derive(QueryableByName)]
+struct DecisionId {
+    #[diesel(sql_type = BigInt)]
+    id: i64,
+}
+
+fn record_decision(
+    connection: &mut PgConnection,
+    decision: &Decision,
+) -> Result<i64, PostgresError> {
+    let row: DecisionId = diesel::sql_query(
+        "INSERT INTO decisions (at_ms, actor, op, reason, evidence, before, after)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+    )
+    .bind::<BigInt, _>(crate::sqlite::now_ms())
+    .bind::<Text, _>(&decision.actor)
+    .bind::<Text, _>(&decision.op)
+    .bind::<Nullable<Text>, _>(decision.reason.as_deref())
+    .bind::<Text, _>(decision.evidence.to_string())
+    .bind::<Nullable<Text>, _>(decision.before.as_ref().map(Value::to_string))
+    .bind::<Nullable<Text>, _>(decision.after.as_ref().map(Value::to_string))
+    .get_result(connection)?;
+    Ok(row.id)
 }
 
 pub struct PgControlStore {
@@ -92,6 +119,47 @@ impl PgControlStore {
         Ok(())
     }
 
+    pub fn app_settings(&mut self) -> Result<Value, PostgresError> {
+        let rows: Vec<SettingsRow> =
+            diesel::sql_query("SELECT settings FROM app_settings WHERE id = 1")
+                .load(&mut self.connection)?;
+        match rows.first() {
+            Some(row) => Ok(serde_json::from_str(&row.settings)?),
+            None => Ok(Value::Object(Default::default())),
+        }
+    }
+
+    pub fn put_app_settings(
+        &mut self,
+        settings: &Value,
+        actor: &str,
+    ) -> Result<i64, PostgresError> {
+        let mut evidence = settings.clone();
+        if let Some(url) = evidence.get_mut("basemap_tiles_url")
+            && url.as_str().is_some_and(|s| !s.is_empty())
+        {
+            *url = Value::String("(set)".into());
+        }
+        self.connection
+            .transaction::<i64, PostgresError, _>(|connection| {
+                let id = record_decision(
+                    connection,
+                    &Decision::new(actor, "app_settings").evidence(evidence),
+                )?;
+                diesel::sql_query(
+                    "INSERT INTO app_settings (id, settings, updated_at_ms, decision_id)
+                 VALUES (1, $1, $2, $3) ON CONFLICT(id) DO UPDATE SET
+                 settings = excluded.settings, updated_at_ms = excluded.updated_at_ms,
+                 decision_id = excluded.decision_id",
+                )
+                .bind::<Text, _>(settings.to_string())
+                .bind::<BigInt, _>(crate::sqlite::now_ms())
+                .bind::<BigInt, _>(id)
+                .execute(connection)?;
+                Ok(id)
+            })
+    }
+
     fn migrate(&mut self) -> Result<(), PostgresError> {
         let table: TableName =
             diesel::sql_query("SELECT to_regclass('public.control_schema_version')::text AS name")
@@ -117,6 +185,14 @@ impl PgControlStore {
 #[cfg(test)]
 mod tests {
     use super::PgControlStore;
+    use diesel::prelude::*;
+    use diesel::sql_types::Text;
+
+    #[derive(QueryableByName)]
+    struct EvidenceRow {
+        #[diesel(sql_type = Text)]
+        evidence: String,
+    }
 
     #[test]
     fn migrates_a_fresh_database_and_reopens_it() {
@@ -127,9 +203,18 @@ mod tests {
         assert_eq!(first.schema_version().unwrap(), 1);
         let mut second = PgControlStore::connect(&url).unwrap();
         assert_eq!(second.schema_version().unwrap(), 1);
-        assert_eq!(second.auth_settings().unwrap(), serde_json::json!({}));
         let settings = serde_json::json!({"disable_password_login": false});
         second.put_auth_settings(&settings).unwrap();
         assert_eq!(second.auth_settings().unwrap(), settings);
+        let app = serde_json::json!({"site_name": "Test", "basemap_tiles_url": "https://example.test/key"});
+        let id = second.put_app_settings(&app, "test").unwrap();
+        assert!(id > 0);
+        assert_eq!(second.app_settings().unwrap(), app);
+        let decision: EvidenceRow =
+            diesel::sql_query("SELECT evidence FROM decisions WHERE id = $1")
+                .bind::<diesel::sql_types::BigInt, _>(id)
+                .get_result(&mut second.connection)
+                .unwrap();
+        assert!(!decision.evidence.contains("example.test/key"));
     }
 }
