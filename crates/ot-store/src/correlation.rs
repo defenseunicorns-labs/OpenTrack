@@ -280,6 +280,10 @@ impl Db {
 
     /// Every live "do not pair" decision, as pairs of source track keys.
     pub fn do_not_pairs(&self) -> Result<Vec<(String, String)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.do_not_pairs()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT a.key, b.key FROM edges e JOIN nodes a ON a.id = e.src JOIN nodes b ON b.id = e.dst
              WHERE e.kind = 'DO_NOT_PAIR' AND e.valid_to_ms IS NULL",

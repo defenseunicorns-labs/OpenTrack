@@ -261,6 +261,10 @@ impl Db {
 
     /// Entries waiting for their tracks, oldest first.
     pub fn sync_pending(&self) -> Result<Vec<Entry>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_pending()?);
+        }
         let mut st = self.connection().prepare(&format!(
             "SELECT {COLUMNS} FROM sync_log WHERE status = 'pending' ORDER BY hlc"
         ))?;
@@ -269,6 +273,10 @@ impl Db {
 
     /// Give up on pending entries received before `before_ms`.
     pub fn sync_expire_pending(&mut self, before_ms: i64) -> Result<usize> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_expire_pending(before_ms)?);
+        }
         Ok(self.connection().execute(
             "UPDATE sync_log SET status = 'failed', detail = 'its tracks never arrived'
               WHERE status = 'pending' AND received_at_ms < ?1",

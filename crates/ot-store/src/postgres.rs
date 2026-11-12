@@ -24,6 +24,8 @@ mod registry;
 mod schema;
 #[path = "postgres_sources.rs"]
 mod sources;
+#[path = "postgres_sync.rs"]
+mod sync;
 #[path = "postgres_uid.rs"]
 mod uid;
 use crate::audit::{AuditEvent, GENESIS, row_hash};

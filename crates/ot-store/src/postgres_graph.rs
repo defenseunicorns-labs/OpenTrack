@@ -170,6 +170,14 @@ struct ReportRow {
 }
 
 #[derive(QueryableByName)]
+struct PairRow {
+    #[diesel(sql_type = Text)]
+    a: String,
+    #[diesel(sql_type = Text)]
+    b: String,
+}
+
+#[derive(QueryableByName)]
 struct EdgeRow {
     #[diesel(sql_type = BigInt)]
     id: i64,
@@ -216,6 +224,15 @@ struct DecisionRow {
 }
 
 impl PgControlStore {
+    pub fn do_not_pairs(&mut self) -> Result<Vec<(String, String)>, PostgresError> {
+        let rows: Vec<PairRow> = diesel::sql_query(
+            "SELECT a.key AS a, b.key AS b FROM edges e
+             JOIN nodes a ON a.id = e.src JOIN nodes b ON b.id = e.dst
+             WHERE e.kind = 'DO_NOT_PAIR' AND e.valid_to_ms IS NULL",
+        )
+        .load(&mut self.connection)?;
+        Ok(rows.into_iter().map(|row| (row.a, row.b)).collect())
+    }
     pub fn create_system_track(
         &mut self,
         site: SiteCode,
