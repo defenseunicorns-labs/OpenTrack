@@ -12,6 +12,8 @@ use crate::Decision;
 
 #[path = "postgres_auth_maintenance.rs"]
 mod auth_maintenance;
+#[path = "postgres_graph.rs"]
+mod graph;
 #[path = "postgres_plugins.rs"]
 mod plugins;
 #[path = "postgres_sources.rs"]
@@ -30,6 +32,8 @@ pub enum PostgresError {
     Query(#[from] diesel::result::Error),
     #[error("invalid stored JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Uid(#[from] ot_core::UidError),
     #[error("PostgreSQL schema migration failed: {0}")]
     Migration(String),
     #[error("PostgreSQL schema version {found} is newer than this build supports ({supported})")]
@@ -873,6 +877,11 @@ mod tests {
             .record(&crate::Decision::new("test", "pg_dispatch_test"))
             .unwrap();
         assert!(selected_decision > 0);
+        assert_eq!(
+            selected.decision(selected_decision).unwrap().unwrap()["op"],
+            "pg_dispatch_test"
+        );
+        assert!(selected.live_reports().unwrap().is_empty());
         let plugin_name = format!("pg-plugin-{unique}");
         let manifest = serde_json::json!({"kinds": ["tracker"]});
         let grants = serde_json::json!({});

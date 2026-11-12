@@ -469,6 +469,10 @@ impl Db {
     /// Every live source-track → system-track link, as
     /// (`<source>/<key>`, UID). The engine warms its map from this.
     pub fn live_reports(&self) -> Result<Vec<(String, Uid)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.live_reports()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT s.key, d.key FROM edges e
              JOIN nodes s ON s.id = e.src JOIN nodes d ON d.id = e.dst
@@ -485,10 +489,18 @@ impl Db {
     /// Every edge that ever touched a system track, with the decisions that
     /// opened and closed it: the answer to "why is this one track?".
     pub fn explain(&self, uid: Uid) -> Result<Vec<graph::EdgeRecord>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.explain(uid)?);
+        }
         graph::explain_system_track(self.connection(), &uid.to_string())
     }
 
     pub fn decision(&self, id: i64) -> Result<Option<Value>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.decision(id)?);
+        }
         self.connection()
             .query_row(
                 "SELECT json_object('id', id, 'at_ms', at_ms, 'actor', actor, 'op', op,
