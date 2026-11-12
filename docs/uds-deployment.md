@@ -10,12 +10,14 @@ From the repository root, with a running UDS Core cluster and access to the UDS 
 docker build --platform linux/arm64 -t localhost:5000/opentrack:uds-dev-0.1.2 .
 uds zarf package create . --architecture arm64 --output build --confirm
 uds create bundle --architecture arm64 --output build --confirm
-uds deploy build/uds-bundle-opentrack-data-arm64-0.1.2.tar.zst --confirm
+uds deploy build/uds-bundle-opentrack-data-arm64-0.1.3.tar.zst --confirm
 ```
 
-For an already deployed UDS Data bundle, deploy only the OpenTrack package using `uds zarf package deploy build/zarf-package-opentrack-arm64-0.1.2.tar.zst --confirm`. The UDS Data bundle must create the `opentrack` PostgreSQL credentials, copy the Valkey password into the `opentrack` namespace, and provide the NATS CA ConfigMap in the `nats` namespace. The chart resolves the Valkey password and NATS CA from those resources at install time.
+For an already deployed UDS Data bundle, deploy only the OpenTrack package using `uds zarf package deploy build/zarf-package-opentrack-arm64-0.1.3.tar.zst --confirm`. The UDS Data bundle must create the `opentrack` PostgreSQL credentials, copy the Valkey password into the `opentrack` namespace, and provide the NATS CA ConfigMap in the `nats` namespace. The chart resolves the Valkey password and NATS CA from those resources at install time.
 
 To bootstrap a local administrator, create the `opentrack-bootstrap-admin` Secret in the `opentrack` namespace with `email` and `password` keys before installing the chart. The existing account is kept on subsequent deployments. SSO users authenticate through the UDS Keycloak SAML client; the chart maps the `/UDS Core/Admin` group to OpenTrack Admin and other SSO users to Viewer. OpenTrack fetches metadata over the internal Keycloak service, then rewrites its URLs to the browser-facing `https://sso.<domain>` origin. Set `sso.publicOrigin` if the Keycloak browser URL differs.
+
+OpenTrack currently sends unsigned SAML sign-in requests. The chart sets `saml.client.signature: "false"` for its Keycloak client so Keycloak accepts them. OpenTrack still verifies signed SAML responses. Signing the outgoing requests is future work before enabling Keycloak's client-signature requirement.
 
 ## Verify
 
