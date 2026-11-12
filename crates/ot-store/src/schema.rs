@@ -22,6 +22,10 @@ pub struct SchemaVersion {
 impl Db {
     /// The newest published output schema version (0 before any).
     pub fn latest_published_schema(&self) -> Result<u32> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.latest_published_schema()?);
+        }
         Ok(self.connection().query_row(
             "SELECT coalesce(max(version), 0) FROM schema_versions WHERE status = 'published'",
             [],
@@ -30,6 +34,10 @@ impl Db {
     }
 
     pub fn schema_versions(&self) -> Result<Vec<SchemaVersion>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.schema_versions()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT version, status, published_at_ms, notes FROM schema_versions ORDER BY version",
         )?;
@@ -51,6 +59,10 @@ impl Db {
     }
 
     pub fn schema_version_get(&self, version: u32) -> Result<Option<SchemaVersion>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.schema_version_get(version)?);
+        }
         Ok(self
             .schema_versions()?
             .into_iter()

@@ -14,8 +14,12 @@ use crate::Decision;
 mod auth_maintenance;
 #[path = "postgres_graph.rs"]
 mod graph;
+#[path = "postgres_groups.rs"]
+mod groups;
 #[path = "postgres_plugins.rs"]
 mod plugins;
+#[path = "postgres_schema.rs"]
+mod schema;
 #[path = "postgres_sources.rs"]
 mod sources;
 #[path = "postgres_uid.rs"]
@@ -864,6 +868,9 @@ mod tests {
         assert!(second.get_source(&source_id).unwrap().is_none());
         let mut selected = crate::Db::open_postgres(&url).unwrap();
         assert_eq!(selected.schema_version().unwrap(), 1);
+        assert!(selected.latest_published_schema().unwrap() >= 1);
+        assert!(!selected.schema_versions().unwrap().is_empty());
+        assert!(selected.groups().unwrap().is_empty());
         assert!(selected.user_by_email(&email).unwrap().is_some());
         assert_eq!(selected.auth_settings().unwrap(), settings);
         assert_eq!(selected.app_settings().unwrap(), app);

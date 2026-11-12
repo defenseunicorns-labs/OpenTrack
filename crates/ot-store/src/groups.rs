@@ -278,6 +278,10 @@ impl Db {
 
     /// Every live group with its members.
     pub fn groups(&self) -> Result<Vec<Group>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.groups()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT uid, spec, created_at_ms, updated_at_ms FROM track_groups
              WHERE dissolved_at_ms IS NULL ORDER BY created_at_ms",
