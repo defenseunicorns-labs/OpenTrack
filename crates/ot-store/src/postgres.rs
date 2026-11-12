@@ -9,6 +9,7 @@ use diesel::sql_types::{BigInt, Nullable, Text};
 use serde_json::Value;
 
 use crate::Decision;
+use crate::audit::{AuditEvent, GENESIS, row_hash};
 use crate::auth::{NewSession, NewUser, Session, User};
 
 const INITIAL_SCHEMA: &str = include_str!("../postgres/0001_init.sql");
@@ -56,6 +57,65 @@ struct SettingsRow {
 struct DecisionId {
     #[diesel(sql_type = BigInt)]
     id: i64,
+}
+
+#[derive(QueryableByName)]
+struct AuditHead {
+    #[diesel(sql_type = BigInt)]
+    seq: i64,
+    #[diesel(sql_type = Text)]
+    hash: String,
+}
+
+fn append_audit(
+    connection: &mut PgConnection,
+    event: &AuditEvent,
+    at_ms: i64,
+    decision_id: Option<i64>,
+) -> Result<i64, PostgresError> {
+    // One advisory transaction lock serializes audit appends from every pod.
+    let _: SchemaVersion =
+        diesel::sql_query("SELECT 1::bigint AS version FROM pg_advisory_xact_lock(6869400123456)")
+            .get_result(connection)?;
+    let head: AuditHead = diesel::sql_query(
+        "SELECT coalesce((SELECT seq FROM audit ORDER BY seq DESC LIMIT 1),
+                         (SELECT seq FROM audit_anchor WHERE id = 1), 0)::bigint AS seq,
+                coalesce((SELECT hash FROM audit ORDER BY seq DESC LIMIT 1),
+                         (SELECT hash FROM audit_anchor WHERE id = 1), $1)::text AS hash",
+    )
+    .bind::<Text, _>(GENESIS)
+    .get_result(connection)?;
+    let seq = head.seq + 1;
+    let outcome = if event.success { "success" } else { "failure" };
+    let detail = event.detail.to_string();
+    let hash = row_hash(
+        &head.hash,
+        seq,
+        at_ms,
+        &event.actor,
+        &event.op,
+        outcome,
+        event.ip.as_deref(),
+        &detail,
+        decision_id,
+    );
+    diesel::sql_query(
+        "INSERT INTO audit (seq, at_ms, actor, op, outcome, ip, detail,
+         decision_id, prev_hash, hash) VALUES
+         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+    )
+    .bind::<BigInt, _>(seq)
+    .bind::<BigInt, _>(at_ms)
+    .bind::<Text, _>(&event.actor)
+    .bind::<Text, _>(&event.op)
+    .bind::<Text, _>(outcome)
+    .bind::<Nullable<Text>, _>(event.ip.as_deref())
+    .bind::<Text, _>(detail)
+    .bind::<Nullable<BigInt>, _>(decision_id)
+    .bind::<Text, _>(head.hash)
+    .bind::<Text, _>(hash)
+    .execute(connection)?;
+    Ok(seq)
 }
 
 #[derive(QueryableByName)]
@@ -189,11 +249,12 @@ fn record_decision(
     connection: &mut PgConnection,
     decision: &Decision,
 ) -> Result<i64, PostgresError> {
+    let now = crate::sqlite::now_ms();
     let row: DecisionId = diesel::sql_query(
         "INSERT INTO decisions (at_ms, actor, op, reason, evidence, before, after)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
     )
-    .bind::<BigInt, _>(crate::sqlite::now_ms())
+    .bind::<BigInt, _>(now)
     .bind::<Text, _>(&decision.actor)
     .bind::<Text, _>(&decision.op)
     .bind::<Nullable<Text>, _>(decision.reason.as_deref())
@@ -201,6 +262,13 @@ fn record_decision(
     .bind::<Nullable<Text>, _>(decision.before.as_ref().map(Value::to_string))
     .bind::<Nullable<Text>, _>(decision.after.as_ref().map(Value::to_string))
     .get_result(connection)?;
+    let event = AuditEvent::new(&decision.actor, &decision.op).detail(serde_json::json!({
+        "reason": decision.reason,
+        "evidence": decision.evidence,
+        "before": decision.before,
+        "after": decision.after,
+    }));
+    append_audit(connection, &event, now, Some(row.id))?;
     Ok(row.id)
 }
 
@@ -343,7 +411,30 @@ impl PgControlStore {
     }
 
     pub fn record(&mut self, decision: &Decision) -> Result<i64, PostgresError> {
-        record_decision(&mut self.connection, decision)
+        self.connection
+            .transaction::<i64, PostgresError, _>(|connection| {
+                record_decision(connection, decision)
+            })
+    }
+
+    pub fn audit(&mut self, event: &AuditEvent) -> Result<i64, PostgresError> {
+        let at_ms = crate::sqlite::now_ms();
+        self.connection
+            .transaction::<i64, PostgresError, _>(|connection| {
+                append_audit(connection, event, at_ms, None)
+            })
+    }
+
+    pub fn audit_head(&mut self) -> Result<(i64, String), PostgresError> {
+        let head: AuditHead = diesel::sql_query(
+            "SELECT coalesce((SELECT seq FROM audit ORDER BY seq DESC LIMIT 1),
+                             (SELECT seq FROM audit_anchor WHERE id = 1), 0)::bigint AS seq,
+                    coalesce((SELECT hash FROM audit ORDER BY seq DESC LIMIT 1),
+                             (SELECT hash FROM audit_anchor WHERE id = 1), $1)::text AS hash",
+        )
+        .bind::<Text, _>(GENESIS)
+        .get_result(&mut self.connection)?;
+        Ok((head.seq, head.hash))
     }
 
     pub fn note_login_success(&mut self, id: &str) -> Result<(Option<i64>, i64), PostgresError> {
@@ -610,6 +701,20 @@ mod tests {
         evidence: String,
     }
 
+    #[derive(QueryableByName)]
+    struct AuditRowForTest {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        seq: i64,
+        #[diesel(sql_type = Text)]
+        hash: String,
+        #[diesel(sql_type = Text)]
+        prev_hash: String,
+        #[diesel(sql_type = Text)]
+        op: String,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+        decision_id: Option<i64>,
+    }
+
     #[test]
     fn migrates_a_fresh_database_and_reopens_it() {
         let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
@@ -632,6 +737,22 @@ mod tests {
                 .get_result(&mut second.connection)
                 .unwrap();
         assert!(!decision.evidence.contains("example.test/key"));
+        let audit: AuditRowForTest = diesel::sql_query(
+            "SELECT seq, hash, prev_hash, op, decision_id FROM audit
+             WHERE decision_id = $1",
+        )
+        .bind::<diesel::sql_types::BigInt, _>(id)
+        .get_result(&mut second.connection)
+        .unwrap();
+        assert_eq!(audit.op, "app_settings");
+        assert_eq!(audit.decision_id, Some(id));
+        assert_eq!(audit.hash.len(), 64);
+        assert_eq!(audit.prev_hash.len(), 64);
+        let event_seq = second
+            .audit(&crate::AuditEvent::new("test", "pg_test_login"))
+            .unwrap();
+        assert_eq!(event_seq, audit.seq + 1);
+        assert_eq!(second.audit_head().unwrap().0, event_seq);
         let correlation = serde_json::json!({"threshold": 0.8});
         let decision = crate::Decision::new("test", "correlation_settings");
         let id = second
