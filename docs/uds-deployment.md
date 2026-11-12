@@ -7,13 +7,13 @@ The `bundle/uds-bundle.yaml` definition combines the OpenTrack Zarf package with
 From the repository root, with a running UDS Core cluster and access to the UDS Data package registry:
 
 ```sh
-docker build --platform linux/arm64 -t localhost:5000/opentrack:uds-dev .
+docker build --platform linux/arm64 -t localhost:5000/opentrack:uds-dev-0.1.1 .
 uds zarf package create . --architecture arm64 --output build --confirm
 uds create bundle --architecture arm64 --output build --confirm
-uds deploy build/uds-bundle-opentrack-data-arm64-0.1.0.tar.zst --confirm
+uds deploy build/uds-bundle-opentrack-data-arm64-0.1.1.tar.zst --confirm
 ```
 
-For an already deployed UDS Data bundle, deploy only the OpenTrack package using `uds zarf package deploy build/zarf-package-opentrack-arm64-0.1.0.tar.zst --confirm`. The UDS Data bundle must create the `opentrack` PostgreSQL credentials, copy the Valkey password into the `opentrack` namespace, and provide the NATS CA ConfigMap in the `nats` namespace. The chart resolves the Valkey password and NATS CA from those resources at install time.
+For an already deployed UDS Data bundle, deploy only the OpenTrack package using `uds zarf package deploy build/zarf-package-opentrack-arm64-0.1.1.tar.zst --confirm`. The UDS Data bundle must create the `opentrack` PostgreSQL credentials, copy the Valkey password into the `opentrack` namespace, and provide the NATS CA ConfigMap in the `nats` namespace. The chart resolves the Valkey password and NATS CA from those resources at install time.
 
 To bootstrap a local administrator, create the `opentrack-bootstrap-admin` Secret in the `opentrack` namespace with `email` and `password` keys before installing the chart. The existing account is kept on subsequent deployments. SSO users authenticate through the UDS Keycloak SAML client; the chart maps the `/UDS Core/Admin` group to OpenTrack Admin and other SSO users to Viewer.
 
