@@ -66,7 +66,7 @@ pub(super) fn upsert_node(
     Ok(row.id)
 }
 
-fn live_system_node(
+pub(super) fn live_system_node(
     connection: &mut diesel::pg::PgConnection,
     uid: Uid,
 ) -> Result<i64, PostgresError> {

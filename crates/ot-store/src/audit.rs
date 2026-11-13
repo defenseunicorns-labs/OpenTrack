@@ -446,6 +446,10 @@ impl Db {
 
     /// Check every row's hash and link, from the start or the anchor.
     pub fn verify_audit(&self) -> Result<AuditVerify> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.verify_audit()?);
+        }
         let c = self.connection();
         let anchor = anchor(c)?;
         let (mut expect_seq, mut prev) = anchor

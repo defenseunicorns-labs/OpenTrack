@@ -22,6 +22,8 @@ mod graph;
 mod groups;
 #[path = "postgres_plugins.rs"]
 mod plugins;
+#[path = "postgres_probe.rs"]
+mod probe;
 #[path = "postgres_registry.rs"]
 mod registry;
 #[path = "postgres_schema.rs"]

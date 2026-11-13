@@ -26,6 +26,10 @@ impl Db {
         frames: &[(Vec<u8>, Option<serde_json::Value>)],
         cap: usize,
     ) -> Result<usize> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.store_probe_samples(source_id, frames, cap)?);
+        }
         self.write(|tx| {
             tx.execute("DELETE FROM probe_samples WHERE source_id = ?1", [source_id])?;
             let now = now_ms();
@@ -43,6 +47,10 @@ impl Db {
 
     /// Stored samples of a source, oldest first.
     pub fn probe_samples(&self, source_id: &str, limit: usize) -> Result<Vec<Sample>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.probe_samples(source_id, limit)?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT captured_at_ms, frame, meta FROM probe_samples WHERE source_id = ?1 ORDER BY id LIMIT ?2",
         )?;
