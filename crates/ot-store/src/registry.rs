@@ -765,6 +765,10 @@ impl Db {
 
     /// An entity's revisions, newest first.
     pub fn entity_revisions(&self, id: &str, limit: usize) -> Result<Vec<EntityRevision>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.entity_revisions(id, limit)?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT r.id, r.entity, r.saved_at_ms, r.decision_id, d.actor
              FROM entity_revisions r LEFT JOIN decisions d ON d.id = r.decision_id
@@ -801,6 +805,10 @@ impl Db {
         limit: usize,
         offset: usize,
     ) -> Result<(Vec<Entity>, usize)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.list_entities(q, limit, offset)?);
+        }
         let q = q.trim();
         let pattern = format!("%{}%", q.replace(['%', '_'], ""));
         let filter = "(?1 = '%%' OR e.name LIKE ?1 COLLATE NOCASE OR e.id = ?2
@@ -965,6 +973,10 @@ impl Db {
 
     /// The entity an identifier resolves to, if any.
     pub fn registry_resolve(&self, scheme: &str, value: &str) -> Result<Option<Entity>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_resolve(scheme, value)?);
+        }
         let id: Option<String> = self
             .connection()
             .query_row(
@@ -981,6 +993,10 @@ impl Db {
 
     /// Every attribute key in use, with how many entities have it.
     pub fn attribute_keys(&self) -> Result<Vec<(String, i64)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.attribute_keys()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT a.value ->> '$.key' AS k, count(*) FROM registry_entities e, json_each(e.attributes) a
              GROUP BY k ORDER BY k",

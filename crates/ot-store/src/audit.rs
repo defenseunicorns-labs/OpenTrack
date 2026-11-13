@@ -390,6 +390,10 @@ impl Db {
 
     /// Rows matching `f`, newest first.
     pub fn audit_rows(&self, f: &AuditFilter) -> Result<Vec<AuditRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.audit_rows(f)?);
+        }
         let mut clauses: Vec<String> = Vec::new();
         let mut args: Vec<Box<dyn ToSql>> = Vec::new();
         let mut arg = |clause: &str, v: Box<dyn ToSql>, args: &mut Vec<Box<dyn ToSql>>| {

@@ -10,6 +10,8 @@ use serde_json::Value;
 
 use crate::Decision;
 
+#[path = "postgres_audit.rs"]
+mod audit_queries;
 #[path = "postgres_auth_maintenance.rs"]
 mod auth_maintenance;
 #[path = "postgres_graph.rs"]
@@ -774,6 +776,16 @@ mod tests {
             .unwrap();
         assert_eq!(event_seq, audit.seq + 1);
         assert_eq!(second.audit_head().unwrap().0, event_seq);
+        let found = second
+            .audit_rows(&crate::audit::AuditFilter {
+                ops: vec!["pg_test_login".to_owned()],
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!found.is_empty());
+        assert!(found.iter().all(|row| row.op == "pg_test_login"));
+        assert_eq!(found[0].seq, event_seq);
         let correlation = serde_json::json!({"threshold": 0.8});
         let decision = crate::Decision::new("test", "correlation_settings");
         let id = second
@@ -877,6 +889,14 @@ mod tests {
         assert!(selected.groups().unwrap().is_empty());
         assert!(selected.registry_rows().unwrap().is_empty());
         assert!(selected.registry_version().unwrap().contains(':'));
+        assert_eq!(selected.list_entities("", 10, 0).unwrap().1, 0);
+        assert!(selected.attribute_keys().unwrap().is_empty());
+        assert!(
+            selected
+                .registry_resolve("mmsi", "missing")
+                .unwrap()
+                .is_none()
+        );
         assert!(selected.user_by_email(&email).unwrap().is_some());
         assert_eq!(selected.auth_settings().unwrap(), settings);
         assert_eq!(selected.app_settings().unwrap(), app);

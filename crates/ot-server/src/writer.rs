@@ -166,7 +166,15 @@ impl<S: TrackSink> Writer<S> {
         loop {
             tokio::select! {
                 _ = &mut shutdown => break,
-                res = self.pump(pending) => match res {
+                res = async {
+                    // Create and validate the stream even when the outbox is empty.
+                    // The status endpoint should reflect readiness before the first track.
+                    if self.needs_prepare {
+                        self.sink.prepare().await?;
+                        self.needs_prepare = false;
+                    }
+                    self.pump(pending).await
+                } => match res {
                     Ok(()) => {
                         pending = false;
                         backoff = Duration::from_millis(500);

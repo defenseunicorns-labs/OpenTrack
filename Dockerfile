@@ -71,7 +71,11 @@ COPY third_party ./third_party
 COPY crates ./crates
 # The plugin interface the WebAssembly host is generated from.
 COPY wit ./wit
-RUN cargo build --release --locked --features postgres --bin opentrack
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
+    cargo build --release --locked --features postgres --bin opentrack \
+    && mkdir -p /out \
+    && cp target/release/opentrack /out/opentrack
 
 # The runtime base: distroless Debian 12, the non-root variant (OpenTrack
 # runs as uid 1000, below, so volumes written by earlier images still fit).
@@ -87,7 +91,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libxmlsec1 libxmlsec1-openssl libxml2 libpq5 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=runtime-base / /base/
-COPY --from=server /src/target/release/opentrack /usr/local/bin/opentrack
+COPY --from=server /out/opentrack /usr/local/bin/opentrack
 RUN set -eu; \
     engine="$(dpkg -L libxmlsec1-openssl | grep '/libxmlsec1-openssl\.so\.1$')"; \
     mkdir -p /out/etc /out/var/lib/dpkg/status.d; \

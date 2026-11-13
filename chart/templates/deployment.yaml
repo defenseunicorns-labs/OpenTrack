@@ -1,5 +1,5 @@
-{{- if ne .Values.storage.backend "sqlite" }}
-{{- fail "OpenTrack PostgreSQL runtime is not implemented yet; refusing to deploy a SQLite process as PostgreSQL" }}
+{{- if not (has .Values.storage.backend (list "sqlite" "postgres")) }}
+{{- fail "storage.backend must be sqlite or postgres" }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -40,11 +40,11 @@ spec:
               value: "https://opentrack.{{ .Values.domain }}"
             - name: OT_SITE_CODE
               value: {{ .Values.siteCode | quote }}
-            - name: OT_SQLITE_PATH
-              value: /data/opentrack.db
             - name: OT_DB_BACKEND
               value: {{ .Values.storage.backend | quote }}
             {{- if eq .Values.storage.backend "postgres" }}
+            - name: OT_DATA_DIR
+              value: /data
             - name: OT_POSTGRES_HOST
               value: {{ .Values.storage.postgres.host | quote }}
             - name: OT_POSTGRES_PORT
@@ -60,6 +60,9 @@ spec:
               value: /etc/opentrack/postgres/password
             - name: OT_POSTGRES_SSLMODE
               value: {{ .Values.storage.postgres.sslmode | quote }}
+            {{- else }}
+            - name: OT_SQLITE_PATH
+              value: /data/opentrack.db
             {{- end }}
             - name: OT_ADMIN_EMAIL
               valueFrom:

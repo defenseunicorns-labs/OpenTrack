@@ -5,7 +5,41 @@ use diesel::sql_types::{BigInt, Nullable, Text};
 use serde_json::{Value, json};
 
 use super::{PgControlStore, PostgresError, VersionText};
-use crate::registry::{Entity, RegistryIdentifier, RegistryRow};
+use crate::registry::{Entity, EntityRevision, RegistryIdentifier, RegistryRow};
+
+#[derive(QueryableByName)]
+struct IdRow {
+    #[diesel(sql_type = Text)]
+    id: String,
+}
+
+#[derive(QueryableByName)]
+struct CountRow {
+    #[diesel(sql_type = BigInt)]
+    n: i64,
+}
+
+#[derive(QueryableByName)]
+struct KeyRow {
+    #[diesel(sql_type = Text)]
+    key: String,
+    #[diesel(sql_type = BigInt)]
+    n: i64,
+}
+
+#[derive(QueryableByName)]
+struct RevisionRow {
+    #[diesel(sql_type = BigInt)]
+    id: i64,
+    #[diesel(sql_type = Text)]
+    entity: String,
+    #[diesel(sql_type = BigInt)]
+    saved_at_ms: i64,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    decision_id: Option<i64>,
+    #[diesel(sql_type = Nullable<Text>)]
+    actor: Option<String>,
+}
 
 #[derive(QueryableByName)]
 struct EntityRow {
@@ -52,6 +86,94 @@ struct IdentifierRow {
 }
 
 impl PgControlStore {
+    pub fn registry_resolve(
+        &mut self,
+        scheme: &str,
+        value: &str,
+    ) -> Result<Option<Entity>, PostgresError> {
+        let rows: Vec<IdRow> = diesel::sql_query(
+            "SELECT entity_id AS id FROM registry_identifiers WHERE scheme = $1 AND value = $2",
+        )
+        .bind::<Text, _>(scheme)
+        .bind::<Text, _>(value)
+        .load(&mut self.connection)?;
+        match rows.into_iter().next() {
+            Some(row) => self.entity(&row.id),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_entities(
+        &mut self,
+        q: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<Entity>, usize), PostgresError> {
+        let q = q.trim();
+        let pattern = format!("%{}%", q.replace(['%', '_'], ""));
+        let filter = "($1 = '%%' OR e.name ILIKE $1 OR e.id = $2 OR EXISTS (
+            SELECT 1 FROM registry_identifiers i WHERE i.entity_id = e.id AND i.value ILIKE $1))";
+        let total: CountRow = diesel::sql_query(format!(
+            "SELECT count(*)::bigint AS n FROM registry_entities e WHERE {filter}"
+        ))
+        .bind::<Text, _>(&pattern)
+        .bind::<Text, _>(q)
+        .get_result(&mut self.connection)?;
+        let ids: Vec<IdRow> = diesel::sql_query(format!(
+            "SELECT e.id FROM registry_entities e WHERE {filter}
+             ORDER BY e.name IS NULL, lower(e.name), e.id LIMIT $3 OFFSET $4"
+        ))
+        .bind::<Text, _>(&pattern)
+        .bind::<Text, _>(q)
+        .bind::<BigInt, _>(limit.min(i64::MAX as usize) as i64)
+        .bind::<BigInt, _>(offset.min(i64::MAX as usize) as i64)
+        .load(&mut self.connection)?;
+        let page = ids
+            .into_iter()
+            .map(|row| self.entity(&row.id))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        Ok((page, total.n as usize))
+    }
+
+    pub fn attribute_keys(&mut self) -> Result<Vec<(String, i64)>, PostgresError> {
+        let rows: Vec<KeyRow> = diesel::sql_query(
+            "SELECT a.value ->> 'key' AS key, count(*)::bigint AS n
+             FROM registry_entities e, jsonb_array_elements(e.attributes::jsonb) AS a(value)
+             GROUP BY key ORDER BY key",
+        )
+        .load(&mut self.connection)?;
+        Ok(rows.into_iter().map(|row| (row.key, row.n)).collect())
+    }
+
+    pub fn entity_revisions(
+        &mut self,
+        id: &str,
+        limit: usize,
+    ) -> Result<Vec<EntityRevision>, PostgresError> {
+        let rows: Vec<RevisionRow> = diesel::sql_query(
+            "SELECT r.id, r.entity, r.saved_at_ms, r.decision_id, d.actor
+             FROM entity_revisions r LEFT JOIN decisions d ON d.id = r.decision_id
+             WHERE r.entity_id = $1 ORDER BY r.id DESC LIMIT $2",
+        )
+        .bind::<Text, _>(id)
+        .bind::<BigInt, _>(limit.min(i64::MAX as usize) as i64)
+        .load(&mut self.connection)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(EntityRevision {
+                    id: row.id,
+                    entity: serde_json::from_str(&row.entity)?,
+                    saved_at_ms: row.saved_at_ms,
+                    decision_id: row.decision_id,
+                    actor: row.actor,
+                })
+            })
+            .collect()
+    }
+
     pub fn registry_counts(&mut self) -> Result<Value, PostgresError> {
         #[derive(QueryableByName)]
         struct Counts {
