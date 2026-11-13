@@ -48,6 +48,8 @@ pub enum PostgresError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Uid(#[from] ot_core::UidError),
+    #[error(transparent)]
+    SyncId(#[from] ot_sync::IdError),
     #[error("PostgreSQL schema migration failed: {0}")]
     Migration(String),
     #[error("PostgreSQL schema version {found} is newer than this build supports ({supported})")]
