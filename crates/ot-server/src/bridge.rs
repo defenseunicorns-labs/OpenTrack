@@ -155,6 +155,7 @@ impl BridgeAuthArgs {
                 None => self.password.clone().filter(|p| !p.is_empty()),
             },
             tls_ca: nonempty(self.ca.clone()),
+            tls_first: false,
             tls_cert: nonempty(self.cert.clone()),
             tls_key: nonempty(self.key.clone()),
         })

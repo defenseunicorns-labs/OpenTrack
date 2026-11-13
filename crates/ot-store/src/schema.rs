@@ -22,6 +22,10 @@ pub struct SchemaVersion {
 impl Db {
     /// The newest published output schema version (0 before any).
     pub fn latest_published_schema(&self) -> Result<u32> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.latest_published_schema()?);
+        }
         Ok(self.connection().query_row(
             "SELECT coalesce(max(version), 0) FROM schema_versions WHERE status = 'published'",
             [],
@@ -30,6 +34,10 @@ impl Db {
     }
 
     pub fn schema_versions(&self) -> Result<Vec<SchemaVersion>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.schema_versions()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT version, status, published_at_ms, notes FROM schema_versions ORDER BY version",
         )?;
@@ -51,6 +59,10 @@ impl Db {
     }
 
     pub fn schema_version_get(&self, version: u32) -> Result<Option<SchemaVersion>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.schema_version_get(version)?);
+        }
         Ok(self
             .schema_versions()?
             .into_iter()
@@ -104,6 +116,10 @@ impl Db {
         notes: Option<&str>,
         actor: &str,
     ) -> Result<SchemaVersion> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.put_schema_draft(fields, notes, actor)?);
+        }
         let version = self.write(|tx| {
             let now = now_ms();
             let draft: Option<u32> = tx
@@ -156,6 +172,10 @@ impl Db {
 
     /// Publish the draft; it can never change again.
     pub fn publish_schema_draft(&mut self, actor: &str) -> Result<SchemaVersion> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.publish_schema_draft(actor)?);
+        }
         let version = self.write(|tx| {
             let draft: u32 = tx
                 .query_row("SELECT version FROM schema_versions WHERE status = 'draft'", [], |r| r.get(0))
@@ -183,6 +203,10 @@ impl Db {
         notes: Option<&str>,
         actor: &str,
     ) -> Result<SchemaVersion> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.publish_schema_as(fields, notes, actor)?);
+        }
         let draft: Option<u32> = self
             .connection()
             .query_row(
@@ -273,6 +297,10 @@ impl Db {
     }
 
     pub fn discard_schema_draft(&mut self, actor: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.discard_schema_draft(actor)?);
+        }
         self.write(|tx| {
             let n = tx.execute(
                 "DELETE FROM extension_fields WHERE schema_version IN

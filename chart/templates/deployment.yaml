@@ -1,0 +1,168 @@
+{{- if not (has .Values.storage.backend (list "sqlite" "postgres")) }}
+{{- fail "storage.backend must be sqlite or postgres" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentrack
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opentrack
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opentrack
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: opentrack
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["all"]
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: OT_BIND
+              value: 0.0.0.0:8090
+            - name: OT_PUBLIC_URL
+              value: "https://opentrack.{{ .Values.domain }}"
+            - name: OT_SITE_CODE
+              value: {{ .Values.siteCode | quote }}
+            - name: OT_DB_BACKEND
+              value: {{ .Values.storage.backend | quote }}
+            {{- if eq .Values.storage.backend "postgres" }}
+            - name: OT_DATA_DIR
+              value: /data
+            - name: OT_POSTGRES_HOST
+              value: {{ .Values.storage.postgres.host | quote }}
+            - name: OT_POSTGRES_PORT
+              value: {{ .Values.storage.postgres.port | quote }}
+            - name: OT_POSTGRES_DATABASE
+              value: {{ .Values.storage.postgres.database | quote }}
+            - name: OT_POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.storage.postgres.credentialsSecret }}
+                  key: username
+            - name: OT_POSTGRES_PASSWORD_FILE
+              value: /etc/opentrack/postgres/password
+            - name: OT_POSTGRES_SSLMODE
+              value: {{ .Values.storage.postgres.sslmode | quote }}
+            {{- else }}
+            - name: OT_SQLITE_PATH
+              value: /data/opentrack.db
+            {{- end }}
+            - name: OT_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.bootstrapSecret }}
+                  key: email
+                  optional: true
+            - name: OT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.bootstrapSecret }}
+                  key: password
+                  optional: true
+            - name: OT_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.valkey.urlSecret }}
+                  key: url
+            - name: OT_REDIS_PASSWORD_FILE
+              value: /etc/opentrack/valkey/password
+            - name: OT_NATS_URL
+              value: {{ .Values.nats.url | quote }}
+            - name: OT_NATS_CA
+              value: /etc/opentrack/nats/ca.crt
+            - name: OT_NATS_TLS_FIRST
+              value: {{ .Values.nats.tlsFirst | quote }}
+            {{- if .Values.sso.enabled }}
+            - name: OT_SAML_IDP_METADATA_URL
+              value: {{ .Values.sso.metadataUrl | quote }}
+            - name: OT_SAML_IDP_PUBLIC_ORIGIN
+              value: {{ default (printf "https://sso.%s" .Values.domain) .Values.sso.publicOrigin | quote }}
+            - name: OT_SAML_ADMIN_GROUP
+              value: {{ .Values.sso.adminGroup | quote }}
+            - name: OT_SAML_SIGNING_KEY_FILE
+              value: /etc/opentrack/saml/tls.key
+            - name: OT_SAML_SIGNING_CERT_FILE
+              value: /etc/opentrack/saml/tls.crt
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: valkey-password
+              mountPath: /etc/opentrack/valkey
+              readOnly: true
+            - name: nats-ca
+              mountPath: /etc/opentrack/nats
+              readOnly: true
+            {{- if eq .Values.storage.backend "postgres" }}
+            - name: postgres-password
+              mountPath: /etc/opentrack/postgres
+              readOnly: true
+            {{- end }}
+            {{- if .Values.sso.enabled }}
+            - name: saml-signing
+              mountPath: /etc/opentrack/saml
+              readOnly: true
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: opentrack-data
+        - name: valkey-password
+          secret:
+            secretName: {{ .Values.valkey.passwordSecret }}
+            items:
+              - key: {{ .Values.valkey.passwordKey }}
+                path: password
+        - name: nats-ca
+          configMap:
+            name: opentrack-nats-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- if eq .Values.storage.backend "postgres" }}
+        - name: postgres-password
+          secret:
+            secretName: {{ .Values.storage.postgres.credentialsSecret }}
+            items:
+              - key: password
+                path: password
+        {{- end }}
+        {{- if .Values.sso.enabled }}
+        - name: saml-signing
+          secret:
+            secretName: {{ .Values.sso.signingSecret }}
+        {{- end }}

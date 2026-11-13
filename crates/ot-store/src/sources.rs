@@ -100,6 +100,10 @@ fn stored_problems(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<Option<(b
 
 impl Db {
     pub fn list_sources(&self) -> Result<Vec<SourceRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.list_sources()?);
+        }
         let mut stmt = self
             .connection()
             .prepare(&format!("SELECT {COLUMNS} FROM sources ORDER BY id"))?;
@@ -108,6 +112,10 @@ impl Db {
     }
 
     pub fn get_source(&self, id: &str) -> Result<Option<SourceRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.get_source(id)?);
+        }
         self.connection()
             .query_row(
                 &format!("SELECT {COLUMNS} FROM sources WHERE id = ?1"),
@@ -122,6 +130,10 @@ impl Db {
     /// Create or update a source. Returns the saved row. An enabled source
     /// is saved only complete (an edit never stops a running source).
     pub fn put_source(&mut self, w: &SourceWrite<'_>, actor: &str) -> Result<SourceRow> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.put_source(w, actor)?);
+        }
         let before = self.get_source(w.id)?;
         self.write(|tx| {
             if is_draft(w.problems)
@@ -188,6 +200,10 @@ impl Db {
         problems: Option<&Value>,
         actor: &str,
     ) -> Result<SourceRow> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.set_source_enabled(id, enabled, problems, actor)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let Some((_, stored)) = stored_problems(tx, id)? else {
@@ -224,6 +240,10 @@ impl Db {
     /// Store what checking a source again found, without a new revision
     /// (nothing about the source itself changed).
     pub fn set_source_problems(&mut self, id: &str, problems: &Value) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.set_source_problems(id, problems)?);
+        }
         self.write(|tx| {
             let n = tx.execute(
                 "UPDATE sources SET problems = ?2 WHERE id = ?1",
@@ -244,6 +264,10 @@ impl Db {
         subject: Option<&str>,
         actor: &str,
     ) -> Result<SourceRow> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.set_raw_output(id, subject, actor)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let op = if subject.is_some() {
@@ -268,6 +292,10 @@ impl Db {
     }
 
     pub fn delete_source(&mut self, id: &str, actor: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.delete_source(id, actor)?);
+        }
         let before = self
             .get_source(id)?
             .ok_or_else(|| StoreError::NotFound(format!("source {id}")))?;
@@ -285,6 +313,10 @@ impl Db {
 
     /// Past revisions of a source, newest first.
     pub fn source_revisions(&self, id: &str) -> Result<Vec<SourceRevision>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.source_revisions(id)?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT revision, created_at_ms, decision_id, config FROM source_revisions
              WHERE source_id = ?1 ORDER BY revision DESC",
@@ -307,6 +339,10 @@ impl Db {
     /// Changes whenever any source is added, edited, toggled or removed;
     /// workers poll it to know when to reload.
     pub fn sources_version(&self) -> Result<String> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sources_version()?);
+        }
         Ok(self.connection().query_row(
             "SELECT count(*) || ':' || coalesce(max(updated_at_ms), 0) || ':' || coalesce(sum(revision), 0)
              FROM sources",

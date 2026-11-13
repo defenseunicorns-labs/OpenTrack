@@ -378,14 +378,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let role = cli.command.role();
     let telemetry = telemetry::init(role, !cli.command.is_server(), &cli.common);
-    // A site's own list of common passwords sits beside the database.
-    if let Some(dir) = cli.common.sqlite.parent() {
-        auth::password::set_site_dir(if dir.as_os_str().is_empty() {
-            std::path::Path::new(".")
-        } else {
-            dir
-        });
-    }
+    // A site's own list of common passwords sits in the data directory.
+    auth::password::set_site_dir(cli.common.data_dir());
     tracing::debug!("cryptography: AWS-LC FIPS module in FIPS mode");
     #[cfg(feature = "saml")]
     auth::openssl_fips();
@@ -404,6 +398,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let common = cli.common;
     match cli.command {
         Command::Migrate => {
+            if common.db_backend == config::DbBackend::Postgres {
+                #[cfg(feature = "postgres")]
+                {
+                    let mut db = ot_store::postgres::PgControlStore::connect(
+                        &common.postgres.connection_url()?,
+                    )?;
+                    println!("postgres: schema version {}", db.schema_version()?);
+                    return Ok(());
+                }
+                #[cfg(not(feature = "postgres"))]
+                anyhow::bail!("this build has no PostgreSQL support");
+            }
             let db = common.open_db()?;
             println!(
                 "{}: schema version {}",
@@ -525,8 +531,55 @@ async fn serve(common: Common, mut args: ServeArgs) -> anyhow::Result<()> {
             args.admin_password.as_deref(),
         )?;
     }
-    let auth_settings: auth::AuthSettings =
+    let mut auth_settings: auth::AuthSettings =
         serde_json::from_value(db.auth_settings()?).context("the saved sign-in settings")?;
+    if let Ok(metadata_url) = std::env::var("OT_SAML_IDP_METADATA_URL")
+        && !metadata_url.trim().is_empty()
+    {
+        let metadata = reqwest::get(&metadata_url)
+            .await
+            .context("fetching SAML identity-provider metadata")?
+            .error_for_status()
+            .context("SAML identity-provider metadata response")?
+            .text()
+            .await?;
+        auth_settings.saml.enabled = true;
+        auth_settings.saml.idp_metadata_xml = metadata;
+        auth_settings
+            .saml
+            .read_metadata()
+            .map_err(anyhow::Error::msg)?;
+        if let Ok(public_origin) = std::env::var("OT_SAML_IDP_PUBLIC_ORIGIN")
+            && !public_origin.trim().is_empty()
+        {
+            let internal_origin = url::Url::parse(&auth_settings.saml.sso_url)
+                .context("SAML identity-provider sign-in URL")?
+                .origin()
+                .ascii_serialization();
+            let public_origin = url::Url::parse(&public_origin)
+                .context("OT_SAML_IDP_PUBLIC_ORIGIN")?
+                .origin()
+                .ascii_serialization();
+            auth_settings.saml.idp_metadata_xml = auth_settings
+                .saml
+                .idp_metadata_xml
+                .replace(&internal_origin, &public_origin);
+            auth_settings
+                .saml
+                .read_metadata()
+                .map_err(anyhow::Error::msg)?;
+        }
+        auth_settings.saml.role_attribute = "Role".into();
+        let admin_group =
+            std::env::var("OT_SAML_ADMIN_GROUP").unwrap_or_else(|_| "/UDS Core/Admin".into());
+        auth_settings.saml.role_mapping = vec![auth::settings::RoleMap {
+            value: admin_group,
+            role: auth::Role::Admin,
+        }];
+        auth_settings.saml.default_role = Some(auth::Role::Viewer);
+        auth_settings.saml.allow_admin = true;
+        auth_settings.validate().map_err(anyhow::Error::msg)?;
+    }
     let secret = auth::load_secret(&common, args.session_secret.as_deref())?;
     let state = control::AppState {
         db: Arc::new(Mutex::new(db)),

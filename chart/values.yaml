@@ -1,0 +1,54 @@
+domain: uds.dev
+
+image:
+  repository: localhost:5000/opentrack
+  tag: uds-dev-0.1.8
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 2Gi
+
+storage:
+  backend: sqlite
+  size: 2Gi
+  postgres:
+    host: pg-cluster.postgres.svc.cluster.local
+    port: 5432
+    database: opentrack
+    credentialsSecret: opentrack.opentrack.pg-cluster.credentials.postgresql.acid.zalan.do
+    sslmode: require
+
+valkey:
+  url: redis://valkey-primary.valkey-opentrack.svc.cluster.local:6379
+  host: valkey-primary.valkey-opentrack.svc.cluster.local:6379
+  urlSecret: opentrack-valkey-url
+  passwordSecret: opentrack-valkey-password
+  passwordKey: password
+
+nats:
+  url: tls://nats.nats.svc.cluster.local:4222
+  tlsFirst: true
+  caConfigMap: nats-ca-bundle
+  caKey: ca.crt
+  # Optional explicit PEM. At install time the chart copies the NATS package's
+  # CA ConfigMap into this namespace when this is empty.
+  caPem: ""
+
+sso:
+  enabled: true
+  signingSecret: opentrack-saml-signing
+  metadataUrl: http://keycloak-http.keycloak.svc.cluster.local:8080/realms/uds/protocol/saml/descriptor
+  publicOrigin: ""
+  adminGroup: /C-UAS/OpenTrack Admin
+
+auth:
+  # Optional bootstrap Secret with email and password keys. Once an account
+  # exists, OpenTrack ignores these values.
+  bootstrapSecret: opentrack-bootstrap-admin
+
+siteCode: OTK

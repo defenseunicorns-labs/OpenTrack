@@ -37,6 +37,9 @@ const MIGRATIONS: &[&str] = &[
 pub enum StoreError {
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
+    #[cfg(feature = "postgres")]
+    #[error(transparent)]
+    Postgres(#[from] crate::postgres::PostgresError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -106,7 +109,9 @@ impl Decision {
 }
 
 pub struct Db {
-    conn: Connection,
+    conn: Option<Connection>,
+    #[cfg(feature = "postgres")]
+    pg: Option<std::cell::RefCell<crate::postgres::PgControlStore>>,
 }
 
 impl Db {
@@ -126,15 +131,36 @@ impl Db {
     fn init(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        let mut db = Self { conn };
+        let mut db = Self {
+            conn: Some(conn),
+            #[cfg(feature = "postgres")]
+            pg: None,
+        };
         db.migrate()?;
         crate::audit::start_chain(&mut db)?;
         Ok(db)
     }
 
+    #[cfg(feature = "postgres")]
+    pub fn open_postgres(database_url: &str) -> Result<Self> {
+        Ok(Self {
+            conn: None,
+            pg: Some(std::cell::RefCell::new(
+                crate::postgres::PgControlStore::connect(database_url)?,
+            )),
+        })
+    }
+
+    #[cfg(feature = "postgres")]
+    pub(crate) fn pg(&self) -> Option<std::cell::RefMut<'_, crate::postgres::PgControlStore>> {
+        self.pg.as_ref().map(std::cell::RefCell::borrow_mut)
+    }
+
     fn migrate(&mut self) -> Result<()> {
         let current: i64 = self
             .conn
+            .as_ref()
+            .expect("SQLite connection")
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
         let supported = MIGRATIONS.len() as i64;
         if current > supported {
@@ -144,7 +170,11 @@ impl Db {
             });
         }
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(current as usize) {
-            let tx = self.conn.transaction()?;
+            let tx = self
+                .conn
+                .as_mut()
+                .expect("SQLite connection")
+                .transaction()?;
             tx.execute_batch(sql)?;
             tx.pragma_update(None, "user_version", (i + 1) as i64)?;
             tx.commit()?;
@@ -154,18 +184,28 @@ impl Db {
     }
 
     pub fn schema_version(&self) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.schema_version()?);
+        }
         Ok(self
             .conn
+            .as_ref()
+            .expect("SQLite connection")
             .pragma_query_value(None, "user_version", |r| r.get(0))?)
     }
 
     pub fn connection(&self) -> &Connection {
-        &self.conn
+        self.conn.as_ref().expect("SQLite connection")
     }
 
     /// Record a decision about something kept outside the database (a
     /// tracker profile file); returns its id.
     pub fn record(&mut self, d: &Decision) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.record(d)?);
+        }
         self.write(|tx| record_decision(tx, d, now_ms()))
     }
 
@@ -174,6 +214,8 @@ impl Db {
         // Audit rows appended in it reach the server log only if it commits.
         let done = self
             .conn
+            .as_mut()
+            .expect("SQLite connection")
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(Into::into)
             .and_then(|tx| {
@@ -194,6 +236,10 @@ impl Db {
         source_track_key: &str,
         decision: Decision,
     ) -> Result<(Uid, i64)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.create_system_track(site, source_id, source_track_key, &decision)?);
+        }
         self.write(|tx| {
             let uid = allocate_uid(tx, site)?;
             let decision_id = open_system_track(tx, uid, source_id, source_track_key, &decision)?;
@@ -211,12 +257,20 @@ impl Db {
         source_track_key: &str,
         decision: Decision,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.adopt_system_track(uid, source_id, source_track_key, &decision)?);
+        }
         self.write(|tx| open_system_track(tx, uid, source_id, source_track_key, &decision))
     }
 
     /// Retire a system track: record the decision, close every live edge
     /// touching it and mark the node retired. Returns the decision id.
     pub fn retire_system_track(&mut self, uid: Uid, decision: Decision) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.retire_system_track(uid, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let node: i64 = tx
@@ -252,6 +306,10 @@ impl Db {
         attrs: &Value,
         decision: Decision,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.pair_source_track(source_id, source_track_key, uid, attrs, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let sys = live_system_node(tx, uid)?;
@@ -280,6 +338,10 @@ impl Db {
         source_track_key: &str,
         attrs: &Value,
     ) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.note_source_track(source_id, source_track_key, attrs)?);
+        }
         self.write(|tx| {
             let node = graph::upsert_node(
                 tx,
@@ -300,6 +362,10 @@ impl Db {
         source_track_key: &str,
         decision: Decision,
     ) -> Result<Option<i64>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.end_source_track(source_id, source_track_key, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let key = graph::source_track_key(source_id, source_track_key);
@@ -334,6 +400,10 @@ impl Db {
     /// `MERGED_INTO` edge keeps it resolvable as an alias. One transaction;
     /// returns the decision id.
     pub fn merge_system_tracks(&mut self, from: Uid, into: Uid, decision: Decision) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.merge_system_tracks(from, into, &decision)?);
+        }
         if from == into {
             return Err(StoreError::Conflict(format!(
                 "cannot merge {from} into itself"
@@ -427,7 +497,11 @@ impl Db {
     /// Every live source-track → system-track link, as
     /// (`<source>/<key>`, UID). The engine warms its map from this.
     pub fn live_reports(&self) -> Result<Vec<(String, Uid)>> {
-        let mut stmt = self.conn.prepare(
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.live_reports()?);
+        }
+        let mut stmt = self.connection().prepare(
             "SELECT s.key, d.key FROM edges e
              JOIN nodes s ON s.id = e.src JOIN nodes d ON d.id = e.dst
              WHERE e.kind = 'REPORTS_FOR' AND e.valid_to_ms IS NULL",
@@ -443,11 +517,19 @@ impl Db {
     /// Every edge that ever touched a system track, with the decisions that
     /// opened and closed it: the answer to "why is this one track?".
     pub fn explain(&self, uid: Uid) -> Result<Vec<graph::EdgeRecord>> {
-        graph::explain_system_track(&self.conn, &uid.to_string())
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.explain(uid)?);
+        }
+        graph::explain_system_track(self.connection(), &uid.to_string())
     }
 
     pub fn decision(&self, id: i64) -> Result<Option<Value>> {
-        self.conn
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.decision(id)?);
+        }
+        self.connection()
             .query_row(
                 "SELECT json_object('id', id, 'at_ms', at_ms, 'actor', actor, 'op', op,
                         'reason', reason, 'evidence', json(evidence))

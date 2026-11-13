@@ -16,6 +16,8 @@ pub mod groups;
 pub mod keys;
 pub mod otel;
 pub mod plugins;
+#[cfg(feature = "postgres")]
+pub mod postgres;
 pub mod probe;
 pub mod redis_store;
 pub mod registry;

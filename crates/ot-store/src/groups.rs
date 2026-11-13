@@ -165,6 +165,10 @@ impl Db {
                 "a group needs at least one member".into(),
             ));
         }
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.form_group(uid, &spec, members, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let uid = match uid {
@@ -193,6 +197,10 @@ impl Db {
     pub fn update_group(&mut self, uid: Uid, spec: &GroupSpec, decision: Decision) -> Result<i64> {
         let mut spec = spec.clone();
         spec.validate()?;
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.update_group(uid, &spec, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let before = live_group(tx, uid)?;
@@ -220,6 +228,10 @@ impl Db {
         remove: &[Uid],
         decision: Decision,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.change_group_members(uid, add, remove, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             live_group(tx, uid)?;
@@ -252,6 +264,10 @@ impl Db {
 
     /// Dissolve a group: its members leave it, and it is no longer published.
     pub fn dissolve_group(&mut self, uid: Uid, decision: Decision) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.dissolve_group(uid, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let before = live_group(tx, uid)?;
@@ -278,6 +294,10 @@ impl Db {
 
     /// Every live group with its members.
     pub fn groups(&self) -> Result<Vec<Group>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.groups()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT uid, spec, created_at_ms, updated_at_ms FROM track_groups
              WHERE dissolved_at_ms IS NULL ORDER BY created_at_ms",
@@ -312,6 +332,10 @@ impl Db {
                 "pairing needs at least two tracks".into(),
             ));
         }
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.pair_system_tracks(&set, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let decision_id = record_decision(
@@ -344,6 +368,10 @@ impl Db {
 
     /// End a pairing between two tracks.
     pub fn unpair_system_tracks(&mut self, a: Uid, b: Uid, decision: Decision) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.unpair_system_tracks(a, b, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let decision_id = record_decision(

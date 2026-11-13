@@ -1,0 +1,13 @@
+{{- $source := lookup "v1" "ConfigMap" "nats" .Values.nats.caConfigMap -}}
+{{- $ca := .Values.nats.caPem -}}
+{{- if and (not $ca) $source -}}
+{{- $ca = index $source.data .Values.nats.caKey -}}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opentrack-nats-ca
+  namespace: {{ .Release.Namespace }}
+data:
+  ca.crt: |-
+    {{- $ca | nindent 4 }}

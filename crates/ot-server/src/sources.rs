@@ -650,8 +650,12 @@ mod tests {
         );
         let common = Common {
             sqlite: dir.path().join("ot.db"),
+            data_dir: None,
+            postgres: Default::default(),
+            db_backend: crate::config::DbBackend::Sqlite,
             redis: url.clone(),
             redis_ca: None,
+            redis_password_file: None,
             redis_cert: None,
             redis_key: None,
             redis_namespace: ns.clone(),
@@ -664,6 +668,7 @@ mod tests {
                 user: None,
                 password: None,
                 ca: None,
+                tls_first: false,
                 cert: None,
                 key: None,
                 stream: "TRACKS".into(),

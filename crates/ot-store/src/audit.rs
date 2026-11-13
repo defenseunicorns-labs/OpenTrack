@@ -381,11 +381,19 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AuditRow> {
 impl Db {
     /// Record an event in its own transaction.
     pub fn audit(&mut self, e: &AuditEvent) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.audit(e)?);
+        }
         self.write(|tx| append_event(tx, e, now_ms()))
     }
 
     /// Rows matching `f`, newest first.
     pub fn audit_rows(&self, f: &AuditFilter) -> Result<Vec<AuditRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.audit_rows(f)?);
+        }
         let mut clauses: Vec<String> = Vec::new();
         let mut args: Vec<Box<dyn ToSql>> = Vec::new();
         let mut arg = |clause: &str, v: Box<dyn ToSql>, args: &mut Vec<Box<dyn ToSql>>| {
@@ -438,6 +446,10 @@ impl Db {
 
     /// Check every row's hash and link, from the start or the anchor.
     pub fn verify_audit(&self) -> Result<AuditVerify> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.verify_audit()?);
+        }
         let c = self.connection();
         let anchor = anchor(c)?;
         let (mut expect_seq, mut prev) = anchor
@@ -536,6 +548,10 @@ impl Db {
 
     /// The chain's newest sequence number and hash.
     pub fn audit_head(&self) -> Result<(i64, String)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.audit_head()?);
+        }
         head(self.connection())
     }
 }

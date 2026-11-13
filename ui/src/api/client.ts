@@ -13,7 +13,8 @@ export interface ServerStatus {
   algorithms?: { correlation: string; trackers: Record<string, string> }
   site: string
   node_id: string
-  sqlite: DependencyStatus & { schema_version?: number; path?: string }
+  sqlite?: DependencyStatus & { schema_version?: number; path?: string }
+  postgres?: DependencyStatus & { schema_version?: number }
   redis: DependencyStatus & { namespace?: string }
   nats: DependencyStatus & {
     url?: string
@@ -372,6 +373,7 @@ export interface SystemMetrics {
 /** `GET /import/config`: whether a configuration may be imported here. */
 export interface ConfigImportStatus {
   empty: boolean
+  supported?: boolean
   /** What makes the node non-empty, one line each. */
   present: string[]
   format: string
@@ -1177,7 +1179,7 @@ export interface EntityView {
 }
 
 export const api = {
-  // 503 while SQLite, Redis or NATS is down: the body still says which.
+  // 503 while the control database, Redis or NATS is down: the body still says which.
   status: async (): Promise<ServerStatus> => {
     const res = await fetch('/api/v1/status', { headers: { 'x-opentrack-actor': ACTOR } })
     const text = await res.text()

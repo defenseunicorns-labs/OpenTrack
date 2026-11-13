@@ -623,6 +623,10 @@ pub(crate) fn restore_entity(
 
 impl Db {
     pub fn entity(&self, id: &str) -> Result<Option<Entity>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.entity(id)?);
+        }
         load(self.connection(), id)
     }
 
@@ -630,6 +634,10 @@ impl Db {
     /// longer lists are removed, and one another entity holds is refused.
     /// An empty id creates a new entity. Returns the saved entity.
     pub fn save_entity(&mut self, entity: &Entity, actor: &str) -> Result<Entity> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.save_entity(entity, actor)?);
+        }
         let mut e = entity.clone();
         e.validate()?;
         let before = if e.id.trim().is_empty() {
@@ -705,6 +713,10 @@ impl Db {
 
     /// Delete an entity and its identifiers. Its revisions stay.
     pub fn delete_entity(&mut self, id: &str, actor: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.delete_entity(id, actor)?);
+        }
         let before = self
             .entity(id)?
             .ok_or_else(|| StoreError::NotFound(format!("entity {id}")))?;
@@ -732,6 +744,10 @@ impl Db {
         updates: &[(String, Value)],
         actor: &str,
     ) -> Result<bool> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.update_entity_fields(id, updates, actor)?);
+        }
         let Some(before) = self.entity(id)? else {
             return Ok(false);
         };
@@ -761,6 +777,10 @@ impl Db {
 
     /// An entity's revisions, newest first.
     pub fn entity_revisions(&self, id: &str, limit: usize) -> Result<Vec<EntityRevision>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.entity_revisions(id, limit)?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT r.id, r.entity, r.saved_at_ms, r.decision_id, d.actor
              FROM entity_revisions r LEFT JOIN decisions d ON d.id = r.decision_id
@@ -797,6 +817,10 @@ impl Db {
         limit: usize,
         offset: usize,
     ) -> Result<(Vec<Entity>, usize)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.list_entities(q, limit, offset)?);
+        }
         let q = q.trim();
         let pattern = format!("%{}%", q.replace(['%', '_'], ""));
         let filter = "(?1 = '%%' OR e.name LIKE ?1 COLLATE NOCASE OR e.id = ?2
@@ -839,6 +863,10 @@ impl Db {
         actor: &str,
         label: &str,
     ) -> Result<ImportCounts> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_import(entities, actor, label)?);
+        }
         let mut checked = Vec::with_capacity(entities.len());
         for e in entities {
             let mut e = e.clone();
@@ -911,6 +939,10 @@ impl Db {
 
     /// Every identifier of every active entity, with the entity's fields.
     pub fn registry_rows(&self) -> Result<Vec<RegistryRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_rows()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT i.scheme, i.value, e.id, i.expected_name
              FROM registry_identifiers i JOIN registry_entities e ON e.id = i.entity_id
@@ -941,6 +973,10 @@ impl Db {
 
     /// Changes whenever the registry does; lookup snapshots poll it.
     pub fn registry_version(&self) -> Result<String> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_version()?);
+        }
         Ok(self.connection().query_row(
             "SELECT (SELECT count(*) FROM registry_entities) || ':' ||
                     (SELECT coalesce(max(updated_at_ms), 0) FROM registry_entities) || ':' ||
@@ -953,6 +989,10 @@ impl Db {
 
     /// The entity an identifier resolves to, if any.
     pub fn registry_resolve(&self, scheme: &str, value: &str) -> Result<Option<Entity>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_resolve(scheme, value)?);
+        }
         let id: Option<String> = self
             .connection()
             .query_row(
@@ -969,6 +1009,10 @@ impl Db {
 
     /// Every attribute key in use, with how many entities have it.
     pub fn attribute_keys(&self) -> Result<Vec<(String, i64)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.attribute_keys()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT a.value ->> '$.key' AS k, count(*) FROM registry_entities e, json_each(e.attributes) a
              GROUP BY k ORDER BY k",
@@ -978,6 +1022,10 @@ impl Db {
     }
 
     pub fn registry_counts(&self) -> Result<Value> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_counts()?);
+        }
         let (active, retired, ids): (i64, i64, i64) = self.connection().query_row(
             "SELECT (SELECT count(*) FROM registry_entities WHERE status = 'active'),
                     (SELECT count(*) FROM registry_entities WHERE status = 'retired'),

@@ -83,6 +83,10 @@ fn summary(p: &PluginRow) -> Value {
 
 impl Db {
     pub fn list_plugins(&self) -> Result<Vec<PluginRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.list_plugins()?);
+        }
         let mut stmt = self
             .connection()
             .prepare(&format!("SELECT {COLUMNS} FROM plugins ORDER BY name"))?;
@@ -91,6 +95,10 @@ impl Db {
     }
 
     pub fn get_plugin(&self, name: &str) -> Result<Option<PluginRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.get_plugin(name)?);
+        }
         Ok(self
             .connection()
             .query_row(
@@ -103,6 +111,10 @@ impl Db {
 
     /// A WebAssembly plugin's component.
     pub fn plugin_wasm(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.plugin_wasm(name)?);
+        }
         Ok(self
             .connection()
             .query_row("SELECT wasm FROM plugins WHERE name = ?1", [name], |r| {
@@ -115,6 +127,10 @@ impl Db {
     /// Changes when any plugin is added, changed or removed: loaders compare
     /// it to know when to look again.
     pub fn plugins_version(&self) -> Result<String> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.plugins_version()?);
+        }
         Ok(self.connection().query_row(
             "SELECT count(*) || ':' || coalesce(max(updated_at_ms), 0) FROM plugins",
             [],
@@ -125,6 +141,10 @@ impl Db {
     /// Add a plugin, or replace one of the same name (a new build, or a new
     /// address). An existing plugin keeps its grants and enabled state.
     pub fn put_plugin(&mut self, w: &PluginWrite<'_>, actor: &str) -> Result<PluginRow> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.put_plugin(w, actor)?);
+        }
         let before = self.get_plugin(w.name)?;
         let runtime = if w.wasm.is_some() { "wasm" } else { "external" };
         self.write(|tx| {
@@ -186,6 +206,10 @@ impl Db {
         grants: Option<&Value>,
         actor: &str,
     ) -> Result<PluginRow> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.set_plugin(name, enabled, grants, actor)?);
+        }
         let before = self
             .get_plugin(name)?
             .ok_or_else(|| StoreError::NotFound(format!("plugin {name}")))?;
@@ -223,6 +247,10 @@ impl Db {
         secret: Option<&str>,
         actor: &str,
     ) -> Result<PluginRow> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.set_plugin_secret(name, secret, actor)?);
+        }
         let before = self
             .get_plugin(name)?
             .ok_or_else(|| StoreError::NotFound(format!("plugin {name}")))?;
@@ -251,6 +279,10 @@ impl Db {
     }
 
     pub fn delete_plugin(&mut self, name: &str, actor: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.delete_plugin(name, actor)?);
+        }
         let before = self
             .get_plugin(name)?
             .ok_or_else(|| StoreError::NotFound(format!("plugin {name}")))?;

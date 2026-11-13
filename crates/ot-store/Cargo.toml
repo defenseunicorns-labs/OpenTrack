@@ -21,6 +21,11 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+diesel = { version = "2.3.14", default-features = false, features = ["postgres"], optional = true }
+
+[features]
+default = []
+postgres = ["dep:diesel"]
 
 [dev-dependencies]
 tempfile.workspace = true

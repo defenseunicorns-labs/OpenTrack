@@ -4,18 +4,41 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use ot_core::SiteCode;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum DbBackend {
+    #[default]
+    Sqlite,
+    Postgres,
+}
 
 #[derive(Debug, Clone, Args)]
 pub struct Common {
+    /// Control database backend. SQLite remains the standalone default.
+    #[arg(long = "db-backend", env = "OT_DB_BACKEND", value_enum, default_value_t = DbBackend::Sqlite)]
+    pub db_backend: DbBackend,
+
     /// SQLite database file (created and migrated on start).
     #[arg(long, env = "OT_SQLITE_PATH", default_value = "data/opentrack.db")]
     pub sqlite: PathBuf,
 
+    /// Directory for the session key, site password list, and plugin files.
+    /// Defaults to the SQLite database directory for existing installations.
+    #[arg(long, env = "OT_DATA_DIR")]
+    pub data_dir: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub postgres: PostgresArgs,
+
     /// Redis URL.
     #[arg(long, env = "OT_REDIS_URL", default_value = "redis://127.0.0.1:6379")]
     pub redis: String,
+
+    /// File containing the Redis password, for Kubernetes Secret mounts.
+    #[arg(long, env = "OT_REDIS_PASSWORD_FILE")]
+    pub redis_password_file: Option<PathBuf>,
 
     /// TLS to Redis (with a `rediss://` URL): the CA (PEM) that signed the
     /// server's certificate, instead of the system roots.
@@ -56,6 +79,115 @@ pub struct Common {
     /// A connection a long-running role keeps open for `open_db` to hand out.
     #[arg(skip)]
     pub shared_db: SharedDb,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct PostgresArgs {
+    #[arg(
+        long = "postgres-host",
+        env = "OT_POSTGRES_HOST",
+        default_value = "127.0.0.1"
+    )]
+    pub host: String,
+
+    #[arg(
+        long = "postgres-port",
+        env = "OT_POSTGRES_PORT",
+        default_value_t = 5432
+    )]
+    pub port: u16,
+
+    #[arg(
+        long = "postgres-database",
+        env = "OT_POSTGRES_DATABASE",
+        default_value = "opentrack"
+    )]
+    pub database: String,
+
+    #[arg(
+        long = "postgres-user",
+        env = "OT_POSTGRES_USER",
+        default_value = "opentrack"
+    )]
+    pub db_user: String,
+
+    /// Kubernetes Secret mount; never put the password in command arguments.
+    #[arg(long = "postgres-password-file", env = "OT_POSTGRES_PASSWORD_FILE")]
+    pub password_file: Option<PathBuf>,
+
+    #[arg(
+        long = "postgres-sslmode",
+        env = "OT_POSTGRES_SSLMODE",
+        default_value = "verify-full"
+    )]
+    pub sslmode: String,
+
+    #[arg(long = "postgres-sslrootcert", env = "OT_POSTGRES_SSLROOTCERT")]
+    pub sslrootcert: Option<PathBuf>,
+}
+
+impl Default for PostgresArgs {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".into(),
+            port: 5432,
+            database: "opentrack".into(),
+            db_user: "opentrack".into(),
+            password_file: None,
+            sslmode: "verify-full".into(),
+            sslrootcert: None,
+        }
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl PostgresArgs {
+    pub fn password(&self) -> anyhow::Result<String> {
+        let path = self.password_file.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("OT_POSTGRES_PASSWORD_FILE is required for PostgreSQL")
+        })?;
+        let password = std::fs::read_to_string(path).map_err(|e| {
+            anyhow::anyhow!("reading PostgreSQL password file {}: {e}", path.display())
+        })?;
+        let password = password.trim_end_matches(['\r', '\n']);
+        anyhow::ensure!(!password.is_empty(), "PostgreSQL password file is empty");
+        Ok(password.to_owned())
+    }
+
+    pub fn connection_url(&self) -> anyhow::Result<String> {
+        let mut url = url::Url::parse("postgresql://localhost")?;
+        url.set_host(Some(&self.host))?;
+        url.set_port(Some(self.port))
+            .map_err(|_| anyhow::anyhow!("invalid PostgreSQL port"))?;
+        url.set_username(&self.db_user)
+            .map_err(|_| anyhow::anyhow!("invalid PostgreSQL username"))?;
+        url.set_password(Some(&self.password()?))
+            .map_err(|_| anyhow::anyhow!("invalid PostgreSQL password"))?;
+        url.set_path(&self.database);
+        url.query_pairs_mut().append_pair("sslmode", &self.sslmode);
+        if let Some(cert) = &self.sslrootcert {
+            url.query_pairs_mut()
+                .append_pair("sslrootcert", &cert.to_string_lossy());
+        }
+        Ok(url.to_string())
+    }
+}
+
+#[cfg(all(test, feature = "postgres"))]
+mod postgres_args_tests {
+    use super::PostgresArgs;
+
+    #[test]
+    fn password_comes_from_a_file_without_trimming_password_characters() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("password");
+        std::fs::write(&path, "space at end \n").unwrap();
+        let args = PostgresArgs {
+            password_file: Some(path),
+            ..Default::default()
+        };
+        assert_eq!(args.password().unwrap(), "space at end ");
+    }
 }
 
 /// One SQLite connection kept open and shared. Opening a connection per
@@ -135,6 +267,14 @@ pub struct NatsArgs {
     #[arg(long = "nats-ca", env = "OT_NATS_CA")]
     pub ca: Option<PathBuf>,
 
+    /// Establish TLS before reading the server INFO (NATS `handshake_first`).
+    #[arg(
+        long = "nats-tls-first",
+        env = "OT_NATS_TLS_FIRST",
+        default_value_t = false
+    )]
+    pub tls_first: bool,
+
     /// Mutual TLS: this client certificate (PEM) and `--nats-key`.
     #[arg(long = "nats-cert", env = "OT_NATS_CERT", requires = "key")]
     pub cert: Option<PathBuf>,
@@ -161,6 +301,17 @@ pub struct NatsArgs {
 }
 
 impl Common {
+    pub fn data_dir(&self) -> &std::path::Path {
+        self.data_dir
+            .as_deref()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                self.sqlite
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(std::path::Path::new("."))
+            })
+    }
     /// This instance's identity, stamped into each message's `publisher`.
     pub fn node_id(&self) -> String {
         format!("opentrack-{}", self.site)
@@ -184,6 +335,7 @@ impl Common {
             user: n.user.clone(),
             password: n.password.clone(),
             tls_ca: n.ca.clone().filter(|p| !p.as_os_str().is_empty()),
+            tls_first: n.tls_first,
             tls_cert: n.cert.clone().filter(|p| !p.as_os_str().is_empty()),
             tls_key: n.key.clone().filter(|p| !p.as_os_str().is_empty()),
             stream: n.stream.clone(),
@@ -214,8 +366,16 @@ impl Common {
         }
     }
 
-    /// A new connection to the SQLite database.
+    /// A new connection to the selected control database.
     pub fn open_new_db(&self) -> anyhow::Result<ot_store::Db> {
+        if self.db_backend == DbBackend::Postgres {
+            #[cfg(feature = "postgres")]
+            return Ok(ot_store::Db::open_postgres(
+                &self.postgres.connection_url()?,
+            )?);
+            #[cfg(not(feature = "postgres"))]
+            anyhow::bail!("this build has no PostgreSQL support");
+        }
         if let Some(dir) = self.sqlite.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
@@ -257,7 +417,16 @@ impl Common {
         } else {
             None
         };
-        let mut r = ot_store::RedisStore::connect_tls(&self.redis, self.keys(), tls).await?;
+        let redis_url = if let Some(path) = &self.redis_password_file {
+            let password = std::fs::read_to_string(path)?;
+            let mut url = url::Url::parse(&self.redis)?;
+            url.set_password(Some(password.trim_end_matches(['\r', '\n'])))
+                .map_err(|_| anyhow::anyhow!("OT_REDIS_URL cannot hold a password"))?;
+            url.to_string()
+        } else {
+            self.redis.clone()
+        };
+        let mut r = ot_store::RedisStore::connect_tls(&redis_url, self.keys(), tls).await?;
         r.obs_window = std::time::Duration::from_secs(self.obs_window_secs.max(10));
         Ok(r)
     }

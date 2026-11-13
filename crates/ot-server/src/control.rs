@@ -23,7 +23,7 @@ use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeader;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 
-use crate::config::Common;
+use crate::config::{Common, DbBackend};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -44,9 +44,10 @@ impl AppState {
         // Decisions recorded for a request carry its client address.
         let ip = crate::auth::access::current_ip();
         tokio::task::spawn_blocking(move || {
-            let mut db = db
-                .lock()
-                .map_err(|_| ApiError::internal("database lock poisoned"))?;
+            let mut db = db.lock().unwrap_or_else(|poisoned| {
+                tracing::warn!("recovering control database lock after a failed request");
+                poisoned.into_inner()
+            });
             ot_store::audit::with_client(ip, || f(&mut db)).map_err(ApiError::from)
         })
         .await
@@ -220,7 +221,7 @@ async fn index_page(State(path): State<Arc<PathBuf>>) -> Response {
         .into_response()
 }
 
-/// Every dependency's state. 503 (with the same body) when SQLite, Redis or
+/// Every dependency's state. 503 (with the same body) when the control DB, Redis or
 /// NATS is down, so a monitor that reads only the status code sees it;
 /// `/healthz` stays liveness only.
 async fn status(
@@ -228,7 +229,10 @@ async fn status(
     user: Option<axum::Extension<crate::auth::AuthUser>>,
 ) -> (StatusCode, Json<Value>) {
     let admin = user.is_none_or(|u| u.role == crate::auth::Role::Admin);
-    let sqlite = match s.with_db(|db| db.schema_version()).await {
+    let database = match s.with_db(|db| db.schema_version()).await {
+        Ok(v) if s.common.db_backend == DbBackend::Postgres => {
+            json!({ "ok": true, "schema_version": v })
+        }
         Ok(v) => json!({ "ok": true, "schema_version": v, "path": s.common.sqlite }),
         Err(e) => json!({ "ok": false, "error": e.message }),
     };
@@ -255,7 +259,7 @@ async fn status(
     // orchestrator restart OpenTrack (it keeps working, and logs stay on
     // standard output).
     let telemetry = crate::telemetry::status(&s.redis).await;
-    let up = [&sqlite, &redis, &nats].iter().all(|d| d["ok"] == true);
+    let up = [&database, &redis, &nats].iter().all(|d| d["ok"] == true);
     let code = if up {
         StatusCode::OK
     } else {
@@ -273,11 +277,16 @@ async fn status(
         },
         "site": s.common.site.as_str(),
         "node_id": s.common.node_id(),
-        "sqlite": sqlite,
         "redis": redis,
         "nats": nats,
         "telemetry": telemetry,
     });
+    let mut body = body;
+    let database_key = match s.common.db_backend {
+        DbBackend::Sqlite => "sqlite",
+        DbBackend::Postgres => "postgres",
+    };
+    body[database_key] = database;
     (
         code,
         Json(if admin {
@@ -300,7 +309,7 @@ fn status_for_non_admins(mut body: Value) -> Value {
         "namespace",
         "schema_version",
     ];
-    for part in ["sqlite", "redis", "nats", "telemetry"] {
+    for part in ["sqlite", "postgres", "redis", "nats", "telemetry"] {
         if let Some(Value::Object(o)) = body.get_mut(part) {
             let down = o.contains_key("error");
             o.retain(|k, _| KEEP.contains(&k.as_str()));

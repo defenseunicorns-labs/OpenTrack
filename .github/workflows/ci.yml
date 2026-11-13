@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,6 +44,43 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+
+  postgres-schema:
+    runs-on: ubuntu-latest
+    env:
+      OT_TEST_POSTGRES_URL: postgres://opentrack:test@127.0.0.1:5432/opentrack?sslmode=disable
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev libxmlsec1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - run: >-
+          docker run -d --name postgres-schema
+          -e POSTGRES_USER=opentrack -e POSTGRES_PASSWORD=test
+          -e POSTGRES_DB=opentrack -p 5432:5432 postgres:16
+      - run: |
+          for attempt in {1..30}; do
+            if docker exec postgres-schema pg_isready -U opentrack -d opentrack; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec postgres-schema pg_isready -U opentrack -d opentrack
+      - run: cargo test -p ot-store --features postgres postgres::tests --locked
+      - run: docker exec postgres-schema createdb -U opentrack opentrack_integration
+      - run: cargo test -p ot-store --features postgres --test postgres_sync --locked -- --test-threads=1
+        env:
+          OT_TEST_POSTGRES_URL: postgres://opentrack:test@127.0.0.1:5432/opentrack_integration?sslmode=disable
+      - run: cargo check -p ot-server --features postgres --locked
+      - run: |
+          docker exec postgres-schema createdb -U opentrack opentrack_verify
+          docker exec -e PGPASSWORD=test -i postgres-schema \
+            psql -U opentrack -d opentrack_verify -v ON_ERROR_STOP=1 -f - \
+            < crates/ot-store/postgres/0001_init.sql
+          docker exec -e PGPASSWORD=test -i postgres-schema \
+            psql -U opentrack -d opentrack_verify -v ON_ERROR_STOP=1 -f - \
+            < crates/ot-store/postgres/verify_schema.sql
 
   supply-chain:
     runs-on: ubuntu-latest

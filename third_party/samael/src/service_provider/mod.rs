@@ -266,7 +266,7 @@ impl ServiceProvider {
                 location: self.slo_url.clone().ok_or(Error::MissingSloUrl)?,
                 response_location: self.slo_url.clone(),
             }]),
-            authn_requests_signed: Some(false),
+            authn_requests_signed: Some(self.key.is_some()),
             want_assertions_signed: Some(true),
             assertion_consumer_services: vec![IndexedEndpoint {
                 binding: HTTP_POST_BINDING.to_string(),

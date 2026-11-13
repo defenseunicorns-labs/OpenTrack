@@ -1,0 +1,17 @@
+kind: ZarfPackageConfig
+metadata:
+  name: opentrack
+  description: OpenTrack with UDS Core integration
+  version: 0.1.8
+  architecture: arm64
+
+components:
+  - name: opentrack
+    required: true
+    charts:
+      - name: opentrack
+        namespace: opentrack
+        version: 0.1.8
+        localPath: chart
+    images:
+      - localhost:5000/opentrack:uds-dev-0.1.8

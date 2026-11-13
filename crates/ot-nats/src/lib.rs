@@ -40,6 +40,8 @@ pub struct NatsSettings {
     pub password: Option<String>,
     /// TLS to the server: trust this CA (PEM) and require TLS.
     pub tls_ca: Option<PathBuf>,
+    /// Establish TLS before reading the server INFO (NATS `handshake_first`).
+    pub tls_first: bool,
     /// A client certificate and key (PEM) for mutual TLS.
     pub tls_cert: Option<PathBuf>,
     pub tls_key: Option<PathBuf>,
@@ -60,6 +62,7 @@ impl NatsSettings {
             user: self.user.clone(),
             password: self.password.clone(),
             tls_ca: self.tls_ca.clone(),
+            tls_first: self.tls_first,
             tls_cert: self.tls_cert.clone(),
             tls_key: self.tls_key.clone(),
         }
@@ -78,6 +81,8 @@ pub struct NatsAuth {
     pub password: Option<String>,
     /// TLS to the server: trust this CA (PEM) and require TLS.
     pub tls_ca: Option<PathBuf>,
+    /// Establish TLS before reading the server INFO.
+    pub tls_first: bool,
     /// A client certificate and key (PEM) for mutual TLS.
     pub tls_cert: Option<PathBuf>,
     pub tls_key: Option<PathBuf>,
@@ -93,6 +98,7 @@ impl std::fmt::Debug for NatsAuth {
             .field("user", &self.user)
             .field("password", &set(self.password.is_some()))
             .field("tls_ca", &self.tls_ca)
+            .field("tls_first", &self.tls_first)
             .field("tls_cert", &self.tls_cert)
             .field("tls_key", &self.tls_key)
             .finish()
@@ -192,6 +198,9 @@ pub async fn connect_options(auth: &NatsAuth) -> Result<ConnectOptions, NatsErro
     }
     if let Some(ca) = &auth.tls_ca {
         opts = opts.add_root_certificates(ca.clone()).require_tls(true);
+    }
+    if auth.tls_first {
+        opts = opts.tls_first();
     }
     match (&auth.tls_cert, &auth.tls_key) {
         (Some(cert), Some(key)) => {
@@ -565,6 +574,7 @@ mod tests {
                 user: None,
                 password: None,
                 tls_ca: None,
+                tls_first: false,
                 tls_cert: None,
                 tls_key: None,
                 stream: format!("OT_TEST_{run}"),
@@ -586,6 +596,7 @@ mod tests {
             user: None,
             password: None,
             tls_ca: None,
+            tls_first: false,
             tls_cert: Some("client.pem".into()),
             tls_key: None,
             stream: "T".into(),

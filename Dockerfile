@@ -57,7 +57,7 @@ ARG GO_SHA256_AMD64=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf59016
 ARG GO_SHA256_ARM64=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec
 ARG TARGETARCH
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libxmlsec1-dev libxml2-dev pkg-config clang libclang-dev cmake \
+    && apt-get install -y --no-install-recommends libxmlsec1-dev libxml2-dev libpq-dev pkg-config clang libclang-dev cmake \
     && rm -rf /var/lib/apt/lists/*
 RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
     && case "$arch" in amd64) sum="$GO_SHA256_AMD64";; arm64) sum="$GO_SHA256_ARM64";; *) echo "no Go for $arch"; exit 1;; esac \
@@ -71,7 +71,11 @@ COPY third_party ./third_party
 COPY crates ./crates
 # The plugin interface the WebAssembly host is generated from.
 COPY wit ./wit
-RUN cargo build --release --locked --bin opentrack
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
+    cargo build --release --locked --features postgres --bin opentrack \
+    && mkdir -p /out \
+    && cp target/release/opentrack /out/opentrack
 
 # The runtime base: distroless Debian 12, the non-root variant (OpenTrack
 # runs as uid 1000, below, so volumes written by earlier images still fit).
@@ -84,10 +88,10 @@ FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57
 # opentrack user.
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime-libs
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libxmlsec1 libxmlsec1-openssl libxml2 \
+    && apt-get install -y --no-install-recommends libxmlsec1 libxmlsec1-openssl libxml2 libpq5 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=runtime-base / /base/
-COPY --from=server /src/target/release/opentrack /usr/local/bin/opentrack
+COPY --from=server /out/opentrack /usr/local/bin/opentrack
 RUN set -eu; \
     engine="$(dpkg -L libxmlsec1-openssl | grep '/libxmlsec1-openssl\.so\.1$')"; \
     mkdir -p /out/etc /out/var/lib/dpkg/status.d; \
@@ -114,7 +118,7 @@ COPY --from=runtime-libs --chown=1000:1000 /owned/ /
 COPY --from=openssl-fips /out/fips.so /opt/opentrack/ossl-modules/fips.so
 COPY --from=openssl-fips /out/fipsmodule.cnf /etc/opentrack/fipsmodule.cnf
 COPY docker/openssl-fips.cnf /etc/opentrack/openssl-fips.cnf
-COPY --from=server /src/target/release/opentrack /usr/local/bin/opentrack
+COPY --from=server /out/opentrack /usr/local/bin/opentrack
 COPY --from=ui /ui/dist /opt/opentrack/ui
 COPY profiles /opt/opentrack/profiles
 COPY LICENSE /opt/opentrack/LICENSE

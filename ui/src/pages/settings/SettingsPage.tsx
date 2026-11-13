@@ -240,11 +240,12 @@ export default function SettingsPage({ onSaved }: { onSaved: () => void }) {
             </div>
           </Row>
           <Row label="Full configuration" hint={CONFIG_EXPORT_INFO}>
-            <Button size="sm" variant="ghost" disabled={!admin} icon={<TbDownload />} onClick={() => window.open(api.exportUrl('config'), '_self')}>
+            <Button size="sm" variant="ghost" disabled={!admin || importStatus?.supported === false} icon={<TbDownload />} onClick={() => window.open(api.exportUrl('config'), '_self')}>
               Configuration
             </Button>
+            {importStatus?.supported === false && <span className="muted">Use PostgreSQL operator backups for this deployment.</span>}
           </Row>
-          {admin && importStatus?.empty && (
+          {admin && importStatus?.supported !== false && importStatus?.empty && (
             <Row label="Import configuration" hint={CONFIG_IMPORT_INFO}>
               <div className="stack">
                 <FileDropZone

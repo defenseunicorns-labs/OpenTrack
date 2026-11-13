@@ -29,7 +29,7 @@ impl SyncStatus {
         }
     }
 
-    fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "applied" => SyncStatus::Applied,
             "pending" => SyncStatus::Pending,
@@ -65,6 +65,10 @@ fn entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
 impl Db {
     /// The sequence this node's next entry gets.
     pub fn sync_next_seq(&self, site: SiteCode) -> Result<u64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_next_seq(site)?);
+        }
         let max: Option<i64> = self.connection().query_row(
             "SELECT max(seq) FROM sync_log WHERE site = ?1",
             [site.as_str()],
@@ -75,6 +79,10 @@ impl Db {
 
     /// The latest stamp this node has given or seen, to start its clock after.
     pub fn sync_last_hlc(&self) -> Result<Hlc> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_last_hlc()?);
+        }
         let max: Option<i64> =
             self.connection()
                 .query_row("SELECT max(hlc) FROM sync_log", [], |r| r.get(0))?;
@@ -92,6 +100,10 @@ impl Db {
         command: &Value,
         now_ms: u64,
     ) -> Result<Entry> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_append_own(site, actor, role, command, now_ms)?);
+        }
         self.write(|tx| {
             let (seq, last): (i64, i64) = tx.query_row(
                 "SELECT (SELECT coalesce(max(seq), 0) + 1 FROM sync_log WHERE site = ?1),
@@ -130,6 +142,10 @@ impl Db {
 
     /// Entries by where they stand here, e.g. `{"applied": 12, "pending": 1}`.
     pub fn sync_counts(&self) -> Result<std::collections::BTreeMap<String, u64>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_counts()?);
+        }
         let mut st = self
             .connection()
             .prepare("SELECT status, count(*) FROM sync_log GROUP BY status")?;
@@ -143,6 +159,10 @@ impl Db {
 
     /// The highest sequence held from each site.
     pub fn sync_heads(&self) -> Result<Vec<(SiteCode, u64)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_heads()?);
+        }
         let mut st = self
             .connection()
             .prepare("SELECT site, max(seq) FROM sync_log GROUP BY site ORDER BY site")?;
@@ -158,6 +178,10 @@ impl Db {
     /// Which of a site's sequences up to `upto` are missing here, as
     /// inclusive ranges (at most `most`).
     pub fn sync_missing(&self, site: SiteCode, upto: u64, most: usize) -> Result<Vec<(u64, u64)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_missing(site, upto, most)?);
+        }
         let mut st = self
             .connection()
             .prepare("SELECT seq FROM sync_log WHERE site = ?1 AND seq <= ?2 ORDER BY seq")?;
@@ -180,6 +204,10 @@ impl Db {
 
     /// A site's entries in `from..=to`, in order.
     pub fn sync_range(&self, site: SiteCode, from: u64, to: u64) -> Result<Vec<Entry>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_range(site, from, to)?);
+        }
         let mut st = self.connection().prepare(&format!(
             "SELECT {COLUMNS} FROM sync_log WHERE site = ?1 AND seq BETWEEN ?2 AND ?3 ORDER BY seq"
         ))?;
@@ -195,6 +223,10 @@ impl Db {
         status: SyncStatus,
         detail: Option<&str>,
     ) -> Result<bool> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_record(e, status, detail)?);
+        }
         let n = self.connection().execute(
             "INSERT OR IGNORE INTO sync_log
                (site, seq, hlc, actor, role, command, received_at_ms, status, detail)
@@ -220,6 +252,10 @@ impl Db {
         status: SyncStatus,
         detail: Option<&str>,
     ) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_set_status(id, status, detail)?);
+        }
         self.connection().execute(
             "UPDATE sync_log SET status = ?3, detail = ?4 WHERE site = ?1 AND seq = ?2",
             params![id.site.as_str(), id.seq as i64, status.as_str(), detail],
@@ -228,6 +264,10 @@ impl Db {
     }
 
     pub fn sync_entry(&self, id: GlobalId) -> Result<Option<(Entry, SyncStatus)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_entry(id)?);
+        }
         Ok(self
             .connection()
             .query_row(
@@ -241,6 +281,10 @@ impl Db {
     /// Applied entries stamped later than `hlc`: what an entry that arrives
     /// now is judged against.
     pub fn sync_applied_after(&self, hlc: Hlc) -> Result<Vec<Entry>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_applied_after(hlc)?);
+        }
         let mut st = self.connection().prepare(&format!(
             "SELECT {COLUMNS} FROM sync_log WHERE status = 'applied' AND hlc > ?1 ORDER BY hlc"
         ))?;
@@ -251,6 +295,10 @@ impl Db {
 
     /// A site's entries after sequence `after`, in order (what a peer lacks).
     pub fn sync_since(&self, site: SiteCode, after: u64, limit: usize) -> Result<Vec<Entry>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_since(site, after, limit)?);
+        }
         let mut st = self.connection().prepare(&format!(
             "SELECT {COLUMNS} FROM sync_log WHERE site = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3"
         ))?;
@@ -261,6 +309,10 @@ impl Db {
 
     /// Entries waiting for their tracks, oldest first.
     pub fn sync_pending(&self) -> Result<Vec<Entry>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_pending()?);
+        }
         let mut st = self.connection().prepare(&format!(
             "SELECT {COLUMNS} FROM sync_log WHERE status = 'pending' ORDER BY hlc"
         ))?;
@@ -269,6 +321,10 @@ impl Db {
 
     /// Give up on pending entries received before `before_ms`.
     pub fn sync_expire_pending(&mut self, before_ms: i64) -> Result<usize> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_expire_pending(before_ms)?);
+        }
         Ok(self.connection().execute(
             "UPDATE sync_log SET status = 'failed', detail = 'its tracks never arrived'
               WHERE status = 'pending' AND received_at_ms < ?1",
@@ -278,6 +334,10 @@ impl Db {
 
     /// The undo naming entry `id`, if one has arrived.
     pub fn sync_undone_by(&self, id: GlobalId) -> Result<Option<GlobalId>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_undone_by(id)?);
+        }
         let row: Option<(String, i64)> = self
             .connection()
             .query_row(
@@ -298,6 +358,10 @@ impl Db {
     }
 
     pub fn max_decision_id(&self) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.max_decision_id()?);
+        }
         let max: Option<i64> =
             self.connection()
                 .query_row("SELECT max(id) FROM decisions", [], |r| r.get(0))?;
@@ -314,6 +378,10 @@ impl Db {
         id: GlobalId,
         parts: &[String],
     ) -> Result<Vec<i64>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.tag_decisions(after, actor, id, parts)?);
+        }
         self.write(|tx| {
             let ids: Vec<i64> = {
                 let mut st = tx
@@ -338,6 +406,10 @@ impl Db {
 
     /// The entry a local decision was made for, and its part.
     pub fn sync_of_decision(&self, decision: i64) -> Result<Option<(GlobalId, Option<String>)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_of_decision(decision)?);
+        }
         let row: Option<(Option<String>, Option<String>)> = self
             .connection()
             .query_row(
@@ -351,6 +423,10 @@ impl Db {
 
     /// The local decision an entry made (its `part`'s, when it made several).
     pub fn decision_of_sync(&self, id: GlobalId, part: Option<&str>) -> Result<Option<i64>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.decision_of_sync(id, part)?);
+        }
         Ok(self
             .connection()
             .query_row(
@@ -377,6 +453,10 @@ pub struct PeerKey {
 impl Db {
     /// Every pinned peer key, by site code.
     pub fn sync_peer_keys(&self) -> Result<Vec<PeerKey>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_peer_keys()?);
+        }
         let mut stmt = self.connection().prepare(
             "SELECT site, public_key, pinned_by, pinned_at_ms FROM sync_peer_keys ORDER BY site",
         )?;
@@ -394,6 +474,10 @@ impl Db {
     /// Pin (or replace) a peer's key, recorded as a decision with the key
     /// it replaced.
     pub fn sync_pin_key(&mut self, site: SiteCode, public_key: &str, actor: &str) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_pin_key(site, public_key, actor)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let before: Option<String> = tx
@@ -421,6 +505,10 @@ impl Db {
     /// Remove a peer's key: its messages are refused from then on. `None`
     /// when it had none.
     pub fn sync_unpin_key(&mut self, site: SiteCode, actor: &str) -> Result<Option<i64>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_unpin_key(site, actor)?);
+        }
         self.write(|tx| {
             let before: Option<String> = tx
                 .query_row(
