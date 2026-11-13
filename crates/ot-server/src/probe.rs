@@ -41,22 +41,31 @@ pub struct ProbeRequest {
     pub save_as: Option<String>,
 }
 
-/// A `file` transport may only read under the data directory (beside the
-/// database): elsewhere it could read any file the server can (ASD
-/// V-222466). Other transports pass.
+/// A `file` transport may only read under the data directory or a configured
+/// read-only source file share; elsewhere it could read arbitrary files.
 pub(crate) fn file_allowed(
     common: &crate::config::Common,
     t: &TransportConfig,
 ) -> Result<(), String> {
+    let share = std::env::var_os("OT_SOURCE_FILE_SHARE");
+    file_allowed_with_share(common, t, share.as_deref().map(std::path::Path::new))
+}
+
+fn file_allowed_with_share(
+    common: &crate::config::Common,
+    t: &TransportConfig,
+    share: Option<&std::path::Path>,
+) -> Result<(), String> {
     let TransportConfig::File { path, .. } = t else {
         return Ok(());
     };
-    let data = common
-        .sqlite
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(std::path::Path::new("."));
-    let data = std::fs::canonicalize(data).map_err(|e| format!("the data directory: {e}"))?;
+    let data =
+        std::fs::canonicalize(common.data_dir()).map_err(|e| format!("the data directory: {e}"))?;
+    let mut roots = vec![data.clone()];
+    if let Some(share) = share {
+        roots
+            .push(std::fs::canonicalize(share).map_err(|e| format!("the source file share: {e}"))?);
+    }
     let p = std::path::Path::new(path.trim());
     if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -68,16 +77,41 @@ pub(crate) fn file_allowed(
     } else {
         data.join(p)
     };
-    // An existing path resolves its links; a missing one is checked as written.
-    let p = std::fs::canonicalize(&p).unwrap_or(p);
-    if p.starts_with(&data) {
+    // Resolve the nearest existing ancestor so a symlinked parent cannot
+    // smuggle a missing file outside the allowed roots.
+    let mut existing = p.as_path();
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        let Some(name) = existing.file_name() else {
+            return Err(format!("file path {path:?} has no existing ancestor"));
+        };
+        missing.push(name.to_os_string());
+        existing = existing
+            .parent()
+            .ok_or_else(|| format!("file path {path:?} has no parent"))?;
+    }
+    let mut resolved =
+        std::fs::canonicalize(existing).map_err(|e| format!("file path {path:?}: {e}"))?;
+    for name in missing.into_iter().rev() {
+        resolved.push(name);
+    }
+    if roots.iter().any(|root| resolved.starts_with(root)) {
         Ok(())
     } else {
         Err(format!(
-            "file path {path:?}: a file source reads only under the data directory ({})",
-            data.display()
+            "file path {path:?}: a file source reads only under the data directory or configured source file share"
         ))
     }
+}
+
+pub(crate) fn transport_fingerprint(t: &TransportConfig) -> Result<String, serde_json::Error> {
+    let bytes = serde_json::to_vec(t)?;
+    let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &bytes);
+    Ok(digest
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 /// Capture frames from a transport until either limit is reached.
@@ -96,14 +130,20 @@ async fn capture(
     let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(max_secs);
     let mut frames = Vec::new();
     let mut ended: Option<String> = None;
+    let mut channel_closed = false;
     while frames.len() < max_frames {
         match tokio::time::timeout_at(deadline, rx.recv()).await {
             Ok(Some(f)) => frames.push(f),
-            Ok(None) => break,
+            Ok(None) => {
+                channel_closed = true;
+                break;
+            }
             Err(_) => break,
         }
     }
-    if task.is_finished() {
+    // A closed channel means the transport has returned. Await it to retain
+    // connection errors even when the JoinHandle has not marked itself done yet.
+    if channel_closed || task.is_finished() {
         if let Ok(Err(e)) = task.await {
             ended = Some(format!("{e:#}"));
         }
@@ -260,6 +300,8 @@ pub async fn probe(
 
     let mut saved = None;
     if let Some(id) = req.save_as.clone() {
+        let source_id = id.clone();
+        let sample_id = id.clone();
         let samples: Vec<(Vec<u8>, Option<Value>)> = frames
             .iter()
             .map(|f| {
@@ -269,10 +311,27 @@ pub async fn probe(
             .collect();
         let n = s
             .with_db(move |db| {
-                db.store_probe_samples(&id, &samples, ot_store::probe::DEFAULT_SAMPLE_CAP)
+                db.store_probe_samples(&sample_id, &samples, ot_store::probe::DEFAULT_SAMPLE_CAP)
             })
             .await?;
         saved = Some(n);
+        if !frames.is_empty() {
+            let row = s.with_db(move |db| db.get_source(&source_id)).await?;
+            let matches_saved = row
+                .as_ref()
+                .and_then(|row| row.spec.get("transport"))
+                .and_then(|raw| serde_json::from_value::<TransportConfig>(raw.clone()).ok())
+                .is_some_and(|stored| stored == req.transport);
+            if matches_saved {
+                let fingerprint = transport_fingerprint(&req.transport)
+                    .map_err(|e| ApiError::internal(e.to_string()))?;
+                let evidence = json!({"transport":fingerprint,"frames":frames.len(),"seconds":elapsed,
+                    "created_at_ms":row.as_ref().map(|row| row.created_at_ms)});
+                s.redis
+                    .put_source_probe(&id, &evidence.to_string(), Duration::from_secs(24 * 3600))
+                    .await?;
+            }
+        }
     }
 
     let echo: Vec<Value> = frames
@@ -335,9 +394,90 @@ pub async fn samples(
     Ok(Json(json!({ "samples": frames })))
 }
 
+#[derive(Deserialize)]
+pub struct DecodeSamplesRequest {
+    /// The codec as currently edited, which may differ from the saved source.
+    codec: CodecConfig,
+}
+
+fn decode_sample_frames(
+    config: CodecConfig,
+    frames: impl IntoIterator<Item = Frame>,
+) -> Result<(Vec<Value>, usize, Option<String>), ApiError> {
+    const SAMPLE_RECORDS: usize = 10;
+    let mut codec = Codec::new(config).map_err(|e| ApiError::unprocessable(e.to_string()))?;
+    let mut records = Vec::new();
+    let mut decode_errors = 0;
+    let mut last_decode_error = None;
+    for frame in frames {
+        match codec.decode(&frame) {
+            Ok(decoded) => records.extend(
+                decoded
+                    .into_iter()
+                    .take(SAMPLE_RECORDS - records.len())
+                    .map(ot_source::trace::capped),
+            ),
+            Err(e) => {
+                decode_errors += 1;
+                last_decode_error = Some(e.to_string());
+            }
+        }
+        if records.len() == SAMPLE_RECORDS {
+            break;
+        }
+    }
+    Ok((records, decode_errors, last_decode_error))
+}
+
+/// Decode stored frames independently of the Map and the rest of the pipeline.
+/// This lets an unfinished source show real input fields while its mapping is built.
+pub async fn decode_samples(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<DecodeSamplesRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let rows = s
+        .with_db(move |db| db.probe_samples(&id, ot_store::probe::DEFAULT_SAMPLE_CAP))
+        .await?;
+    let frame_count = rows.len();
+    let frames = rows.into_iter().map(|row| {
+        let meta = match &row.meta {
+            Some(Value::Object(m)) => m.clone(),
+            _ => Default::default(),
+        };
+        Frame::new(row.bytes).with_meta(meta)
+    });
+    let (records, decode_errors, last_decode_error) = decode_sample_frames(req.codec, frames)?;
+    Ok(Json(json!({
+        "frames": frame_count,
+        "records": records,
+        "decode_errors": decode_errors,
+        "last_decode_error": last_decode_error,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoded_samples_are_available_without_a_mapping() {
+        let codec = serde_json::from_value(json!({"type": "json", "records": "ac"})).unwrap();
+        let first = Frame::new(br#"{"ac":[{"hex":"a"},{"hex":"b"}]}"#.to_vec());
+        let broken = Frame::new(b"not json".to_vec());
+        let last = Frame::new(
+            json!({"ac": (0..20).map(|n| json!({"hex": n})).collect::<Vec<_>>()})
+                .to_string()
+                .into_bytes(),
+        );
+        let (records, errors, last_error) =
+            decode_sample_frames(codec, [first, broken, last]).unwrap();
+        assert_eq!(records.len(), 10);
+        assert_eq!(records[0]["hex"], "a");
+        assert_eq!(records[2]["hex"], 0);
+        assert_eq!(errors, 1);
+        assert!(last_error.is_some());
+    }
 
     fn tcp(tls: bool) -> TransportConfig {
         serde_json::from_value(json!({"type": "tcp_client", "host": "h", "port": 1,
@@ -440,6 +580,58 @@ mod tests {
         {
             std::os::unix::fs::symlink("/etc", dir.path().join("etc")).unwrap();
             assert!(file_allowed(&common, &file("etc/passwd")).is_err());
+            assert!(file_allowed(&common, &file("etc/not-yet-present")).is_err());
         }
+    }
+
+    #[test]
+    fn a_file_source_can_read_a_mounted_share_but_not_follow_its_links_out() {
+        let data = tempfile::tempdir().unwrap();
+        let share = tempfile::tempdir().unwrap();
+        std::fs::write(share.path().join("feed.jsonl"), "{}").unwrap();
+        let common = crate::config_backup::tests::common(data.path());
+        let file = |path: &std::path::Path| TransportConfig::File {
+            path: path.display().to_string(),
+            extension: None,
+            framing: ot_source::frame::Framing::Message,
+            frames_per_second: None,
+            repeat: false,
+        };
+        assert!(
+            file_allowed_with_share(
+                &common,
+                &file(&share.path().join("feed.jsonl")),
+                Some(share.path())
+            )
+            .is_ok()
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/etc", share.path().join("elsewhere")).unwrap();
+            assert!(
+                file_allowed_with_share(
+                    &common,
+                    &file(&share.path().join("elsewhere/passwd")),
+                    Some(share.path())
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn connection_test_fingerprint_changes_with_destination() {
+        let one: TransportConfig = serde_json::from_value(
+            serde_json::json!({"type":"http_poll","url":"https://one.example"}),
+        )
+        .unwrap();
+        let two: TransportConfig = serde_json::from_value(
+            serde_json::json!({"type":"http_poll","url":"https://two.example"}),
+        )
+        .unwrap();
+        assert_ne!(
+            transport_fingerprint(&one).unwrap(),
+            transport_fingerprint(&two).unwrap()
+        );
     }
 }

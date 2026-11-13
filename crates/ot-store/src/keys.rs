@@ -124,6 +124,15 @@ impl Keys {
         format!("{}:status:{source}", self.ns)
     }
 
+    /// The access controller's separate networking decision for a source.
+    pub fn source_access(&self, source: &str) -> String {
+        format!("{}:access:{source}", self.ns)
+    }
+
+    pub fn source_probe(&self, source: &str) -> String {
+        format!("{}:probe:{source}", self.ns)
+    }
+
     /// `minute` is Unix minutes (epoch seconds / 60).
     pub fn metrics(&self, source: &str, minute: i64) -> String {
         format!("{}:metrics:{source}:{minute}", self.ns)

@@ -48,6 +48,7 @@ const ADMIN_READS: &[&str] = &[
     "/export/config",
     "/import/config",
     "/probe",
+    "/sources/access-plans",
     "/audit",
 ];
 
@@ -143,6 +144,7 @@ mod tests {
         assert_eq!(n(Method::GET, "/auth/users"), admin);
         assert_eq!(n(Method::GET, "/export/config"), admin);
         assert_eq!(n(Method::GET, "/import/config"), admin);
+        assert_eq!(n(Method::GET, "/sources/access-plans"), admin);
         assert_eq!(n(Method::POST, "/import/config"), admin);
         assert_eq!(n(Method::GET, "/tracks"), viewer);
         assert_eq!(n(Method::GET, "/sources/ais"), viewer);

@@ -1156,6 +1156,42 @@ impl RedisStore {
             .await?)
     }
 
+    pub async fn put_source_access(&self, source: &str, json: &str, ttl: Duration) -> Result<()> {
+        let _: () = redis::cmd("SET")
+            .arg(self.keys.source_access(source))
+            .arg(json)
+            .arg("EX")
+            .arg(ttl.as_secs().max(1))
+            .query_async(&mut self.conn.clone())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_source_access(&self, source: &str) -> Result<Option<String>> {
+        Ok(redis::cmd("GET")
+            .arg(self.keys.source_access(source))
+            .query_async(&mut self.conn.clone())
+            .await?)
+    }
+
+    pub async fn put_source_probe(&self, source: &str, json: &str, ttl: Duration) -> Result<()> {
+        let _: () = redis::cmd("SET")
+            .arg(self.keys.source_probe(source))
+            .arg(json)
+            .arg("EX")
+            .arg(ttl.as_secs().max(1))
+            .query_async(&mut self.conn.clone())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_source_probe(&self, source: &str) -> Result<Option<String>> {
+        Ok(redis::cmd("GET")
+            .arg(self.keys.source_probe(source))
+            .query_async(&mut self.conn.clone())
+            .await?)
+    }
+
     /// Add several counters to this minute's bucket for `source`.
     pub async fn incr_metrics(&self, source: &str, counts: &[(String, u64)]) -> Result<()> {
         if counts.is_empty() {

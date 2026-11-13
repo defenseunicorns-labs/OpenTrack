@@ -944,7 +944,16 @@ pub async fn run(
             let addr: SocketAddr = resolve_env(bind)?
                 .parse()
                 .context("udp bind must be ip:port")?;
-            let socket = udp_socket(addr, *multicast_group, multicast_interface.as_ref())?;
+            // A host-network relay joins the group when the pod cannot see
+            // the external interface. Its unicast packets arrive here.
+            let relayed = std::env::var("OT_MULTICAST_RELAY").as_deref() == Ok("true");
+            let group = if relayed { None } else { *multicast_group };
+            let addr = if relayed && multicast_group.is_some() && addr.is_ipv6() {
+                SocketAddr::from((Ipv4Addr::UNSPECIFIED, addr.port()))
+            } else {
+                addr
+            };
+            let socket = udp_socket(addr, group, multicast_interface.as_ref())?;
             connected(&status);
             let mut buf = vec![0u8; 65_536];
             loop {
@@ -1474,7 +1483,7 @@ async fn read_stream(
     }
 }
 
-fn udp_socket(
+pub fn udp_socket(
     addr: SocketAddr,
     group: Option<IpAddr>,
     interface: Option<&MulticastInterface>,

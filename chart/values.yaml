@@ -2,7 +2,7 @@ domain: uds.dev
 
 image:
   repository: localhost:5000/opentrack
-  tag: uds-dev-0.1.8
+  tag: uds-dev-0.1.9
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -22,6 +22,11 @@ storage:
     database: opentrack
     credentialsSecret: opentrack.opentrack.pg-cluster.credentials.postgresql.acid.zalan.do
     sslmode: require
+
+# Existing PVC backed by an external file share. Mount it read-only so file
+# sources can select paths below /source-files without an OpenTrack rebuild.
+fileShare:
+  claimName: ""
 
 valkey:
   url: redis://valkey-primary.valkey-opentrack.svc.cluster.local:6379
@@ -52,3 +57,28 @@ auth:
   bootstrapSecret: opentrack-bootstrap-admin
 
 siteCode: OTK
+
+# Optional runtime access reconciliation. Approval entries are exact host,
+# port, protocol tuples; edit the ConfigMap to approve new destinations.
+sourceAccess:
+  enabled: false
+  # Reserve these ports on the Istio tenant gateway LoadBalancer up front.
+  tcpPorts: []
+  # Preprovision UDP Services on these ports. Envoy Gateway must be installed.
+  udpPorts: []
+  multicastRelay:
+    enabled: false
+    nodeSelector: {}
+    # Exact CIDR of the selected node's receiving interface, e.g. 192.0.2.10/32.
+    nodeCidr: ""
+    tolerations: []
+  approvals:
+    # One-time site choice: saved source requirements receive exact rules
+    # within the reserved listener pools without per-source ConfigMap edits.
+    auto: false
+    hosts: []
+    # Plain TCP/MQTT requires an exact source host and a bounded destination CIDR.
+    tcp: []
+    udp_ports: []
+    tcp_ingress_ports: []
+    multicast: []
