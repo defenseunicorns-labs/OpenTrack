@@ -584,12 +584,7 @@ fn merged_allow(
             result.push(candidate);
         }
     }
-    result.extend(
-        desired
-            .tcp
-            .iter()
-            .map(CidrRule::package_rule),
-    );
+    result.extend(desired.tcp.iter().map(CidrRule::package_rule));
     result.extend(desired.tcp_ingress.iter().map(|port| json!({
         "direction": "Ingress",
         "selector": {"app.kubernetes.io/name": "opentrack", "app.kubernetes.io/component": "server"},
@@ -949,8 +944,7 @@ mod tests {
             ..Default::default()
         };
         assert!(merged_allow(&package, &desired, "default", None).is_err());
-        let merged = merged_allow(&package, &desired, "default", Some("192.0.2.10/32"))
-            .unwrap();
+        let merged = merged_allow(&package, &desired, "default", Some("192.0.2.10/32")).unwrap();
         assert_eq!(merged[0]["remoteCidr"], "192.0.2.10/32");
         assert_eq!(merged[0]["remoteProtocol"], "UDP");
         assert!(merged[0].get("remoteGenerated").is_none());

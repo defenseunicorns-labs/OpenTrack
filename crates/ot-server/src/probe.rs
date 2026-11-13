@@ -130,14 +130,20 @@ async fn capture(
     let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(max_secs);
     let mut frames = Vec::new();
     let mut ended: Option<String> = None;
+    let mut channel_closed = false;
     while frames.len() < max_frames {
         match tokio::time::timeout_at(deadline, rx.recv()).await {
             Ok(Some(f)) => frames.push(f),
-            Ok(None) => break,
+            Ok(None) => {
+                channel_closed = true;
+                break;
+            }
             Err(_) => break,
         }
     }
-    if task.is_finished() {
+    // A closed channel means the transport has returned. Await it to retain
+    // connection errors even when the JoinHandle has not marked itself done yet.
+    if channel_closed || task.is_finished() {
         if let Ok(Err(e)) = task.await {
             ended = Some(format!("{e:#}"));
         }

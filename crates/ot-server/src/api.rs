@@ -296,9 +296,10 @@ async fn current_source_access(
             .get_source_access(id)
             .await?
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
-        if access.as_ref().is_some_and(|state| {
-            state["revision"].as_i64() == Some(revision)
-        }) || tokio::time::Instant::now() >= deadline
+        if access
+            .as_ref()
+            .is_some_and(|state| state["revision"].as_i64() == Some(revision))
+            || tokio::time::Instant::now() >= deadline
         {
             return Ok(access);
         }
