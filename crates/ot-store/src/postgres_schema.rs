@@ -4,7 +4,41 @@ use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Nullable, Text};
 use serde_json::{Value, json};
 
-use super::{PgControlStore, PostgresError, SchemaVersion as CountRow};
+use super::{PgControlStore, PostgresError, SchemaVersion as CountRow, record_decision};
+use crate::Decision;
+
+fn lock_schema(connection: &mut diesel::PgConnection) -> Result<(), PostgresError> {
+    let _: CountRow =
+        diesel::sql_query("SELECT 1::bigint AS version FROM pg_advisory_xact_lock(6869400123458)")
+            .get_result(connection)?;
+    Ok(())
+}
+
+fn insert_fields(
+    connection: &mut diesel::PgConnection,
+    version: i64,
+    fields: &[Value],
+) -> Result<(), PostgresError> {
+    for field in fields {
+        let text = |key: &str| field.get(key).and_then(Value::as_str);
+        diesel::sql_query(
+            "INSERT INTO extension_fields
+             (schema_version, key, type, unit, required, default_json, enum_values, description, builtin)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind::<BigInt, _>(version)
+        .bind::<Text, _>(text("key").unwrap_or_default())
+        .bind::<Text, _>(text("type").unwrap_or_default())
+        .bind::<Nullable<Text>, _>(text("unit"))
+        .bind::<BigInt, _>(i64::from(field.get("required").and_then(Value::as_bool).unwrap_or(false)))
+        .bind::<Nullable<Text>, _>(field.get("default").filter(|v| !v.is_null()).map(Value::to_string))
+        .bind::<Nullable<Text>, _>(field.get("enum_values").filter(|v| !v.is_null()).map(Value::to_string))
+        .bind::<Nullable<Text>, _>(text("description"))
+        .bind::<Nullable<Text>, _>(text("builtin"))
+        .execute(connection)?;
+    }
+    Ok(())
+}
 use crate::schema::SchemaVersion;
 
 #[derive(QueryableByName)]
@@ -40,6 +74,87 @@ struct FieldRow {
 }
 
 impl PgControlStore {
+    pub fn put_schema_draft(
+        &mut self,
+        fields: &[Value],
+        notes: Option<&str>,
+        actor: &str,
+    ) -> Result<SchemaVersion, PostgresError> {
+        let version = self.connection.transaction::<u32, PostgresError, _>(|connection| {
+            lock_schema(connection)?;
+            let drafts: Vec<CountRow> = diesel::sql_query(
+                "SELECT version FROM schema_versions WHERE status = 'draft'",
+            ).load(connection)?;
+            let version = if let Some(draft) = drafts.first() {
+                draft.version
+            } else {
+                let next: CountRow = diesel::sql_query(
+                    "SELECT (coalesce(max(version), 0) + 1)::bigint AS version FROM schema_versions",
+                ).get_result(connection)?;
+                diesel::sql_query(
+                    "INSERT INTO schema_versions (version, status) VALUES ($1, 'draft')",
+                ).bind::<BigInt, _>(next.version).execute(connection)?;
+                next.version
+            };
+            diesel::sql_query("UPDATE schema_versions SET notes = $2 WHERE version = $1")
+                .bind::<BigInt, _>(version)
+                .bind::<Nullable<Text>, _>(notes)
+                .execute(connection)?;
+            diesel::sql_query("DELETE FROM extension_fields WHERE schema_version = $1")
+                .bind::<BigInt, _>(version).execute(connection)?;
+            insert_fields(connection, version, fields)?;
+            record_decision(connection, &Decision::new(actor, "edit_schema_draft")
+                .evidence(json!({"version": version, "fields": fields.len()})))?;
+            Ok(version as u32)
+        })?;
+        self.schema_version_get(version)?
+            .ok_or_else(|| PostgresError::NotFound(format!("schema version {version}")))
+    }
+
+    pub fn publish_schema_draft(&mut self, actor: &str) -> Result<SchemaVersion, PostgresError> {
+        let version = self.connection.transaction::<u32, PostgresError, _>(|connection| {
+            lock_schema(connection)?;
+            let drafts: Vec<CountRow> = diesel::sql_query(
+                "SELECT version FROM schema_versions WHERE status = 'draft'",
+            ).load(connection)?;
+            let version = drafts.first().ok_or_else(|| PostgresError::NotFound("schema draft".into()))?.version;
+            diesel::sql_query(
+                "UPDATE schema_versions SET status = 'published', published_at_ms = $2 WHERE version = $1",
+            ).bind::<BigInt, _>(version)
+                .bind::<BigInt, _>(crate::sqlite::now_ms())
+                .execute(connection)?;
+            record_decision(connection, &Decision::new(actor, "publish_schema")
+                .evidence(json!({"version": version})))?;
+            Ok(version as u32)
+        })?;
+        self.schema_version_get(version)?
+            .ok_or_else(|| PostgresError::NotFound(format!("schema version {version}")))
+    }
+
+    pub fn discard_schema_draft(&mut self, actor: &str) -> Result<(), PostgresError> {
+        self.connection
+            .transaction::<(), PostgresError, _>(|connection| {
+                lock_schema(connection)?;
+                let fields = diesel::sql_query(
+                    "DELETE FROM extension_fields WHERE schema_version IN
+                 (SELECT version FROM schema_versions WHERE status = 'draft')",
+                )
+                .execute(connection)?;
+                let versions =
+                    diesel::sql_query("DELETE FROM schema_versions WHERE status = 'draft'")
+                        .execute(connection)?;
+                if versions == 0 {
+                    return Err(PostgresError::NotFound("schema draft".into()));
+                }
+                record_decision(
+                    connection,
+                    &Decision::new(actor, "discard_schema_draft")
+                        .evidence(json!({"fields": fields})),
+                )?;
+                Ok(())
+            })
+    }
+
     pub fn latest_published_schema(&mut self) -> Result<u32, PostgresError> {
         let row: CountRow = diesel::sql_query(
             "SELECT coalesce(max(version), 0)::bigint AS version FROM schema_versions

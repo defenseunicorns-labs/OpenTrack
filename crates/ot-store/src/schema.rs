@@ -116,6 +116,10 @@ impl Db {
         notes: Option<&str>,
         actor: &str,
     ) -> Result<SchemaVersion> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.put_schema_draft(fields, notes, actor)?);
+        }
         let version = self.write(|tx| {
             let now = now_ms();
             let draft: Option<u32> = tx
@@ -168,6 +172,10 @@ impl Db {
 
     /// Publish the draft; it can never change again.
     pub fn publish_schema_draft(&mut self, actor: &str) -> Result<SchemaVersion> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.publish_schema_draft(actor)?);
+        }
         let version = self.write(|tx| {
             let draft: u32 = tx
                 .query_row("SELECT version FROM schema_versions WHERE status = 'draft'", [], |r| r.get(0))
@@ -285,6 +293,10 @@ impl Db {
     }
 
     pub fn discard_schema_draft(&mut self, actor: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.discard_schema_draft(actor)?);
+        }
         self.write(|tx| {
             let n = tx.execute(
                 "DELETE FROM extension_fields WHERE schema_version IN

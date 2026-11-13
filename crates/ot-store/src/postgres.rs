@@ -886,6 +886,16 @@ mod tests {
         assert_eq!(selected.schema_version().unwrap(), 1);
         assert!(selected.latest_published_schema().unwrap() >= 1);
         assert!(!selected.schema_versions().unwrap().is_empty());
+        let draft = selected.put_schema_draft(
+            &[serde_json::json!({"key": "pg_test_field", "type": "string", "required": false})],
+            Some("PostgreSQL integration test"),
+            "test",
+        ).unwrap();
+        assert_eq!(draft.status, "draft");
+        assert_eq!(draft.fields.len(), 1);
+        let published = selected.publish_schema_draft("test").unwrap();
+        assert_eq!(published.version, draft.version);
+        assert_eq!(published.status, "published");
         assert!(selected.groups().unwrap().is_empty());
         assert!(selected.registry_rows().unwrap().is_empty());
         assert!(selected.registry_version().unwrap().contains(':'));
