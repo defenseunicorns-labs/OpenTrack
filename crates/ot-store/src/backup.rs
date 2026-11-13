@@ -362,12 +362,22 @@ impl Db {
     /// What configuration this node holds (see [`present`]); empty when a
     /// configuration may be imported.
     pub fn config_present(&self) -> Result<Vec<String>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.config_present()?);
+        }
         present(self.connection())
     }
 
     /// The configuration in the database, as a document (its header and
     /// tracker profiles are the caller's to fill).
     pub fn config_snapshot(&self) -> Result<ConfigFile> {
+        #[cfg(feature = "postgres")]
+        if self.pg().is_some() {
+            return Err(StoreError::Conflict(
+                "configuration export is not available for PostgreSQL yet".into(),
+            ));
+        }
         let conn = self.connection();
         let sources = self
             .list_sources()?
@@ -537,6 +547,12 @@ impl Db {
         actor: &str,
         finish: impl FnOnce() -> Result<()>,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if self.pg().is_some() {
+            return Err(StoreError::Conflict(
+                "configuration import is not available for PostgreSQL yet".into(),
+            ));
+        }
         if f.format != FORMAT || f.version != VERSION {
             return Err(StoreError::Conflict(format!(
                 "not an {FORMAT} version {VERSION} document"

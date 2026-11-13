@@ -373,6 +373,7 @@ export interface SystemMetrics {
 /** `GET /import/config`: whether a configuration may be imported here. */
 export interface ConfigImportStatus {
   empty: boolean
+  supported?: boolean
   /** What makes the node non-empty, one line each. */
   present: string[]
   format: string

@@ -44,9 +44,10 @@ impl AppState {
         // Decisions recorded for a request carry its client address.
         let ip = crate::auth::access::current_ip();
         tokio::task::spawn_blocking(move || {
-            let mut db = db
-                .lock()
-                .map_err(|_| ApiError::internal("database lock poisoned"))?;
+            let mut db = db.lock().unwrap_or_else(|poisoned| {
+                tracing::warn!("recovering control database lock after a failed request");
+                poisoned.into_inner()
+            });
             ot_store::audit::with_client(ip, || f(&mut db)).map_err(ApiError::from)
         })
         .await

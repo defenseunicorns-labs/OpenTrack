@@ -2,7 +2,7 @@ domain: uds.dev
 
 image:
   repository: localhost:5000/opentrack
-  tag: uds-dev-0.1.4
+  tag: uds-dev-0.1.5
   pullPolicy: IfNotPresent
 
 replicaCount: 1

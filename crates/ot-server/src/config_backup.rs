@@ -21,7 +21,7 @@ use ot_store::backup::{self, ConfigFile};
 use serde_json::{Value, json};
 
 use crate::api::actor;
-use crate::config::Common;
+use crate::config::{Common, DbBackend};
 use crate::control::{ApiError, AppState};
 
 /// What the file says about itself.
@@ -609,6 +609,11 @@ pub fn import(
 
 /// The file, as a download no cache keeps.
 async fn export_route(State(s): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
+    if s.common.db_backend == DbBackend::Postgres {
+        return Err(ApiError::bad_request(
+            "full configuration export is not available for PostgreSQL yet",
+        ));
+    }
     let (actor, common) = (actor(&headers), s.common.clone());
     let f = s.with_db(move |db| export(db, &common, &actor)).await?;
     let body = serde_json::to_vec_pretty(&f).map_err(|e| ApiError::internal(e.to_string()))?;
@@ -644,6 +649,7 @@ async fn status_route(State(s): State<AppState>) -> Result<Json<Value>, ApiError
         "present": there,
         "format": backup::FORMAT,
         "version": backup::VERSION,
+        "supported": s.common.db_backend == DbBackend::Sqlite,
     })))
 }
 
@@ -652,6 +658,11 @@ async fn import_route(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
+    if s.common.db_backend == DbBackend::Postgres {
+        return Err(ApiError::bad_request(
+            "full configuration import is not available for PostgreSQL yet",
+        ));
+    }
     let (actor, common) = (actor(&headers), s.common.clone());
     let db = s.db.clone();
     let result = tokio::task::spawn_blocking(move || {

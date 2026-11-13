@@ -33,7 +33,7 @@ mod sync;
 #[path = "postgres_uid.rs"]
 mod uid;
 use crate::audit::{AuditEvent, GENESIS, row_hash};
-use crate::auth::{NewSession, NewUser, Session, User};
+use crate::auth::{ApiToken, NewSession, NewUser, Session, User};
 
 const INITIAL_SCHEMA: &str = include_str!("../postgres/0001_init.sql");
 const SUPPORTED_SCHEMA: i64 = 1;
@@ -90,6 +90,41 @@ struct AuditHead {
     seq: i64,
     #[diesel(sql_type = Text)]
     hash: String,
+}
+
+#[derive(QueryableByName)]
+struct ApiTokenRow {
+    #[diesel(sql_type = Text)]
+    jti: String,
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = Text)]
+    user_id: String,
+    #[diesel(sql_type = Text)]
+    user_email: String,
+    #[diesel(sql_type = Text)]
+    created_by: String,
+    #[diesel(sql_type = BigInt)]
+    created_at_ms: i64,
+    #[diesel(sql_type = BigInt)]
+    expires_at_ms: i64,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    revoked_at_ms: Option<i64>,
+}
+
+impl From<ApiTokenRow> for ApiToken {
+    fn from(row: ApiTokenRow) -> Self {
+        Self {
+            jti: row.jti,
+            name: row.name,
+            user_id: row.user_id,
+            user_email: row.user_email,
+            created_by: row.created_by,
+            created_at_ms: row.created_at_ms,
+            expires_at_ms: row.expires_at_ms,
+            revoked_at_ms: row.revoked_at_ms,
+        }
+    }
 }
 
 fn append_audit(
@@ -301,6 +336,24 @@ pub struct PgControlStore {
     connection: PgConnection,
 }
 
+fn count_rows(connection: &mut PgConnection, sql: &'static str) -> Result<i64, PostgresError> {
+    let row: SchemaVersion = diesel::sql_query(sql).get_result(connection)?;
+    Ok(row.version)
+}
+
+fn note_count(
+    out: &mut Vec<String>,
+    connection: &mut PgConnection,
+    sql: &'static str,
+    label: &'static str,
+) -> Result<(), PostgresError> {
+    let n = count_rows(connection, sql)?;
+    if n > 0 {
+        out.push(format!("{n} {label}"));
+    }
+    Ok(())
+}
+
 impl PgControlStore {
     /// Connect and migrate a fresh database. The URL must be assembled from
     /// trusted configuration and never logged because it contains a password.
@@ -333,6 +386,79 @@ impl PgControlStore {
         let row: SchemaVersion = diesel::sql_query("SELECT count(*) AS version FROM users")
             .get_result(&mut self.connection)?;
         Ok(row.version)
+    }
+
+    pub fn config_present(&mut self) -> Result<Vec<String>, PostgresError> {
+        let mut out = Vec::new();
+        note_count(
+            &mut out,
+            &mut self.connection,
+            "SELECT count(*) AS version FROM sources",
+            "source(s)",
+        )?;
+        note_count(
+            &mut out,
+            &mut self.connection,
+            "SELECT count(*) AS version FROM schema_versions WHERE version > 1",
+            "output schema version(s) beyond the built-in one",
+        )?;
+        note_count(
+            &mut out,
+            &mut self.connection,
+            "SELECT count(*) AS version FROM correlation_settings",
+            "saved correlation settings",
+        )?;
+        note_count(
+            &mut out,
+            &mut self.connection,
+            "SELECT count(*) AS version FROM app_settings",
+            "saved instance settings (Settings → General)",
+        )?;
+        note_count(
+            &mut out,
+            &mut self.connection,
+            "SELECT count(*) AS version FROM auth_settings",
+            "saved sign-in settings (Settings → Security)",
+        )?;
+        let users = count_rows(
+            &mut self.connection,
+            "SELECT count(*) AS version FROM users",
+        )?;
+        let admins = count_rows(
+            &mut self.connection,
+            "SELECT count(*) AS version FROM users WHERE role = 'admin'",
+        )?;
+        if users > 1 || users == 1 && admins == 0 {
+            out.push(format!(
+                "{users} account(s) (an empty node has at most its first admin)"
+            ));
+        }
+        note_count(
+            &mut out,
+            &mut self.connection,
+            "SELECT count(*) AS version FROM api_tokens",
+            "API token(s)",
+        )?;
+        note_count(
+            &mut out,
+            &mut self.connection,
+            "SELECT count(*) AS version FROM registry_entities",
+            "registry entit(ies)",
+        )?;
+        note_count(
+            &mut out,
+            &mut self.connection,
+            "SELECT count(*) AS version FROM plugins",
+            "plugin(s)",
+        )?;
+        if count_rows(
+            &mut self.connection,
+            "SELECT count(*) AS version FROM decisions WHERE op = 'import_config'",
+        )? > 0
+        {
+            out.push("an imported configuration".into());
+        }
+        Ok(out)
     }
 
     pub fn user(&mut self, id: &str) -> Result<Option<User>, PostgresError> {
@@ -583,6 +709,52 @@ impl PgControlStore {
         .bind::<Text, _>(jti)
         .get_result(&mut self.connection)?;
         Ok(row.revoked)
+    }
+
+    pub fn add_api_token(
+        &mut self,
+        jti: &str,
+        name: &str,
+        user_id: &str,
+        created_by: &str,
+        expires_at_ms: i64,
+    ) -> Result<(), PostgresError> {
+        diesel::sql_query(
+            "INSERT INTO api_tokens (jti, name, user_id, created_by, created_at_ms, expires_at_ms)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind::<Text, _>(jti)
+        .bind::<Text, _>(name.trim())
+        .bind::<Text, _>(user_id)
+        .bind::<Text, _>(created_by)
+        .bind::<BigInt, _>(crate::sqlite::now_ms())
+        .bind::<BigInt, _>(expires_at_ms)
+        .execute(&mut self.connection)?;
+        Ok(())
+    }
+
+    pub fn api_tokens(&mut self) -> Result<Vec<ApiToken>, PostgresError> {
+        let rows: Vec<ApiTokenRow> = diesel::sql_query(
+            "SELECT t.jti, t.name, t.user_id, u.email AS user_email, t.created_by,
+                    t.created_at_ms, t.expires_at_ms, t.revoked_at_ms
+             FROM api_tokens t JOIN users u ON u.id = t.user_id
+             ORDER BY t.created_at_ms DESC",
+        )
+        .load(&mut self.connection)?;
+        Ok(rows.into_iter().map(ApiToken::from).collect())
+    }
+
+    pub fn revoke_api_token(&mut self, jti: &str) -> Result<(), PostgresError> {
+        let n = diesel::sql_query(
+            "UPDATE api_tokens SET revoked_at_ms = $2 WHERE jti = $1 AND revoked_at_ms IS NULL",
+        )
+        .bind::<Text, _>(jti)
+        .bind::<BigInt, _>(crate::sqlite::now_ms())
+        .execute(&mut self.connection)?;
+        if n == 0 {
+            return Err(PostgresError::NotFound(format!("live API token {jti}")));
+        }
+        Ok(())
     }
 
     pub fn auth_settings(&mut self) -> Result<Value, PostgresError> {
@@ -951,6 +1123,20 @@ mod tests {
         selected.delete_entity(&registry_id, "test").unwrap();
         assert!(selected.entity(&registry_id).unwrap().is_none());
         assert!(selected.user_by_email(&email).unwrap().is_some());
+        assert!(!selected.config_present().unwrap().is_empty());
+        let api_jti = format!("pg-api-{unique}");
+        selected
+            .add_api_token(&api_jti, "PG test", &id, "test", expires_at_ms)
+            .unwrap();
+        assert!(
+            selected
+                .api_tokens()
+                .unwrap()
+                .iter()
+                .any(|t| t.jti == api_jti)
+        );
+        selected.revoke_api_token(&api_jti).unwrap();
+        assert!(selected.token_revoked(&api_jti).unwrap());
         assert_eq!(selected.auth_settings().unwrap(), settings);
         assert_eq!(selected.app_settings().unwrap(), app);
         assert!(selected.correlation_settings().unwrap().is_some());

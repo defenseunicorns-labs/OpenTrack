@@ -808,6 +808,10 @@ impl Db {
         created_by: &str,
         expires_at_ms: i64,
     ) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.add_api_token(jti, name, user_id, created_by, expires_at_ms)?);
+        }
         self.connection().execute(
             "INSERT INTO api_tokens (jti, name, user_id, created_by, created_at_ms, expires_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -824,6 +828,10 @@ impl Db {
     }
 
     pub fn api_tokens(&self) -> Result<Vec<ApiToken>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.api_tokens()?);
+        }
         let mut st = self.connection().prepare(
             "SELECT t.jti, t.name, t.user_id, u.email, t.created_by, t.created_at_ms,
                     t.expires_at_ms, t.revoked_at_ms
@@ -846,6 +854,10 @@ impl Db {
     }
 
     pub fn revoke_api_token(&mut self, jti: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.revoke_api_token(jti)?);
+        }
         let n = self.connection().execute(
             "UPDATE api_tokens SET revoked_at_ms = ?2 WHERE jti = ?1 AND revoked_at_ms IS NULL",
             params![jti, now_ms()],
