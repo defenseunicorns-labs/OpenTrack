@@ -1170,6 +1170,22 @@ mod tests {
         assert_eq!(synced.id.seq, next_seq);
         assert_eq!(selected.sync_next_seq(site).unwrap(), next_seq + 1);
         assert_eq!(selected.sync_last_hlc().unwrap(), synced.hlc);
+        assert!(
+            selected
+                .sync_counts()
+                .unwrap()
+                .get("applied")
+                .copied()
+                .unwrap_or(0)
+                >= 1
+        );
+        assert!(
+            selected
+                .sync_heads()
+                .unwrap()
+                .iter()
+                .any(|(s, seq)| *s == site && *seq >= next_seq)
+        );
         assert!(selected.sync_peer_keys().unwrap().is_empty());
         assert!(selected.sync_pending().unwrap().is_empty());
         assert_eq!(selected.sync_expire_pending(0).unwrap(), 0);

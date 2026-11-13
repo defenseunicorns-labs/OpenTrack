@@ -142,6 +142,10 @@ impl Db {
 
     /// Entries by where they stand here, e.g. `{"applied": 12, "pending": 1}`.
     pub fn sync_counts(&self) -> Result<std::collections::BTreeMap<String, u64>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_counts()?);
+        }
         let mut st = self
             .connection()
             .prepare("SELECT status, count(*) FROM sync_log GROUP BY status")?;
@@ -155,6 +159,10 @@ impl Db {
 
     /// The highest sequence held from each site.
     pub fn sync_heads(&self) -> Result<Vec<(SiteCode, u64)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_heads()?);
+        }
         let mut st = self
             .connection()
             .prepare("SELECT site, max(seq) FROM sync_log GROUP BY site ORDER BY site")?;

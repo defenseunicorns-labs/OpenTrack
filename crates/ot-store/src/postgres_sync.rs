@@ -42,7 +42,46 @@ struct PendingRow {
     command: String,
 }
 
+#[derive(QueryableByName)]
+struct StatusCountRow {
+    #[diesel(sql_type = Text)]
+    status: String,
+    #[diesel(sql_type = BigInt)]
+    count: i64,
+}
+
+#[derive(QueryableByName)]
+struct HeadRow {
+    #[diesel(sql_type = Text)]
+    site: String,
+    #[diesel(sql_type = BigInt)]
+    seq: i64,
+}
+
 impl PgControlStore {
+    pub fn sync_counts(
+        &mut self,
+    ) -> Result<std::collections::BTreeMap<String, u64>, PostgresError> {
+        let rows: Vec<StatusCountRow> =
+            diesel::sql_query("SELECT status, count(*) AS count FROM sync_log GROUP BY status")
+                .load(&mut self.connection)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.status, row.count as u64))
+            .collect())
+    }
+
+    pub fn sync_heads(&mut self) -> Result<Vec<(SiteCode, u64)>, PostgresError> {
+        let rows: Vec<HeadRow> = diesel::sql_query(
+            "SELECT site, max(seq) AS seq FROM sync_log GROUP BY site ORDER BY site",
+        )
+        .load(&mut self.connection)?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| Some((row.site.parse().ok()?, row.seq as u64)))
+            .collect())
+    }
+
     pub fn sync_last_hlc(&mut self) -> Result<Hlc, PostgresError> {
         let row: NumberRow = diesel::sql_query("SELECT max(hlc) AS value FROM sync_log")
             .get_result(&mut self.connection)?;
