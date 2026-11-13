@@ -11,6 +11,14 @@ packages:
     namespace: valkey-opentrack
     overrides:
       valkey:
+        valkey:
+          values:
+            - path: primary.resources
+              value:
+                requests:
+                  memory: 256Mi
+                limits:
+                  memory: 512Mi
         uds-valkey-config:
           values:
             - path: additionalNetworkAllow
