@@ -34,7 +34,7 @@ fn postgres_history_schema_registry_and_undo() {
     assert!(nodes >= 2 && edges >= 2);
     let field = json!({"key":"operator_note","type":"string","required":false});
     let version = db
-        .publish_schema_as(&[field.clone()], Some("peer"), "operator")
+        .publish_schema_as(std::slice::from_ref(&field), Some("peer"), "operator")
         .unwrap();
     assert!(version.fields.iter().any(|f| f["key"] == "operator_note"));
     let draft = db

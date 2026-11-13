@@ -1238,8 +1238,8 @@ mod tests {
         let forbidden_b = format!("forbidden-b-{unique}");
         selected
             .do_not_pair(
-                &[forbidden_a.clone()],
-                &[forbidden_b.clone()],
+                std::slice::from_ref(&forbidden_a),
+                std::slice::from_ref(&forbidden_b),
                 crate::Decision::new("test", "do_not_pair"),
             )
             .unwrap();
