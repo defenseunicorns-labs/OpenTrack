@@ -28,6 +28,6 @@ curl -f https://opentrack.uds.dev/healthz
 
 The app must start with a NATS TLS-first connection and a successful Valkey connection. Check the pod logs for connection errors, then test sign-in from `https://opentrack.uds.dev/` with a UDS account.
 
-## Current storage limitation
+## Storage
 
-OpenTrack still uses SQLite for its control database. The chart provisions a persistent volume for that database, and it refuses `storage.backend: postgres` until the runtime backend is implemented. The UDS Data PostgreSQL database and credentials are provisioned for the planned backend; deploying this bundle does **not** make OpenTrack PostgreSQL-backed yet. Valkey is used for the live state and outbox, and NATS carries the track feed.
+The chart defaults to `storage.backend: sqlite` for standalone deployments. The C-UAS UDS bundle overrides it to `postgres`, using the `opentrack` database and credentials created by the UDS Data PostgresOperator. The PostgreSQL password is read from a mounted Secret file. The `/data` volume holds session and sync signing keys in PostgreSQL mode. Valkey stores live state and the outbox; NATS JetStream carries the track feed. PostgreSQL mode targets fresh databases; importing an existing SQLite database is not yet supported.

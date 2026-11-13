@@ -1,18 +1,18 @@
 # PostgreSQL control-store backend plan
 
-OpenTrack currently uses SQLite for configuration and decisions, Redis for live
+OpenTrack uses SQLite by default for configuration and decisions, Redis for live
 observations and tracks, and NATS JetStream for its published track picture.
-The PostgreSQL backend will replace SQLite only when selected. Redis and NATS
-retain their existing roles.
+The optional PostgreSQL backend replaces SQLite when selected. Redis and NATS
+retain their existing roles. This document records the implementation plan and
+remaining parity work; the C-UAS bundle selects PostgreSQL for fresh installs.
 
 ## Scope
 
 - Keep SQLite as the default backend for existing installations.
 - Add a PostgreSQL connection setting for new deployments. Selecting it must
   not open or create a SQLite database.
-- `OT_DB_BACKEND` now defaults to `sqlite`. Selecting `postgres` fails at
-  startup until the PostgreSQL implementation is complete, rather than
-  silently using SQLite.
+- `OT_DB_BACKEND` defaults to `sqlite`; selecting `postgres` opens the
+  PostgresOperator database without creating a SQLite database.
 - PostgreSQL connection options are `OT_POSTGRES_HOST`, `OT_POSTGRES_PORT`,
   `OT_POSTGRES_DATABASE`, `OT_POSTGRES_USER`, `OT_POSTGRES_PASSWORD_FILE`,
   `OT_POSTGRES_SSLMODE`, and `OT_POSTGRES_SSLROOTCERT`. The password is read
@@ -61,11 +61,12 @@ owner through that package, place credentials in the OpenTrack namespace, and
 configure the PostgreSQL backend from a Secret. UDS Data's Valkey remains the
 live Redis-compatible store; its NATS package provides the JetStream output.
 
-The UDS package and bundle are scaffolded alongside this backend change.
-They currently deploy the SQLite runtime with a persistent volume while
-provisioning the PostgreSQL database for later use. The Helm chart rejects
-`storage.backend: postgres` until the backend passes PostgreSQL integration
-tests, so a deployment cannot claim PostgreSQL storage while opening SQLite.
+The C-UAS bundle selects `storage.backend: postgres`. The chart still defaults
+to SQLite for standalone installations. A real PostgreSQL integration test and
+an `all`-role Linux smoke test cover startup, the main admin reads, graph
+decisions, and publication of a synthetic track to NATS. Other management
+operations listed above still need parity testing before treating every UI
+feature as complete.
 
 ## Schema verification
 
