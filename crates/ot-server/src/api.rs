@@ -284,6 +284,28 @@ fn access_ready(access: Option<&Value>, revision: i64) -> bool {
     })
 }
 
+async fn current_source_access(
+    s: &AppState,
+    id: &str,
+    revision: i64,
+) -> Result<Option<Value>, ApiError> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let access = s
+            .redis
+            .get_source_access(id)
+            .await?
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+        if access.as_ref().is_some_and(|state| {
+            state["revision"].as_i64() == Some(revision)
+        }) || tokio::time::Instant::now() >= deadline
+        {
+            return Ok(access);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
 fn connection_test_ready(probe: Option<&Value>, fingerprint: &str, created_at_ms: i64) -> bool {
     probe.is_some_and(|result| {
         result["transport"].as_str() == Some(fingerprint)
@@ -447,15 +469,12 @@ async fn enable_source(
         .await?
         .ok_or_else(|| ApiError::not_found("source"))?;
     if std::env::var("OT_SOURCE_ACCESS_REQUIRED").as_deref() == Ok("true") {
-        let access = s
-            .redis
-            .get_source_access(&row.id)
-            .await?
-            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+        let access = current_source_access(&s, &row.id, row.revision).await?;
         let ready = access_ready(access.as_ref(), row.revision);
         if !ready {
             return Err(ApiError::unprocessable(format!(
-                "source access is not ready: {}",
+                "source access is not ready for revision {}: {}",
+                row.revision,
                 access
                     .as_ref()
                     .and_then(|state| state["state"].as_str())
