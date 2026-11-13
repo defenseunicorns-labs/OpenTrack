@@ -14,6 +14,8 @@ use crate::Decision;
 mod audit_queries;
 #[path = "postgres_auth_maintenance.rs"]
 mod auth_maintenance;
+#[path = "postgres_correlation.rs"]
+mod correlation;
 #[path = "postgres_graph.rs"]
 mod graph;
 #[path = "postgres_groups.rs"]
@@ -986,6 +988,57 @@ mod tests {
         assert!(selected.sync_pending().unwrap().is_empty());
         assert_eq!(selected.sync_expire_pending(0).unwrap(), 0);
         assert_eq!(selected.registry_counts().unwrap()["identifiers"], 0);
+        let suggestion = selected
+            .upsert_suggestion(
+                "pair",
+                &format!("a-{unique}"),
+                Some(&format!("b-{unique}")),
+                None,
+                &serde_json::json!({"score": 0.9}),
+            )
+            .unwrap();
+        assert_eq!(
+            selected.suggestion(suggestion).unwrap().unwrap().status,
+            "open"
+        );
+        assert_eq!(
+            selected
+                .suggestions(Some("open"), 100)
+                .unwrap()
+                .iter()
+                .filter(|s| s.id == suggestion)
+                .count(),
+            1
+        );
+        assert!(selected.suggestion_counts().unwrap()["open"] >= 1);
+        selected
+            .close_suggestion(suggestion, "rejected", None)
+            .unwrap();
+        assert_eq!(
+            selected.suggestion(suggestion).unwrap().unwrap().status,
+            "rejected"
+        );
+        assert!(
+            !selected
+                .decisions_by_op(&["publish_schema"], 10)
+                .unwrap()
+                .is_empty()
+        );
+        let forbidden_a = format!("forbidden-a-{unique}");
+        let forbidden_b = format!("forbidden-b-{unique}");
+        selected
+            .do_not_pair(
+                &[forbidden_a.clone()],
+                &[forbidden_b.clone()],
+                crate::Decision::new("test", "do_not_pair"),
+            )
+            .unwrap();
+        assert!(
+            selected
+                .do_not_pairs()
+                .unwrap()
+                .contains(&(forbidden_a, forbidden_b))
+        );
         let graph_source = format!("pg-graph-{unique}");
         let (uid, decision_id) = selected
             .create_system_track(
@@ -1023,6 +1076,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(selected.explain(uid).unwrap().len(), 2);
+        let (split_uid, _) = selected
+            .split_source_track(
+                site,
+                &graph_source,
+                "track-2",
+                crate::Decision::new("test", "split"),
+            )
+            .unwrap();
+        assert_ne!(split_uid, uid);
+        assert!(
+            selected
+                .live_reports()
+                .unwrap()
+                .contains(&(format!("{graph_source}/track-2"), split_uid))
+        );
         assert!(
             selected
                 .end_source_track(

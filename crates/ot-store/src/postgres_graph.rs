@@ -49,7 +49,7 @@ struct ExistsRow {
     exists: bool,
 }
 
-fn upsert_node(
+pub(super) fn upsert_node(
     connection: &mut diesel::pg::PgConnection,
     kind: NodeKind,
     key: &str,
@@ -82,7 +82,7 @@ fn live_system_node(
         .ok_or_else(|| PostgresError::NotFound(format!("live system track {uid}")))
 }
 
-fn add_edge(
+pub(super) fn add_edge(
     connection: &mut diesel::pg::PgConnection,
     kind: EdgeKind,
     src: i64,

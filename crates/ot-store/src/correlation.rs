@@ -144,6 +144,10 @@ impl Db {
         source_track: Option<&str>,
         evidence: &Value,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.upsert_suggestion(kind, track_a, track_b, source_track, evidence)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let existing: Option<i64> = tx
@@ -174,6 +178,10 @@ impl Db {
     }
 
     pub fn suggestion(&self, id: i64) -> Result<Option<Suggestion>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.suggestion(id)?);
+        }
         Ok(self
             .connection()
             .query_row(
@@ -187,6 +195,10 @@ impl Db {
     /// Suggestions with this status (all when None), newest first.
     /// Suggestions by status, e.g. `{"open": 3}` (statuses with none left out).
     pub fn suggestion_counts(&self) -> Result<std::collections::BTreeMap<String, u64>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.suggestion_counts()?);
+        }
         let mut stmt = self
             .connection()
             .prepare("SELECT status, count(*) FROM correlation_suggestions GROUP BY status")?;
@@ -199,6 +211,10 @@ impl Db {
     }
 
     pub fn suggestions(&self, status: Option<&str>, limit: usize) -> Result<Vec<Suggestion>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.suggestions(status, limit)?);
+        }
         let mut stmt = self.connection().prepare(&format!(
             "SELECT {SUGGESTION_COLUMNS} FROM correlation_suggestions
              WHERE ?1 IS NULL OR status = ?1 ORDER BY updated_at_ms DESC LIMIT ?2"
@@ -216,6 +232,10 @@ impl Db {
         status: &str,
         decision: Option<Decision>,
     ) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.close_suggestion(id, status, decision.as_ref())?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let d = decision.map(|d| record_decision(tx, &d, now)).transpose()?;
@@ -234,6 +254,10 @@ impl Db {
 
     /// Expire open suggestions about a track that no longer exists.
     pub fn expire_suggestions(&mut self, uid: Uid) -> Result<usize> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.expire_suggestions(uid)?);
+        }
         let key = uid.to_string();
         self.write(|tx| {
             Ok(tx.execute(
@@ -252,6 +276,10 @@ impl Db {
         right: &[String],
         decision: Decision,
     ) -> Result<i64> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.do_not_pair(left, right, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let d = record_decision(tx, &decision, now)?;
@@ -303,6 +331,10 @@ impl Db {
         source_track_key: &str,
         decision: Decision,
     ) -> Result<(Uid, i64)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.split_source_track(site, source_id, source_track_key, &decision)?);
+        }
         self.write(|tx| {
             let now = now_ms();
             let key = graph::source_track_key(source_id, source_track_key);
@@ -337,6 +369,10 @@ impl Db {
 
     /// The latest decisions of these operations, newest first.
     pub fn decisions_by_op(&self, ops: &[&str], limit: usize) -> Result<Vec<DecisionRow>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.decisions_by_op(ops, limit)?);
+        }
         let list = serde_json::to_string(ops).expect("strings");
         let mut stmt = self.connection().prepare(
             "SELECT id, at_ms, actor, op, reason, evidence, undone_by, undoes FROM decisions
