@@ -50,7 +50,7 @@ jobs:
       OT_TEST_POSTGRES_URL: postgres://opentrack:test@127.0.0.1:5432/opentrack?sslmode=disable
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev libxmlsec1-dev pkg-config
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.98.1
@@ -67,6 +67,8 @@ jobs:
           done
           docker exec postgres-schema pg_isready -U opentrack -d opentrack
       - run: cargo test -p ot-store --features postgres postgres::tests --locked
+      - run: cargo test -p ot-store --features postgres --test postgres_sync --locked -- --test-threads=1
+      - run: cargo check -p ot-server --features postgres --locked
       - run: |
           docker exec -e PGPASSWORD=test -i postgres-schema \
             psql -U opentrack -d opentrack -v ON_ERROR_STOP=1 -f - \

@@ -58,6 +58,10 @@ impl Db {
     /// decision log, configuration, registry stay; UIDs are never
     /// reused. Returns (nodes, edges) deleted.
     pub fn purge_track_history(&mut self, decision: Decision) -> Result<(usize, usize)> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.purge_track_history(&decision)?);
+        }
         self.write(|tx| {
             let tracks = "SELECT id FROM nodes WHERE kind IN ('source_track', 'system_track')";
             let edges = tx.execute(

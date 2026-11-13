@@ -20,6 +20,8 @@ mod correlation;
 mod graph;
 #[path = "postgres_groups.rs"]
 mod groups;
+#[path = "postgres_misc.rs"]
+mod misc;
 #[path = "postgres_plugins.rs"]
 mod plugins;
 #[path = "postgres_probe.rs"]
@@ -34,6 +36,8 @@ mod sources;
 mod sync;
 #[path = "postgres_uid.rs"]
 mod uid;
+#[path = "postgres_undo.rs"]
+mod undo;
 use crate::audit::{AuditEvent, GENESIS, row_hash};
 use crate::auth::{ApiToken, NewSession, NewUser, Session, User};
 

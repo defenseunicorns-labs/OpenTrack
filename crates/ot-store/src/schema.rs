@@ -203,6 +203,10 @@ impl Db {
         notes: Option<&str>,
         actor: &str,
     ) -> Result<SchemaVersion> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.publish_schema_as(fields, notes, actor)?);
+        }
         let draft: Option<u32> = self
             .connection()
             .query_row(

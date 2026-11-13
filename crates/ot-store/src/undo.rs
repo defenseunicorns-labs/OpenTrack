@@ -136,6 +136,10 @@ impl Db {
     /// Undo decision `id` (and the decisions made with it, such as a
     /// split's "do not pair"), recording who did and why.
     pub fn undo_decision(&mut self, id: i64, actor: &str, reason: &str) -> Result<Undone> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.undo_decision(id, actor, reason)?);
+        }
         self.write(|tx| {
             let d = decision_row(tx, id)?
                 .ok_or_else(|| StoreError::NotFound(format!("decision {id}")))?;
@@ -305,6 +309,10 @@ impl Db {
     /// A system track's live source tracks (`<source>/<key>`) and each
     /// link's attributes (pairing, confidence).
     pub fn reports_for(&self, uid: Uid) -> Result<Vec<(String, Value)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.reports_for(uid)?);
+        }
         let mut st = self.connection().prepare(
             "SELECT s.key, e.attrs FROM edges e JOIN nodes s ON s.id = e.src
              JOIN nodes d ON d.id = e.dst
@@ -323,6 +331,10 @@ impl Db {
 
     /// The tracks a system track is paired with (GOLD PAIR), live.
     pub fn paired_with(&self, uid: Uid) -> Result<Vec<Uid>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.paired_with(uid)?);
+        }
         let mut st = self.connection().prepare(
             "SELECT CASE WHEN a.key = ?1 THEN b.key ELSE a.key END FROM edges e
              JOIN nodes a ON a.id = e.src JOIN nodes b ON b.id = e.dst

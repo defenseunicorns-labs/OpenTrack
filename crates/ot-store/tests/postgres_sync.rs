@@ -7,6 +7,75 @@ use ot_sync::{Entry, GlobalId, Hlc};
 use serde_json::json;
 
 #[test]
+fn postgres_history_schema_registry_and_undo() {
+    let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let mut db = Db::open_postgres(&url).unwrap();
+    let site: SiteCode = "TST".parse().unwrap();
+    let (uid, _) = db
+        .create_system_track(
+            site,
+            "ais",
+            "1",
+            ot_store::Decision::new("engine", "create_system_track"),
+        )
+        .unwrap();
+    assert_eq!(db.reports_for(uid).unwrap().len(), 1);
+    let retired = db
+        .retire_system_track(uid, ot_store::Decision::new("operator", "delete_track"))
+        .unwrap();
+    let undone = db.undo_decision(retired, "operator", "restore").unwrap();
+    assert_eq!(undone.revived, vec![uid]);
+    assert_eq!(db.reports_for(uid).unwrap().len(), 1);
+    let (nodes, edges) = db
+        .purge_track_history(ot_store::Decision::new("operator", "purge_track_history"))
+        .unwrap();
+    assert!(nodes >= 2 && edges >= 2);
+    let field = json!({"key":"operator_note","type":"string","required":false});
+    let version = db
+        .publish_schema_as(&[field.clone()], Some("peer"), "operator")
+        .unwrap();
+    assert!(version.fields.iter().any(|f| f["key"] == "operator_note"));
+    let draft = db
+        .put_schema_draft(
+            &[json!({"key":"local_field","type":"string","required":false})],
+            None,
+            "operator",
+        )
+        .unwrap();
+    let imported = db
+        .publish_schema_as(
+            &[json!({"key":"peer_field","type":"string","required":false})],
+            None,
+            "operator",
+        )
+        .unwrap();
+    assert_eq!(imported.version, draft.version);
+    assert_eq!(
+        db.schema_versions().unwrap().last().unwrap().status,
+        "draft"
+    );
+    let first: ot_store::registry::Entity = serde_json::from_value(
+        json!({"id":"one","name":"One","identifiers":[{"scheme":"mmsi","value":"123"}]}),
+    )
+    .unwrap();
+    let second: ot_store::registry::Entity = serde_json::from_value(json!({"id":"two","name":"Two","identifiers":[{"scheme":"mmsi","value":"123"},{"scheme":"icao","value":"456"}]})).unwrap();
+    let counts = db
+        .registry_import(&[first, second], "operator", "test import")
+        .unwrap();
+    assert_eq!(
+        (
+            counts.entities_created,
+            counts.conflicts,
+            counts.identifiers
+        ),
+        (2, 1, 2)
+    );
+    assert_eq!(db.entity("two").unwrap().unwrap().identifiers.len(), 1);
+}
+
+#[test]
 fn postgres_password_and_account_maintenance() {
     let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
         return;
@@ -80,22 +149,61 @@ fn postgres_probe_frames_are_replaced_and_capped() {
 
 #[test]
 fn postgres_group_and_pair_operations() {
-    let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else { return; };
+    let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
+        return;
+    };
     let mut db = Db::open_postgres(&url).unwrap();
     let site: SiteCode = "GRP".parse().unwrap();
-    let (a, _) = db.create_system_track(site, "test", "a", ot_store::Decision::new("engine", "create_system_track")).unwrap();
-    let (b, _) = db.create_system_track(site, "test", "b", ot_store::Decision::new("engine", "create_system_track")).unwrap();
-    let spec: ot_store::groups::GroupSpec = serde_json::from_value(json!({"name":"Flight","sidc":"SHSPGG----"})).unwrap();
-    let (group, _) = db.create_group(site, &spec, &[a], ot_store::Decision::new("operator", "create_group")).unwrap();
+    let (a, _) = db
+        .create_system_track(
+            site,
+            "test",
+            "a",
+            ot_store::Decision::new("engine", "create_system_track"),
+        )
+        .unwrap();
+    let (b, _) = db
+        .create_system_track(
+            site,
+            "test",
+            "b",
+            ot_store::Decision::new("engine", "create_system_track"),
+        )
+        .unwrap();
+    let spec: ot_store::groups::GroupSpec =
+        serde_json::from_value(json!({"name":"Flight","sidc":"SHSPGG----"})).unwrap();
+    let (group, _) = db
+        .create_group(
+            site,
+            &spec,
+            &[a],
+            ot_store::Decision::new("operator", "create_group"),
+        )
+        .unwrap();
     assert_eq!(db.groups().unwrap()[0].members, vec![a]);
-    db.change_group_members(group, &[b], &[a], ot_store::Decision::new("operator", "group_members")).unwrap();
+    db.change_group_members(
+        group,
+        &[b],
+        &[a],
+        ot_store::Decision::new("operator", "group_members"),
+    )
+    .unwrap();
     assert_eq!(db.groups().unwrap()[0].members, vec![b]);
-    let renamed: ot_store::groups::GroupSpec = serde_json::from_value(json!({"name":"Flight 2","sidc":"SHSPGG----"})).unwrap();
-    db.update_group(group, &renamed, ot_store::Decision::new("operator", "update_group")).unwrap();
+    let renamed: ot_store::groups::GroupSpec =
+        serde_json::from_value(json!({"name":"Flight 2","sidc":"SHSPGG----"})).unwrap();
+    db.update_group(
+        group,
+        &renamed,
+        ot_store::Decision::new("operator", "update_group"),
+    )
+    .unwrap();
     assert_eq!(db.groups().unwrap()[0].spec.name, "Flight 2");
-    db.pair_system_tracks(&[a,b], ot_store::Decision::new("operator", "pair_tracks")).unwrap();
-    db.unpair_system_tracks(a,b,ot_store::Decision::new("operator", "unpair_tracks")).unwrap();
-    db.dissolve_group(group, ot_store::Decision::new("operator", "dissolve_group")).unwrap();
+    db.pair_system_tracks(&[a, b], ot_store::Decision::new("operator", "pair_tracks"))
+        .unwrap();
+    db.unpair_system_tracks(a, b, ot_store::Decision::new("operator", "unpair_tracks"))
+        .unwrap();
+    db.dissolve_group(group, ot_store::Decision::new("operator", "dissolve_group"))
+        .unwrap();
     assert!(db.groups().unwrap().is_empty());
 }
 

@@ -9,7 +9,9 @@ use serde_json::{Value, json};
 
 use super::{PgControlStore, PostgresError, VersionText, record_decision};
 use crate::Decision;
-use crate::registry::{Entity, EntityRevision, RegistryIdentifier, RegistryRow, new_entity_id};
+use crate::registry::{
+    Entity, EntityRevision, ImportCounts, RegistryIdentifier, RegistryRow, new_entity_id,
+};
 
 fn enum_text<T: Serialize>(value: &Option<T>) -> Option<String> {
     value
@@ -153,6 +155,64 @@ struct IdentifierRow {
 }
 
 impl PgControlStore {
+    pub fn registry_import(
+        &mut self,
+        entities: &[Entity],
+        actor: &str,
+        label: &str,
+    ) -> Result<ImportCounts, PostgresError> {
+        let mut checked = Vec::with_capacity(entities.len());
+        for entity in entities {
+            let mut entity = entity.clone();
+            entity
+                .validate()
+                .map_err(|err| PostgresError::Conflict(format!("entity {}: {err}", entity.id)))?;
+            if entity.id.trim().is_empty() {
+                entity.id = new_entity_id();
+            }
+            checked.push(entity);
+        }
+        self.connection.transaction::<ImportCounts, PostgresError, _>(|connection| {
+            let now = crate::sqlite::now_ms();
+            let mut counts = ImportCounts::default();
+            let mut added = Vec::new();
+            let mut refused = Vec::new();
+            let decision_id = record_decision(connection, &Decision::new(actor, "registry_import").reason(label.to_owned()))?;
+            for entity in &checked {
+                let existing: Vec<IdRow> = diesel::sql_query("SELECT id FROM registry_entities WHERE id = $1")
+                    .bind::<Text, _>(&entity.id).load(connection)?;
+                if existing.is_empty() { counts.entities_created += 1; } else { counts.entities_updated += 1; }
+                write_entity_row(connection, entity, now)?;
+                let mut saved = entity.clone();
+                saved.identifiers.clear();
+                for ident in &entity.identifiers {
+                    let holders: Vec<IdRow> = diesel::sql_query("SELECT entity_id AS id FROM registry_identifiers WHERE scheme = $1 AND value = $2")
+                        .bind::<Text, _>(&ident.scheme).bind::<Text, _>(&ident.value).load(connection)?;
+                    if let Some(holder) = holders.first().filter(|holder| holder.id != entity.id) {
+                        counts.conflicts += 1;
+                        refused.push(json!({"identifier":ident.label(), "held_by":holder.id, "claimed_by":entity.id}));
+                        continue;
+                    }
+                    diesel::sql_query("INSERT INTO registry_identifiers (scheme, value, entity_id, expected_name, source, added_at_ms) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (scheme, value) DO UPDATE SET expected_name = excluded.expected_name, source = excluded.source")
+                        .bind::<Text, _>(&ident.scheme).bind::<Text, _>(&ident.value).bind::<Text, _>(&entity.id)
+                        .bind::<Nullable<Text>, _>(ident.expected_name.as_deref()).bind::<Nullable<Text>, _>(ident.source.as_deref())
+                        .bind::<BigInt, _>(now).execute(connection)?;
+                    counts.identifiers += 1;
+                    if holders.is_empty() { added.push(json!({"entity":entity.id,"name":entity.name,"identifier":ident.label()})); }
+                }
+                let identifiers: Vec<IdentifierRow> = diesel::sql_query("SELECT scheme, value, entity_id, expected_name, source FROM registry_identifiers WHERE entity_id = $1 ORDER BY added_at_ms, scheme, value")
+                    .bind::<Text, _>(&entity.id).load(connection)?;
+                saved.identifiers = identifiers.into_iter().map(|i| RegistryIdentifier { scheme:i.scheme, value:i.value, expected_name:i.expected_name, source:i.source }).collect();
+                write_entity_revision(connection, &saved, now, decision_id)?;
+            }
+            diesel::sql_query("UPDATE decisions SET evidence = $2 WHERE id = $1")
+                .bind::<BigInt, _>(decision_id)
+                .bind::<Text, _>(json!({"counts":counts,"identifiers_added":added,"identifiers_refused":refused}).to_string())
+                .execute(connection)?;
+            Ok(counts)
+        })
+    }
+
     pub fn save_entity(&mut self, entity: &Entity, actor: &str) -> Result<Entity, PostgresError> {
         let mut e = entity.clone();
         e.validate()

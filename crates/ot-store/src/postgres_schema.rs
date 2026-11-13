@@ -74,6 +74,40 @@ struct FieldRow {
 }
 
 impl PgControlStore {
+    pub fn publish_schema_as(
+        &mut self,
+        fields: &[Value],
+        notes: Option<&str>,
+        actor: &str,
+    ) -> Result<SchemaVersion, PostgresError> {
+        let version = self.connection.transaction::<u32, PostgresError, _>(|connection| {
+            lock_schema(connection)?;
+            let drafts: Vec<CountRow> = diesel::sql_query("SELECT version FROM schema_versions WHERE status = 'draft'").load(connection)?;
+            let version = if let Some(draft) = drafts.first() {
+                let version = draft.version;
+                diesel::sql_query("INSERT INTO schema_versions (version, status, notes) SELECT $1, 'draft', notes FROM schema_versions WHERE version = $2")
+                    .bind::<BigInt, _>(version + 1).bind::<BigInt, _>(version).execute(connection)?;
+                diesel::sql_query("UPDATE extension_fields SET schema_version = $1 WHERE schema_version = $2")
+                    .bind::<BigInt, _>(version + 1).bind::<BigInt, _>(version).execute(connection)?;
+                diesel::sql_query("DELETE FROM schema_versions WHERE version = $1")
+                    .bind::<BigInt, _>(version).execute(connection)?;
+                version
+            } else {
+                let row: CountRow = diesel::sql_query("SELECT (coalesce(max(version), 0) + 1)::bigint AS version FROM schema_versions").get_result(connection)?;
+                row.version
+            };
+            let now = crate::sqlite::now_ms();
+            diesel::sql_query("INSERT INTO schema_versions (version, status, published_at_ms, notes) VALUES ($1, 'published', $2, $3)")
+                .bind::<BigInt, _>(version).bind::<BigInt, _>(now).bind::<Nullable<Text>, _>(notes).execute(connection)?;
+            insert_fields(connection, version, fields)?;
+            record_decision(connection, &Decision::new(actor, "publish_schema")
+                .evidence(json!({"version":version,"from_another_node":true})))?;
+            Ok(version as u32)
+        })?;
+        self.schema_version_get(version)?
+            .ok_or_else(|| PostgresError::NotFound(format!("schema version {version}")))
+    }
+
     pub fn put_schema_draft(
         &mut self,
         fields: &[Value],

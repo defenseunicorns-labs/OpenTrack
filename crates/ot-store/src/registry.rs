@@ -863,6 +863,10 @@ impl Db {
         actor: &str,
         label: &str,
     ) -> Result<ImportCounts> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.registry_import(entities, actor, label)?);
+        }
         let mut checked = Vec::with_capacity(entities.len());
         for e in entities {
             let mut e = e.clone();
