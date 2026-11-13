@@ -909,6 +909,45 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        let registry_id = format!("pg-entity-{unique}");
+        let registry_ident = format!("pg-ident-{unique}");
+        let entity: crate::Entity = serde_json::from_value(serde_json::json!({
+            "id": registry_id,
+            "name": "PG registry test",
+            "identifiers": [{"scheme": "test", "value": registry_ident}],
+        }))
+        .unwrap();
+        let saved = selected.save_entity(&entity, "test").unwrap();
+        assert_eq!(saved.id, registry_id);
+        assert_eq!(
+            selected.registry_resolve("test", &registry_ident).unwrap(),
+            Some(saved.clone())
+        );
+        assert_eq!(selected.list_entities(&registry_id, 10, 0).unwrap().1, 1);
+        assert!(
+            selected
+                .update_entity_fields(
+                    &registry_id,
+                    &[("name".into(), serde_json::json!("PG renamed"))],
+                    "test"
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            selected
+                .entity(&registry_id)
+                .unwrap()
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("PG renamed")
+        );
+        assert_eq!(
+            selected.entity_revisions(&registry_id, 10).unwrap().len(),
+            2
+        );
+        selected.delete_entity(&registry_id, "test").unwrap();
+        assert!(selected.entity(&registry_id).unwrap().is_none());
         assert!(selected.user_by_email(&email).unwrap().is_some());
         assert_eq!(selected.auth_settings().unwrap(), settings);
         assert_eq!(selected.app_settings().unwrap(), app);
@@ -931,10 +970,15 @@ mod tests {
         selected.live_reports().unwrap();
         let site = ot_core::SiteCode::new("OTK").unwrap();
         let next_seq = selected.sync_next_seq(site).unwrap();
-        let synced = selected.sync_append_own(
-            site, "test", "admin", &serde_json::json!({"op": "pg_test"}),
-            crate::sqlite::now_ms() as u64,
-        ).unwrap();
+        let synced = selected
+            .sync_append_own(
+                site,
+                "test",
+                "admin",
+                &serde_json::json!({"op": "pg_test"}),
+                crate::sqlite::now_ms() as u64,
+            )
+            .unwrap();
         assert_eq!(synced.id.seq, next_seq);
         assert_eq!(selected.sync_next_seq(site).unwrap(), next_seq + 1);
         assert_eq!(selected.sync_last_hlc().unwrap(), synced.hlc);

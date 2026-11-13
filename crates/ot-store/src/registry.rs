@@ -634,6 +634,10 @@ impl Db {
     /// longer lists are removed, and one another entity holds is refused.
     /// An empty id creates a new entity. Returns the saved entity.
     pub fn save_entity(&mut self, entity: &Entity, actor: &str) -> Result<Entity> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.save_entity(entity, actor)?);
+        }
         let mut e = entity.clone();
         e.validate()?;
         let before = if e.id.trim().is_empty() {
@@ -709,6 +713,10 @@ impl Db {
 
     /// Delete an entity and its identifiers. Its revisions stay.
     pub fn delete_entity(&mut self, id: &str, actor: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.delete_entity(id, actor)?);
+        }
         let before = self
             .entity(id)?
             .ok_or_else(|| StoreError::NotFound(format!("entity {id}")))?;
@@ -736,6 +744,10 @@ impl Db {
         updates: &[(String, Value)],
         actor: &str,
     ) -> Result<bool> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.update_entity_fields(id, updates, actor)?);
+        }
         let Some(before) = self.entity(id)? else {
             return Ok(false);
         };
