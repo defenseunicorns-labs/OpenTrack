@@ -251,7 +251,7 @@ export default function SettingsPage({ onSaved }: { onSaved: () => void }) {
                 <FileDropZone
                   inputId="config-import-file"
                   accept=".json,application/json"
-                  acceptedExtensions={['.json']}
+                  acceptedExtensions={['json']}
                   file={importFile}
                   onFileChange={setImportFile}
                   onReject={(m) => toast({ variant: 'error', title: 'Configuration', message: m })}
