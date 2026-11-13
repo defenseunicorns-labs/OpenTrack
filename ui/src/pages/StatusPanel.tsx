@@ -43,6 +43,8 @@ function Dependency({
 export function StatusPanel({ onStatus }: { onStatus?: (s: ServerStatus | null) => void }) {
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [unreachable, setUnreachable] = useState<string | null>(null)
+  const database = status?.postgres ?? status?.sqlite
+  const databaseName = status?.postgres ? 'PostgreSQL' : status?.sqlite ? 'SQLite' : 'Database'
 
   useEffect(() => {
     let cancelled = false
@@ -82,9 +84,9 @@ export function StatusPanel({ onStatus }: { onStatus?: (s: ServerStatus | null) 
         detail={status?.algorithms ? [status.algorithms.correlation, ...Object.values(status.algorithms.trackers)].join(' · ') : ''}
       />
       <Dependency
-        name="SQLite"
-        dep={status?.sqlite}
-        detail={status ? [`schema v${status.sqlite.schema_version}`, status.sqlite.path].filter(Boolean).join(' · ') : ''}
+        name={databaseName}
+        dep={database}
+        detail={database ? [database.schema_version != null ? `schema v${database.schema_version}` : '', 'path' in database ? database.path : ''].filter(Boolean).join(' · ') : ''}
       />
       <Dependency
         name="Redis"
