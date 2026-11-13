@@ -118,7 +118,7 @@ COPY --from=runtime-libs --chown=1000:1000 /owned/ /
 COPY --from=openssl-fips /out/fips.so /opt/opentrack/ossl-modules/fips.so
 COPY --from=openssl-fips /out/fipsmodule.cnf /etc/opentrack/fipsmodule.cnf
 COPY docker/openssl-fips.cnf /etc/opentrack/openssl-fips.cnf
-COPY --from=server /src/target/release/opentrack /usr/local/bin/opentrack
+COPY --from=server /out/opentrack /usr/local/bin/opentrack
 COPY --from=ui /ui/dist /opt/opentrack/ui
 COPY profiles /opt/opentrack/profiles
 COPY LICENSE /opt/opentrack/LICENSE

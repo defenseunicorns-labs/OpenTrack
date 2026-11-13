@@ -43,6 +43,60 @@ struct PendingRow {
 }
 
 impl PgControlStore {
+    pub fn sync_last_hlc(&mut self) -> Result<Hlc, PostgresError> {
+        let row: NumberRow = diesel::sql_query("SELECT max(hlc) AS value FROM sync_log")
+            .get_result(&mut self.connection)?;
+        Ok(Hlc::from_i64(row.value.unwrap_or(0)))
+    }
+
+    pub fn sync_append_own(
+        &mut self,
+        site: SiteCode,
+        actor: &str,
+        role: &str,
+        command: &serde_json::Value,
+        now_ms: u64,
+    ) -> Result<Entry, PostgresError> {
+        self.connection
+            .transaction::<Entry, PostgresError, _>(|connection| {
+                let _: super::SchemaVersion = diesel::sql_query(
+                    "SELECT 1::bigint AS version FROM pg_advisory_xact_lock(6869400123459)",
+                )
+                .get_result(connection)?;
+                let seq: NumberRow = diesel::sql_query(
+                "SELECT (coalesce(max(seq), 0) + 1)::bigint AS value FROM sync_log WHERE site = $1",
+            ).bind::<Text, _>(site.as_str()).get_result(connection)?;
+                let last: NumberRow = diesel::sql_query("SELECT max(hlc) AS value FROM sync_log")
+                    .get_result(connection)?;
+                let seq = seq.value.unwrap_or(1);
+                let hlc =
+                    ot_sync::Clock::after(Hlc::from_i64(last.value.unwrap_or(0))).tick(now_ms);
+                diesel::sql_query(
+                    "INSERT INTO sync_log
+                 (site, seq, hlc, actor, role, command, received_at_ms, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'applied')",
+                )
+                .bind::<Text, _>(site.as_str())
+                .bind::<BigInt, _>(seq)
+                .bind::<BigInt, _>(hlc.as_i64())
+                .bind::<Text, _>(actor)
+                .bind::<Text, _>(role)
+                .bind::<Text, _>(command.to_string())
+                .bind::<BigInt, _>(now_ms as i64)
+                .execute(connection)?;
+                Ok(Entry {
+                    id: GlobalId {
+                        site,
+                        seq: seq as u64,
+                    },
+                    hlc,
+                    actor: actor.to_owned(),
+                    role: role.to_owned(),
+                    command: command.clone(),
+                })
+            })
+    }
+
     pub fn sync_next_seq(&mut self, site: SiteCode) -> Result<u64, PostgresError> {
         let row: NumberRow =
             diesel::sql_query("SELECT max(seq) AS value FROM sync_log WHERE site = $1")

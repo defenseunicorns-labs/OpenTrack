@@ -79,6 +79,10 @@ impl Db {
 
     /// The latest stamp this node has given or seen, to start its clock after.
     pub fn sync_last_hlc(&self) -> Result<Hlc> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_last_hlc()?);
+        }
         let max: Option<i64> =
             self.connection()
                 .query_row("SELECT max(hlc) FROM sync_log", [], |r| r.get(0))?;
@@ -96,6 +100,10 @@ impl Db {
         command: &Value,
         now_ms: u64,
     ) -> Result<Entry> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.sync_append_own(site, actor, role, command, now_ms)?);
+        }
         self.write(|tx| {
             let (seq, last): (i64, i64) = tx.query_row(
                 "SELECT (SELECT coalesce(max(seq), 0) + 1 FROM sync_log WHERE site = ?1),

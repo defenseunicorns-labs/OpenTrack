@@ -886,11 +886,13 @@ mod tests {
         assert_eq!(selected.schema_version().unwrap(), 1);
         assert!(selected.latest_published_schema().unwrap() >= 1);
         assert!(!selected.schema_versions().unwrap().is_empty());
-        let draft = selected.put_schema_draft(
-            &[serde_json::json!({"key": "pg_test_field", "type": "string", "required": false})],
-            Some("PostgreSQL integration test"),
-            "test",
-        ).unwrap();
+        let draft = selected
+            .put_schema_draft(
+                &[serde_json::json!({"key": "pg_test_field", "type": "string", "required": false})],
+                Some("PostgreSQL integration test"),
+                "test",
+            )
+            .unwrap();
         assert_eq!(draft.status, "draft");
         assert_eq!(draft.fields.len(), 1);
         let published = selected.publish_schema_draft("test").unwrap();
@@ -928,7 +930,14 @@ mod tests {
         );
         selected.live_reports().unwrap();
         let site = ot_core::SiteCode::new("OTK").unwrap();
-        assert_eq!(selected.sync_next_seq(site).unwrap(), 1);
+        let next_seq = selected.sync_next_seq(site).unwrap();
+        let synced = selected.sync_append_own(
+            site, "test", "admin", &serde_json::json!({"op": "pg_test"}),
+            crate::sqlite::now_ms() as u64,
+        ).unwrap();
+        assert_eq!(synced.id.seq, next_seq);
+        assert_eq!(selected.sync_next_seq(site).unwrap(), next_seq + 1);
+        assert_eq!(selected.sync_last_hlc().unwrap(), synced.hlc);
         assert!(selected.sync_peer_keys().unwrap().is_empty());
         assert!(selected.sync_pending().unwrap().is_empty());
         assert_eq!(selected.sync_expire_pending(0).unwrap(), 0);
