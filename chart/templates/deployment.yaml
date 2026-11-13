@@ -96,6 +96,10 @@ spec:
               value: {{ default (printf "https://sso.%s" .Values.domain) .Values.sso.publicOrigin | quote }}
             - name: OT_SAML_ADMIN_GROUP
               value: {{ .Values.sso.adminGroup | quote }}
+            - name: OT_SAML_SIGNING_KEY_FILE
+              value: /etc/opentrack/saml/tls.key
+            - name: OT_SAML_SIGNING_CERT_FILE
+              value: /etc/opentrack/saml/tls.crt
             {{- end }}
           volumeMounts:
             - name: data
@@ -109,6 +113,11 @@ spec:
             {{- if eq .Values.storage.backend "postgres" }}
             - name: postgres-password
               mountPath: /etc/opentrack/postgres
+              readOnly: true
+            {{- end }}
+            {{- if .Values.sso.enabled }}
+            - name: saml-signing
+              mountPath: /etc/opentrack/saml
               readOnly: true
             {{- end }}
           readinessProbe:
@@ -151,4 +160,9 @@ spec:
             items:
               - key: password
                 path: password
+        {{- end }}
+        {{- if .Values.sso.enabled }}
+        - name: saml-signing
+          secret:
+            secretName: {{ .Values.sso.signingSecret }}
         {{- end }}

@@ -41,6 +41,7 @@ nats:
 
 sso:
   enabled: true
+  signingSecret: opentrack-saml-signing
   metadataUrl: http://keycloak-http.keycloak.svc.cluster.local:8080/realms/uds/protocol/saml/descriptor
   publicOrigin: ""
   adminGroup: /C-UAS/OpenTrack Admin

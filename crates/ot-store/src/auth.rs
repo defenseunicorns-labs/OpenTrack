@@ -232,6 +232,10 @@ impl Db {
 
     /// The password hash of an active account, by email.
     pub fn password_hash(&self, email: &str) -> Result<Option<(User, Option<String>)>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.password_hash(email)?);
+        }
         let Some(u) = self.user_by_email(email)? else {
             return Ok(None);
         };
@@ -314,6 +318,10 @@ impl Db {
     /// Replace the stored hash of the same password (a stronger or FIPS
     /// algorithm): its age, history and must-change flag stay as they are.
     pub fn rehash_password(&mut self, id: &str, hash: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.rehash_password(id, hash)?);
+        }
         self.write(|tx| {
             tx.execute(
                 "UPDATE users SET password_hash = ?2 WHERE id = ?1 AND password_hash IS NOT NULL",
@@ -333,6 +341,10 @@ impl Db {
         must_change: bool,
         keep: usize,
     ) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.set_password(id, hash, must_change, keep)?);
+        }
         let now = now_ms();
         self.write(|tx| {
             let n = tx.execute(
@@ -364,6 +376,10 @@ impl Db {
     /// The current password hash and the `n` before it, newest first (to
     /// refuse reusing one).
     pub fn recent_password_hashes(&self, id: &str, n: usize) -> Result<Vec<String>> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.recent_password_hashes(id, n)?);
+        }
         let current: Option<String> = self
             .connection()
             .query_row("SELECT password_hash FROM users WHERE id = ?1", [id], |r| {
@@ -409,6 +425,10 @@ impl Db {
         max: i64,
         lock_ms: i64,
     ) -> Result<Failure> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.note_login_failure(id, window_ms, max, lock_ms)?);
+        }
         let now = now_ms();
         self.write(|tx| {
             let (count, from): (i64, Option<i64>) = tx.query_row(
@@ -447,6 +467,10 @@ impl Db {
     /// checked (a locked account): it shows in the notice after the next
     /// sign-in but does not extend the lock.
     pub fn note_refused_login(&mut self, id: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.note_refused_login(id)?);
+        }
         self.connection().execute(
             "UPDATE users SET failed_since_login = failed_since_login + 1 WHERE id = ?1",
             [id],
@@ -480,6 +504,10 @@ impl Db {
 
     /// Unlock an account locked by failed sign-ins.
     pub fn unlock_user(&mut self, id: &str) -> Result<User> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.unlock_user(id)?);
+        }
         let n = self.connection().execute(
             "UPDATE users SET locked_until_ms = NULL, failed_logins = 0,
                  failed_window_from_ms = NULL, updated_at_ms = ?2
@@ -527,6 +555,10 @@ impl Db {
 
     /// Make an account temporary (turned off at `expires_at_ms`), or not.
     pub fn set_account_expiry(&mut self, id: &str, expires_at_ms: Option<i64>) -> Result<User> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.set_account_expiry(id, expires_at_ms)?);
+        }
         let n = self.connection().execute(
             "UPDATE users SET expires_at_ms = ?2, updated_at_ms = ?3 WHERE id = ?1",
             params![id, expires_at_ms, now_ms()],
@@ -741,6 +773,10 @@ impl Db {
     }
 
     pub fn note_login(&mut self, id: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.note_login(id)?);
+        }
         self.connection().execute(
             "UPDATE users SET last_login_at_ms = ?2 WHERE id = ?1",
             params![id, now_ms()],
@@ -751,6 +787,10 @@ impl Db {
     /// Revoke every API token an account holds, for good: turning the
     /// account on again does not bring them back.
     fn revoke_api_tokens(&mut self, id: &str, now: i64) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.revoke_api_tokens(id, now)?);
+        }
         self.connection().execute(
             "UPDATE api_tokens SET revoked_at_ms = ?2 WHERE user_id = ?1 AND revoked_at_ms IS NULL",
             params![id, now],
@@ -760,6 +800,10 @@ impl Db {
 
     /// End every session and API token of an account issued before now.
     pub fn revoke_user_tokens(&mut self, id: &str) -> Result<()> {
+        #[cfg(feature = "postgres")]
+        if let Some(mut pg) = self.pg() {
+            return Ok(pg.revoke_user_tokens(id)?);
+        }
         let now = now_ms();
         self.connection().execute(
             "UPDATE users SET tokens_valid_from_ms = ?2 WHERE id = ?1",

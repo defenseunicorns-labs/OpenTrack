@@ -7,6 +7,32 @@ use ot_sync::{Entry, GlobalId, Hlc};
 use serde_json::json;
 
 #[test]
+fn postgres_password_and_account_maintenance() {
+    let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else { return; };
+    let mut db = Db::open_postgres(&url).unwrap();
+    let id = "postgres-auth-test";
+    db.create_user(&ot_store::NewUser {
+        id, email: "pg-auth@example.invalid", name: "PG Auth", role: "admin",
+        password_hash: Some("hash-one"), origin: "local",
+    }).unwrap();
+    assert_eq!(db.password_hash("pg-auth@example.invalid").unwrap().unwrap().1.as_deref(), Some("hash-one"));
+    db.rehash_password(id, "hash-one-rehashed").unwrap();
+    db.set_password(id, Some("hash-two"), true, 2).unwrap();
+    assert_eq!(db.recent_password_hashes(id, 2).unwrap(), vec!["hash-two", "hash-one"]);
+    let failure = db.note_login_failure(id, 60_000, 2, 60_000).unwrap();
+    assert_eq!(failure.count, 1);
+    assert!(!failure.locked_now);
+    assert!(db.note_login_failure(id, 60_000, 2, 60_000).unwrap().locked_now);
+    db.note_refused_login(id).unwrap();
+    assert!(db.unlock_user(id).unwrap().locked_until_ms.is_none());
+    db.note_login(id).unwrap();
+    db.set_account_expiry(id, Some(i64::MAX)).unwrap();
+    db.revoke_user_tokens(id).unwrap();
+    db.set_password(id, None, false, 2).unwrap();
+    assert_eq!(db.password_hash("pg-auth@example.invalid").unwrap().unwrap().1, None);
+}
+
+#[test]
 fn postgres_sync_round_trip() {
     let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
         eprintln!("set OT_TEST_POSTGRES_URL to run the disposable PostgreSQL integration test");

@@ -1,3 +1,4 @@
+{{- include "opentrack.samlSigning" . -}}
 apiVersion: uds.dev/v1alpha1
 kind: Package
 metadata:
@@ -63,7 +64,8 @@ spec:
       clientId: "https://opentrack.{{ .Values.domain }}/api/v1/auth/saml/metadata"
       protocol: saml
       attributes:
-        saml.client.signature: "false"
+        saml.client.signature: "true"
+        saml.signing.certificate: {{ .Values.sso._signingCert | replace "-----BEGIN CERTIFICATE-----" "" | replace "-----END CERTIFICATE-----" "" | replace "\n" "" | replace "\r" "" | quote }}
       redirectUris:
         - "https://opentrack.{{ .Values.domain }}/api/v1/auth/saml/acs"
       protocolMappers:

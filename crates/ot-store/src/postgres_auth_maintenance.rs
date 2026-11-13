@@ -4,7 +4,7 @@ use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Nullable, Text};
 
 use super::{PgControlStore, PostgresError, SESSION_COLUMNS, SessionRow, USER_COLUMNS, UserRow};
-use crate::auth::{Session, User};
+use crate::auth::{Failure, LOCKED_UNTIL_UNLOCKED, Session, User};
 
 #[derive(QueryableByName)]
 struct IdRow {
@@ -12,7 +12,201 @@ struct IdRow {
     id: String,
 }
 
+#[derive(QueryableByName)]
+struct HashRow {
+    #[diesel(sql_type = Nullable<Text>)]
+    hash: Option<String>,
+}
+
+#[derive(QueryableByName)]
+struct FailureRow {
+    #[diesel(sql_type = BigInt)]
+    count: i64,
+    #[diesel(sql_type = Nullable<BigInt>)]
+    from_ms: Option<i64>,
+}
+
 impl PgControlStore {
+    pub fn password_hash(
+        &mut self,
+        email: &str,
+    ) -> Result<Option<(User, Option<String>)>, PostgresError> {
+        let Some(user) = self.user_by_email(email)? else {
+            return Ok(None);
+        };
+        let row: HashRow =
+            diesel::sql_query("SELECT password_hash AS hash FROM users WHERE id = $1")
+                .bind::<Text, _>(&user.id)
+                .get_result(&mut self.connection)?;
+        Ok(Some((user, row.hash)))
+    }
+
+    pub fn rehash_password(&mut self, id: &str, hash: &str) -> Result<(), PostgresError> {
+        diesel::sql_query(
+            "UPDATE users SET password_hash = $2 WHERE id = $1 AND password_hash IS NOT NULL",
+        )
+        .bind::<Text, _>(id)
+        .bind::<Text, _>(hash)
+        .execute(&mut self.connection)?;
+        Ok(())
+    }
+
+    pub fn set_password(
+        &mut self,
+        id: &str,
+        hash: Option<&str>,
+        must_change: bool,
+        keep: usize,
+    ) -> Result<(), PostgresError> {
+        self.connection.transaction::<(), PostgresError, _>(|connection| {
+            let now = crate::sqlite::now_ms();
+            let changed = diesel::sql_query(
+                "UPDATE users SET password_hash = $2, updated_at_ms = $3,
+                 password_changed_at_ms = CASE WHEN $2::text IS NULL THEN NULL ELSE $3 END,
+                 must_change_password = $4 WHERE id = $1"
+            ).bind::<Text, _>(id).bind::<Nullable<Text>, _>(hash)
+            .bind::<BigInt, _>(now).bind::<BigInt, _>(i64::from(must_change && hash.is_some()))
+            .execute(connection)?;
+            if changed == 0 { return Err(PostgresError::NotFound(format!("user {id}"))); }
+            if let Some(hash) = hash {
+                diesel::sql_query("INSERT INTO password_history (user_id, hash, set_at_ms) VALUES ($1,$2,$3)")
+                    .bind::<Text, _>(id).bind::<Text, _>(hash).bind::<BigInt, _>(now).execute(connection)?;
+                diesel::sql_query(
+                    "DELETE FROM password_history WHERE user_id = $1 AND ctid NOT IN
+                     (SELECT ctid FROM password_history WHERE user_id = $1 ORDER BY set_at_ms DESC, ctid DESC LIMIT $2)"
+                ).bind::<Text, _>(id).bind::<BigInt, _>(keep.max(1) as i64).execute(connection)?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn recent_password_hashes(
+        &mut self,
+        id: &str,
+        n: usize,
+    ) -> Result<Vec<String>, PostgresError> {
+        let current: Option<HashRow> =
+            diesel::sql_query("SELECT password_hash AS hash FROM users WHERE id = $1")
+                .bind::<Text, _>(id)
+                .get_result(&mut self.connection)
+                .optional()?;
+        let history: Vec<HashRow> = diesel::sql_query(
+            "SELECT hash FROM password_history WHERE user_id = $1 ORDER BY set_at_ms DESC, ctid DESC LIMIT $2"
+        ).bind::<Text, _>(id).bind::<BigInt, _>(n as i64).load(&mut self.connection)?;
+        let mut out = Vec::new();
+        for hash in current
+            .and_then(|r| r.hash)
+            .into_iter()
+            .chain(history.into_iter().filter_map(|r| r.hash))
+        {
+            if !out.contains(&hash) {
+                out.push(hash);
+            }
+        }
+        out.truncate(n.max(1));
+        Ok(out)
+    }
+
+    pub fn note_login_failure(
+        &mut self,
+        id: &str,
+        window_ms: i64,
+        max: i64,
+        lock_ms: i64,
+    ) -> Result<Failure, PostgresError> {
+        self.connection.transaction::<Failure, PostgresError, _>(|connection| {
+            let now = crate::sqlite::now_ms();
+            let row: FailureRow = diesel::sql_query(
+                "SELECT failed_logins AS count, failed_window_from_ms AS from_ms FROM users WHERE id = $1 FOR UPDATE"
+            ).bind::<Text, _>(id).get_result(connection)?;
+            let (count, from) = match row.from_ms {
+                Some(from) if now - from <= window_ms => (row.count + 1, from),
+                _ => (1, now),
+            };
+            let locked_now = max > 0 && count >= max;
+            let until = if lock_ms > 0 { now.saturating_add(lock_ms) } else { LOCKED_UNTIL_UNLOCKED };
+            diesel::sql_query(
+                "UPDATE users SET failed_logins = $2, failed_window_from_ms = $3,
+                 failed_since_login = failed_since_login + 1,
+                 locked_until_ms = CASE WHEN $4 THEN $5 ELSE locked_until_ms END WHERE id = $1"
+            ).bind::<Text, _>(id).bind::<BigInt, _>(if locked_now {0} else {count})
+            .bind::<Nullable<BigInt>, _>((!locked_now).then_some(from))
+            .bind::<diesel::sql_types::Bool, _>(locked_now).bind::<BigInt, _>(until).execute(connection)?;
+            Ok(Failure { count, locked_now })
+        })
+    }
+
+    pub fn note_refused_login(&mut self, id: &str) -> Result<(), PostgresError> {
+        diesel::sql_query(
+            "UPDATE users SET failed_since_login = failed_since_login + 1 WHERE id = $1",
+        )
+        .bind::<Text, _>(id)
+        .execute(&mut self.connection)?;
+        Ok(())
+    }
+
+    pub fn unlock_user(&mut self, id: &str) -> Result<User, PostgresError> {
+        let changed = diesel::sql_query(
+            "UPDATE users SET locked_until_ms = NULL, failed_logins = 0,
+             failed_window_from_ms = NULL, updated_at_ms = $2 WHERE id = $1",
+        )
+        .bind::<Text, _>(id)
+        .bind::<BigInt, _>(crate::sqlite::now_ms())
+        .execute(&mut self.connection)?;
+        if changed == 0 {
+            return Err(PostgresError::NotFound(format!("user {id}")));
+        }
+        self.user(id)?
+            .ok_or_else(|| PostgresError::NotFound(format!("user {id}")))
+    }
+
+    pub fn set_account_expiry(
+        &mut self,
+        id: &str,
+        expires_at_ms: Option<i64>,
+    ) -> Result<User, PostgresError> {
+        let changed = diesel::sql_query(
+            "UPDATE users SET expires_at_ms = $2, updated_at_ms = $3 WHERE id = $1",
+        )
+        .bind::<Text, _>(id)
+        .bind::<Nullable<BigInt>, _>(expires_at_ms)
+        .bind::<BigInt, _>(crate::sqlite::now_ms())
+        .execute(&mut self.connection)?;
+        if changed == 0 {
+            return Err(PostgresError::NotFound(format!("user {id}")));
+        }
+        self.user(id)?
+            .ok_or_else(|| PostgresError::NotFound(format!("user {id}")))
+    }
+
+    pub fn note_login(&mut self, id: &str) -> Result<(), PostgresError> {
+        diesel::sql_query("UPDATE users SET last_login_at_ms = $2 WHERE id = $1")
+            .bind::<Text, _>(id)
+            .bind::<BigInt, _>(crate::sqlite::now_ms())
+            .execute(&mut self.connection)?;
+        Ok(())
+    }
+
+    pub fn revoke_api_tokens(&mut self, id: &str, now: i64) -> Result<(), PostgresError> {
+        diesel::sql_query(
+            "UPDATE api_tokens SET revoked_at_ms = $2 WHERE user_id = $1 AND revoked_at_ms IS NULL",
+        )
+        .bind::<Text, _>(id)
+        .bind::<BigInt, _>(now)
+        .execute(&mut self.connection)?;
+        Ok(())
+    }
+
+    pub fn revoke_user_tokens(&mut self, id: &str) -> Result<(), PostgresError> {
+        let now = crate::sqlite::now_ms();
+        diesel::sql_query("UPDATE users SET tokens_valid_from_ms = $2 WHERE id = $1")
+            .bind::<Text, _>(id)
+            .bind::<BigInt, _>(now)
+            .execute(&mut self.connection)?;
+        self.revoke_api_tokens(id, now)?;
+        self.end_user_sessions(id, "revoked", None)?;
+        Ok(())
+    }
     pub fn set_must_change_password(&mut self, id: &str, must: bool) -> Result<(), PostgresError> {
         diesel::sql_query("UPDATE users SET must_change_password = $2 WHERE id = $1")
             .bind::<Text, _>(id)

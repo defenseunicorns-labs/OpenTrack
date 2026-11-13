@@ -23,6 +23,7 @@ use axum::{Extension, Json, Router};
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use samael::crypto::CertificateDer;
 use samael::metadata::EntityDescriptor;
 use samael::schema::Assertion;
 use samael::service_provider::{ServiceProvider, ServiceProviderBuilder};
@@ -78,7 +79,27 @@ fn base_url(s: &AppState) -> Result<String, ApiError> {
 fn service_provider(cfg: &SamlSettings, base: &str) -> Result<ServiceProvider, String> {
     let idp = EntityDescriptor::from_str(&cfg.idp_metadata_xml)
         .map_err(|e| format!("the identity provider's metadata: {e}"))?;
-    ServiceProviderBuilder::default()
+    let mut builder = ServiceProviderBuilder::default();
+    let key_path = std::env::var("OT_SAML_SIGNING_KEY_FILE").ok();
+    let cert_path = std::env::var("OT_SAML_SIGNING_CERT_FILE").ok();
+    match (key_path, cert_path) {
+        (Some(key_path), Some(cert_path)) => {
+            let key_pem =
+                std::fs::read(&key_path).map_err(|e| format!("reading SAML signing key: {e}"))?;
+            let cert_pem = std::fs::read(&cert_path)
+                .map_err(|e| format!("reading SAML signing certificate: {e}"))?;
+            let key = openssl::pkey::PKey::private_key_from_pem(&key_pem)
+                .map_err(|e| format!("loading SAML signing key: {e}"))?;
+            let cert = openssl::x509::X509::from_pem(&cert_pem)
+                .map_err(|e| format!("loading SAML signing certificate: {e}"))?;
+            builder.key(key).certificate(CertificateDer::from(
+                cert.to_der().map_err(|e| e.to_string())?,
+            ));
+        }
+        (None, None) => {}
+        _ => return Err("set both OT_SAML_SIGNING_KEY_FILE and OT_SAML_SIGNING_CERT_FILE".into()),
+    }
+    builder
         .entity_id(format!("{base}/api/v1/auth/saml/metadata"))
         .acs_url(format!("{base}/api/v1/auth/saml/acs"))
         .idp_metadata(idp)
@@ -157,12 +178,17 @@ fn redirect_url(s: &AppState, cfg: &SamlSettings) -> Result<String, String> {
     let xml = authn.to_string().map_err(|e| e.to_string())?;
     let relay = mint_relay(&authn.id, &s.auth.secret)?;
     let request = deflate_base64(xml.as_bytes()).map_err(|e| e.to_string())?;
-    url::Url::parse_with_params(
+    let url = url::Url::parse_with_params(
         &sso,
         &[("SAMLRequest", request.as_str()), ("RelayState", &relay)],
     )
-    .map(|u| u.to_string())
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    match sp.key.as_ref() {
+        Some(key) => samael::crypto::sign_url(url, key)
+            .map(|signed| signed.to_string())
+            .map_err(|e| e.to_string()),
+        None => Ok(url.to_string()),
+    }
 }
 
 /// FIPS: xmlsec checks signatures with OpenSSL, which must be using only

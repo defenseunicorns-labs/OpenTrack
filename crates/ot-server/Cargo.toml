@@ -33,6 +33,7 @@ webpki.workspace = true
 quick-xml.workspace = true
 socket2.workspace = true
 samael = { workspace = true, optional = true }
+openssl = { version = "0.10", optional = true }
 flate2 = { workspace = true, optional = true }
 url.workspace = true
 base64.workspace = true
@@ -60,7 +61,7 @@ tracing-opentelemetry.workspace = true
 # SAML single sign-on; needs libxmlsec1. Leave it out for a lean node
 # (`--no-default-features`): accounts, API tokens and OpenStare sign-in stay.
 default = ["saml"]
-saml = ["dep:samael", "dep:flate2"]
+saml = ["dep:samael", "dep:flate2", "dep:openssl"]
 postgres = ["ot-store/postgres"]
 
 [dev-dependencies]
