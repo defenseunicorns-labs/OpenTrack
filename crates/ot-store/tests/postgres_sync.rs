@@ -208,6 +208,51 @@ fn postgres_group_and_pair_operations() {
 }
 
 #[test]
+fn postgres_undo_reverses_pair_and_group() {
+    let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let mut db = Db::open_postgres(&url).unwrap();
+    let site: SiteCode = "UND".parse().unwrap();
+    let (a, _) = db
+        .create_system_track(
+            site,
+            "test",
+            "undo-a",
+            ot_store::Decision::new("engine", "create_system_track"),
+        )
+        .unwrap();
+    let (b, _) = db
+        .create_system_track(
+            site,
+            "test",
+            "undo-b",
+            ot_store::Decision::new("engine", "create_system_track"),
+        )
+        .unwrap();
+    let pair = db
+        .pair_system_tracks(&[a, b], ot_store::Decision::new("operator", "pair_tracks"))
+        .unwrap();
+    assert_eq!(db.paired_with(a).unwrap(), vec![b]);
+    db.undo_decision(pair, "operator", "reverse pair").unwrap();
+    assert!(db.paired_with(a).unwrap().is_empty());
+    let spec: ot_store::groups::GroupSpec =
+        serde_json::from_value(json!({"name":"Undo Group","sidc":"SHSPGG----"})).unwrap();
+    let (_, formed) = db
+        .create_group(
+            site,
+            &spec,
+            &[a],
+            ot_store::Decision::new("operator", "create_group"),
+        )
+        .unwrap();
+    assert_eq!(db.groups().unwrap().len(), 1);
+    db.undo_decision(formed, "operator", "reverse group")
+        .unwrap();
+    assert!(db.groups().unwrap().is_empty());
+}
+
+#[test]
 fn postgres_sync_round_trip() {
     let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
         eprintln!("set OT_TEST_POSTGRES_URL to run the disposable PostgreSQL integration test");
