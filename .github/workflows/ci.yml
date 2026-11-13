@@ -74,8 +74,12 @@ jobs:
           OT_TEST_POSTGRES_URL: postgres://opentrack:test@127.0.0.1:5432/opentrack_integration?sslmode=disable
       - run: cargo check -p ot-server --features postgres --locked
       - run: |
+          docker exec postgres-schema createdb -U opentrack opentrack_verify
           docker exec -e PGPASSWORD=test -i postgres-schema \
-            psql -U opentrack -d opentrack -v ON_ERROR_STOP=1 -f - \
+            psql -U opentrack -d opentrack_verify -v ON_ERROR_STOP=1 -f - \
+            < crates/ot-store/postgres/0001_init.sql
+          docker exec -e PGPASSWORD=test -i postgres-schema \
+            psql -U opentrack -d opentrack_verify -v ON_ERROR_STOP=1 -f - \
             < crates/ot-store/postgres/verify_schema.sql
 
   supply-chain:
