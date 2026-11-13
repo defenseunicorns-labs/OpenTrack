@@ -110,6 +110,10 @@ spec:
               value: {{ .Values.sourceAccess.tcpPorts | toJson | quote }}
             - name: OT_SOURCE_MULTICAST_RELAY_ENABLED
               value: {{ .Values.sourceAccess.multicastRelay.enabled | quote }}
+            {{- if .Values.sourceAccess.multicastRelay.enabled }}
+            - name: OT_SOURCE_MULTICAST_NODE_CIDR
+              value: {{ .Values.sourceAccess.multicastRelay.nodeCidr | quote }}
+            {{- end }}
             - name: OT_REDIS_URL
               valueFrom:
                 secretKeyRef:

@@ -2,6 +2,24 @@
 {{- if empty .Values.sourceAccess.multicastRelay.nodeSelector }}
 {{- fail "sourceAccess.multicastRelay.nodeSelector must select the node receiving multicast" }}
 {{- end }}
+{{- if empty .Values.sourceAccess.multicastRelay.nodeCidr }}
+{{- fail "sourceAccess.multicastRelay.nodeCidr must be the receiving node's interface CIDR" }}
+{{- end }}
+apiVersion: uds.dev/v1alpha1
+kind: Exemption
+metadata:
+  name: opentrack-multicast-relay
+  namespace: uds-policy-exemptions
+spec:
+  exemptions:
+    - title: OpenTrack multicast receiver on the selected node
+      description: The relay must join a group on the node interface that receives the approved feed.
+      policies: [DisallowHostNamespaces]
+      matcher:
+        namespace: {{ .Release.Namespace }}
+        name: '^opentrack-multicast-relay-[a-z0-9]+-[a-z0-9]+$'
+        kind: pod
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:

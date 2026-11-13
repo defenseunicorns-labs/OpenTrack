@@ -115,11 +115,10 @@ impl CidrRule {
         })
     }
 
-    fn package_rule(&self, source_service_account: &str) -> Value {
+    fn package_rule(&self) -> Value {
         json!({
             "direction": "Egress",
-            "selector": {"app.kubernetes.io/name": "opentrack"},
-            "serviceAccount": source_service_account,
+            "selector": {"app.kubernetes.io/name": "opentrack", "app.kubernetes.io/component": "server"},
             "remoteCidr": self.cidr,
             "remoteProtocol": "TCP",
             "port": self.port,
@@ -555,6 +554,7 @@ fn merged_allow(
     package: &Value,
     desired: &Desired,
     source_service_account: &str,
+    relay_node_cidr: Option<&str>,
 ) -> anyhow::Result<Value> {
     let current = package
         .pointer("/spec/network/allow")
@@ -588,7 +588,7 @@ fn merged_allow(
         desired
             .tcp
             .iter()
-            .map(|rule| rule.package_rule(source_service_account)),
+            .map(CidrRule::package_rule),
     );
     result.extend(desired.tcp_ingress.iter().map(|port| json!({
         "direction": "Ingress",
@@ -597,8 +597,14 @@ fn merged_allow(
         "remoteSelector": {"app": "tenant-ingressgateway"},
         "remoteProtocol": "TCP",
         "port": port,
-        "description": format!("{OWNED_PREFIX}TCP ingress {port}"),
+        "description": format!("{OWNED_PREFIX}{port} TCP ingress"),
     })));
+    let relay_node_cidr = if desired.multicast.is_empty() {
+        None
+    } else {
+        let cidr = relay_node_cidr.context("multicast relay node CIDR is required")?;
+        Some(CidrRule::new(cidr, 1)?.cidr)
+    };
     for port in desired
         .multicast
         .iter()
@@ -608,10 +614,10 @@ fn merged_allow(
         result.push(json!({
             "direction": "Ingress",
             "selector": {"app.kubernetes.io/name": "opentrack", "app.kubernetes.io/component": "server"},
-            "remoteGenerated": "KubeNodes",
+            "remoteCidr": relay_node_cidr.as_deref(),
             "remoteProtocol": "UDP",
             "port": port,
-            "description": format!("{OWNED_PREFIX}multicast relay {port}"),
+            "description": format!("{OWNED_PREFIX}{port} multicast relay"),
         }));
     }
     Ok(Value::Array(result))
@@ -624,6 +630,7 @@ async fn reconcile(
     package_name: &str,
     source_service_account: &str,
     desired: &Desired,
+    relay_node_cidr: Option<&str>,
 ) -> anyhow::Result<()> {
     let url = format!(
         "{api}/apis/uds.dev/v1alpha1/namespaces/{}/packages/{package_name}",
@@ -640,7 +647,7 @@ async fn reconcile(
         let current = package
             .pointer("/spec/network/allow")
             .context("Package has no allow list")?;
-        let next = merged_allow(&package, desired, source_service_account)?;
+        let next = merged_allow(&package, desired, source_service_account, relay_node_cidr)?;
         let current_expose = package
             .pointer("/spec/network/expose")
             .context("Package has no expose list")?;
@@ -742,6 +749,15 @@ pub async fn run(
     .into_iter()
     .collect();
     let relay_enabled = std::env::var("OT_SOURCE_MULTICAST_RELAY_ENABLED").as_deref() == Ok("true");
+    let relay_node_cidr = std::env::var("OT_SOURCE_MULTICAST_NODE_CIDR").ok();
+    if relay_enabled {
+        CidrRule::new(
+            relay_node_cidr
+                .as_deref()
+                .context("OT_SOURCE_MULTICAST_NODE_CIDR is required for the relay")?,
+            1,
+        )?;
+    }
     let host =
         std::env::var("KUBERNETES_SERVICE_HOST").context("Kubernetes API host is required")?;
     let port = std::env::var("KUBERNETES_SERVICE_PORT").unwrap_or_else(|_| "443".to_owned());
@@ -761,22 +777,28 @@ pub async fn run(
             _ = &mut shutdown => return Ok(()),
             _ = ticker.tick() => {
                 let attempt = async {
+                    tracing::debug!("reconciliation cycle started");
                     // An unreadable or malformed approval file is an error, never an empty policy.
                     let approvals: Approvals = serde_json::from_slice(&tokio::fs::read(&approval_path).await?)?;
                     let rows = common.open_new_db()?.list_sources()?;
+                    tracing::debug!(sources = rows.len(), "source configurations loaded");
                     let mut desired = approved_rules(rows.clone(), &approvals, &available_udp, &available_tcp, relay_enabled)?;
                     if approvals.auto {
                         add_auto_rules(&rows, &mut desired, &available_udp, &available_tcp, relay_enabled, &mut dns_cache).await;
                     }
+                    tracing::debug!(hosts = desired.hosts.len(), tcp = desired.tcp.len(), "network requirements computed");
                     let token = tokio::fs::read_to_string(TOKEN_PATH).await?;
                     let reconcile_result = async {
-                        reconcile(&client, &api, token.trim(), &package_name, &source_service_account, &desired).await?;
+                        tracing::debug!("reconciling UDS Package");
+                        reconcile(&client, &api, token.trim(), &package_name, &source_service_account, &desired, relay_node_cidr.as_deref()).await?;
+                        tracing::debug!("UDS Package reconciled");
                         if relay_enabled {
                             reconcile_multicast_plan(&client, &api, token.trim(), &desired.multicast).await?;
                         }
                         anyhow::Ok(())
                     }.await;
                     for row in &rows {
+                        tracing::debug!(source = %row.id, "publishing source access decision");
                         let state = source_decision(row, &desired, reconcile_result.is_ok());
                         redis.put_source_access(&row.id, &state.to_string(), Duration::from_secs(45)).await?;
                     }
@@ -785,7 +807,7 @@ pub async fn run(
                 }.await;
                 match attempt {
                     Ok(count) => tracing::debug!(count, "source access reconciled"),
-                    Err(error) => tracing::warn!(error = %error, "source access reconciliation failed"),
+                    Err(error) => tracing::warn!(error = %format!("{error:#}"), "source access reconciliation failed"),
                 }
             }
         }
@@ -824,7 +846,7 @@ mod tests {
             hosts: BTreeSet::from([HostRule::new("STREAM.EXAMPLE", 443, "TLS").unwrap()]),
             ..Default::default()
         };
-        let merged = merged_allow(&package, &desired, "default").unwrap();
+        let merged = merged_allow(&package, &desired, "default", None).unwrap();
         assert_eq!(merged.as_array().unwrap().len(), 2);
         assert_eq!(merged[0]["description"], "existing rule");
         assert_eq!(merged[1]["remoteHost"], "stream.example");
@@ -871,7 +893,7 @@ mod tests {
             tcp_ingress: BTreeSet::from([7000]),
             ..Default::default()
         };
-        let merged = merged_allow(&package, &desired, "default").unwrap();
+        let merged = merged_allow(&package, &desired, "default", None).unwrap();
         assert_eq!(merged.as_array().unwrap().len(), 2);
         assert_eq!(merged[0]["remoteGenerated"], "IntraNamespace");
         assert_eq!(merged[1]["remoteNamespace"], "istio-tenant-gateway");
@@ -913,6 +935,46 @@ mod tests {
         let absent =
             approved_rules(vec![row], &approvals, &available, &BTreeSet::new(), false).unwrap();
         assert!(absent.multicast.is_empty());
+    }
+
+    #[test]
+    fn multicast_ingress_uses_an_exact_node_cidr() {
+        let package = json!({"spec":{"network":{"allow":[]}}});
+        let desired = Desired {
+            multicast: BTreeSet::from([MulticastRule {
+                group: "239.2.3.4".parse().unwrap(),
+                port: 7101,
+                interface: Some("192.0.2.10".into()),
+            }]),
+            ..Default::default()
+        };
+        assert!(merged_allow(&package, &desired, "default", None).is_err());
+        let merged = merged_allow(&package, &desired, "default", Some("192.0.2.10/32"))
+            .unwrap();
+        assert_eq!(merged[0]["remoteCidr"], "192.0.2.10/32");
+        assert_eq!(merged[0]["remoteProtocol"], "UDP");
+        assert!(merged[0].get("remoteGenerated").is_none());
+    }
+
+    #[test]
+    fn tcp_cidr_egress_uses_server_selector_without_service_account() {
+        let rule = CidrRule::new("192.0.2.10/32", 1883).unwrap().package_rule();
+        assert_eq!(rule["remoteCidr"], "192.0.2.10/32");
+        assert_eq!(rule["selector"]["app.kubernetes.io/component"], "server");
+        assert!(rule.get("serviceAccount").is_none());
+    }
+
+    #[test]
+    fn multiple_tcp_listeners_have_distinct_policy_names() {
+        let package = json!({"spec":{"network":{"allow":[]}}});
+        let desired = Desired {
+            tcp_ingress: BTreeSet::from([7000, 7001]),
+            ..Default::default()
+        };
+        let rules = merged_allow(&package, &desired, "default", None).unwrap();
+        assert_ne!(rules[0]["description"], rules[1]["description"]);
+        assert!(rules[0]["description"].as_str().unwrap().contains("7000"));
+        assert!(rules[1]["description"].as_str().unwrap().contains("7001"));
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@ domain: uds.dev
 
 image:
   repository: localhost:5000/opentrack
-  tag: uds-dev-0.1.8
+  tag: uds-dev-0.1.9
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -69,6 +69,8 @@ sourceAccess:
   multicastRelay:
     enabled: false
     nodeSelector: {}
+    # Exact CIDR of the selected node's receiving interface, e.g. 192.0.2.10/32.
+    nodeCidr: ""
     tolerations: []
   approvals:
     # One-time site choice: saved source requirements receive exact rules
