@@ -12,6 +12,7 @@ spec:
       - service: opentrack
         selector:
           app.kubernetes.io/name: opentrack
+          app.kubernetes.io/component: server
         host: opentrack
         gateway: tenant
         port: 8090
@@ -48,6 +49,13 @@ spec:
           application: spilo
         port: 5432
         description: UDS Data PostgreSQL backend when enabled
+      {{- if .Values.sourceAccess.enabled }}
+      - direction: Egress
+        selector:
+          app.kubernetes.io/component: access-controller
+        remoteGenerated: KubeAPI
+        description: Source access controller Kubernetes API
+      {{- end }}
       {{- if .Values.sso.enabled }}
       - direction: Egress
         selector:

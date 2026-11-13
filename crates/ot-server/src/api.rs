@@ -27,6 +27,8 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/sources", get(list_sources).post(create_source))
         .route("/sources/validate", post(validate_source))
+        .route("/sources/access-plan", post(crate::access::plan))
+        .route("/sources/access-plans", get(crate::access::plans))
         .route("/protobuf/describe", post(describe_protobuf))
         .route(
             "/sources/{id}",
@@ -42,6 +44,10 @@ pub fn routes() -> Router<AppState> {
         .route("/tracks", get(list_tracks))
         .route("/probe", post(crate::probe::probe))
         .route("/sources/{id}/samples", get(crate::probe::samples))
+        .route(
+            "/sources/{id}/samples/decode",
+            post(crate::probe::decode_samples),
+        )
         .route("/schema", get(schema_overview))
         .route(
             "/schema/draft",
@@ -235,7 +241,55 @@ async fn with_status(s: &AppState, row: SourceRow) -> Value {
         .and_then(|j| serde_json::from_str::<Value>(&j).ok());
     let mut v = serde_json::to_value(&row).unwrap_or_default();
     v["status"] = status.unwrap_or(Value::Null);
+    let access = s
+        .redis
+        .get_source_access(&row.id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|j| serde_json::from_str::<Value>(&j).ok());
+    v["access"] = access.unwrap_or(Value::Null);
+    let mut probe = s
+        .redis
+        .get_source_probe(&row.id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|j| serde_json::from_str::<Value>(&j).ok());
+    if let Some(evidence) = probe.as_mut() {
+        let fingerprint = row
+            .spec
+            .get("transport")
+            .cloned()
+            .and_then(|raw| {
+                serde_json::from_value::<ot_source::transport::TransportConfig>(raw).ok()
+            })
+            .and_then(|transport| crate::probe::transport_fingerprint(&transport).ok());
+        let valid = fingerprint.as_deref().is_some_and(|fingerprint| {
+            connection_test_ready(Some(evidence), fingerprint, row.created_at_ms)
+        });
+        evidence["valid"] = json!(valid);
+    }
+    v["connection_test"] = probe.unwrap_or(Value::Null);
     v
+}
+
+fn access_ready(access: Option<&Value>, revision: i64) -> bool {
+    access.is_some_and(|state| {
+        state["revision"].as_i64() == Some(revision)
+            && matches!(
+                state["state"].as_str(),
+                Some("policy_applied" | "file_share_or_data_path")
+            )
+    })
+}
+
+fn connection_test_ready(probe: Option<&Value>, fingerprint: &str, created_at_ms: i64) -> bool {
+    probe.is_some_and(|result| {
+        result["transport"].as_str() == Some(fingerprint)
+            && result["created_at_ms"].as_i64() == Some(created_at_ms)
+            && result["frames"].as_u64().is_some_and(|count| count > 0)
+    })
 }
 
 /// Whether the caller may see a source's secrets: only admins, who can
@@ -392,6 +446,43 @@ async fn enable_source(
         .with_db(move |db| db.get_source(&key))
         .await?
         .ok_or_else(|| ApiError::not_found("source"))?;
+    if std::env::var("OT_SOURCE_ACCESS_REQUIRED").as_deref() == Ok("true") {
+        let access = s
+            .redis
+            .get_source_access(&row.id)
+            .await?
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+        let ready = access_ready(access.as_ref(), row.revision);
+        if !ready {
+            return Err(ApiError::unprocessable(format!(
+                "source access is not ready: {}",
+                access
+                    .as_ref()
+                    .and_then(|state| state["state"].as_str())
+                    .unwrap_or("controller not reporting")
+            )));
+        }
+        let transport: ot_source::transport::TransportConfig = row
+            .spec
+            .get("transport")
+            .cloned()
+            .ok_or_else(|| ApiError::unprocessable("source has no transport"))
+            .and_then(|raw| {
+                serde_json::from_value(raw).map_err(|e| ApiError::unprocessable(e.to_string()))
+            })?;
+        let fingerprint = crate::probe::transport_fingerprint(&transport)
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+        let connection_test = s
+            .redis
+            .get_source_probe(&row.id)
+            .await?
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+        if !connection_test_ready(connection_test.as_ref(), &fingerprint, row.created_at_ms) {
+            return Err(ApiError::unprocessable(
+                "test this source and capture a frame before enabling it",
+            ));
+        }
+    }
     let c = check_spec(&s, row.spec).await?;
     let found = serde_json::to_value(&c.problems).map_err(|e| ApiError::internal(e.to_string()))?;
     if c.problems.is_empty() {
@@ -858,6 +949,44 @@ mod tests {
     const AIS: &str = include_str!("../../../docs/examples/aisstream.json");
     const ADSB: &str = include_str!("../../../docs/examples/adsb-lol.json");
     const SCHEMA: &str = include_str!("../../../docs/examples/schema.json");
+
+    #[test]
+    fn access_gate_rejects_stale_or_pending_decisions() {
+        assert!(!super::access_ready(None, 4));
+        assert!(!super::access_ready(
+            Some(&json!({"revision":3,"state":"policy_applied"})),
+            4
+        ));
+        assert!(!super::access_ready(
+            Some(&json!({"revision":4,"state":"pending_approval"})),
+            4
+        ));
+        assert!(super::access_ready(
+            Some(&json!({"revision":4,"state":"policy_applied"})),
+            4
+        ));
+        assert!(!super::connection_test_ready(None, "abc", 10));
+        assert!(!super::connection_test_ready(
+            Some(&json!({"transport":"abc","frames":0,"created_at_ms":10})),
+            "abc",
+            10
+        ));
+        assert!(!super::connection_test_ready(
+            Some(&json!({"transport":"old","frames":1,"created_at_ms":10})),
+            "abc",
+            10
+        ));
+        assert!(!super::connection_test_ready(
+            Some(&json!({"transport":"abc","frames":1,"created_at_ms":9})),
+            "abc",
+            10
+        ));
+        assert!(super::connection_test_ready(
+            Some(&json!({"transport":"abc","frames":1,"created_at_ms":10})),
+            "abc",
+            10
+        ));
+    }
 
     #[test]
     fn worked_examples_stay_valid() {

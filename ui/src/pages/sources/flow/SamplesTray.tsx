@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Badge, RecordTable, SegmentedControl, Tray } from '@kineticlogic/staresdk'
-import type { PreviewResult } from '../../../api/client'
+import type { DecodedSamples, PreviewResult } from '../../../api/client'
 import { InfoTip } from '../../../components/InfoTip'
 import { PIPELINE_COUNTS_INFO } from '../../../lib/sourceState'
 import { countsLine, sampleRows } from '../../../lib/trace'
@@ -20,6 +20,8 @@ export function SamplesTray({
   title,
   path,
   preview,
+  decodedSamples,
+  decodedError,
   error,
   open,
   onOpenChange,
@@ -31,6 +33,8 @@ export function SamplesTray({
   /** The steps from the input to the selected one. */
   path: string[]
   preview: PreviewResult | null
+  decodedSamples: DecodedSamples | null
+  decodedError: string | null
   error: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -40,6 +44,7 @@ export function SamplesTray({
 }) {
   const [view, setView] = useState<'table' | 'json'>('table')
   const parent = path.length > 1 ? path[path.length - 2] : undefined
+  const inputFallback = !!node && !preview && ['input', 'reject', 'map'].includes(node.type)
   const rows = node && preview ? sampleRows(preview.trace, node.id, parent, path) : []
   const counts = countsLine(preview)
   // A row's sample: `2` or `2-0` (the first of what one sample made).
@@ -64,7 +69,8 @@ export function SamplesTray({
             </Badge>
           )}
           <InfoTip label="Samples">
-            A dry run of the source as edited (not yet saved) over its stored samples, as they leave the selected step. In the table,
+            A dry run of the source as edited (not yet saved) over its stored samples, as they leave the selected step. While a Map is incomplete,
+            the Input, Reject and Map steps show decoded input records for reference. In the table,
             fields the step added or changed are tinted and ones it removed are struck through. Click a sample to follow it through the
             flow: the steps it passed light up, and the one that dropped it says why. On the input, drag a column onto a Map to map that
             field. Nothing is published.
@@ -95,7 +101,16 @@ export function SamplesTray({
             {e}
           </div>
         ))}
-        {!node ? null : !preview ? null : view === 'table' ? (
+        {inputFallback && decodedSamples?.last_decode_error && <div className="error-text">{decodedSamples.last_decode_error}</div>}
+        {inputFallback && decodedError && <div className="error-text">{decodedError}</div>}
+        {inputFallback && decodedSamples && (
+          <div className="value-row">
+            <span className="mono muted">Input samples before mapping · {decodedSamples.frames} frame(s) · {decodedSamples.records.length} decoded record(s)</span>
+          </div>
+        )}
+        {!node ? null : inputFallback ? (
+          <pre className="mono">{JSON.stringify(decodedSamples?.records ?? [], null, 2)}</pre>
+        ) : !preview ? null : view === 'table' ? (
           <RecordTable
             aria-label={`Samples after ${title}`}
             rows={rows}

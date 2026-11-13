@@ -937,6 +937,9 @@ export interface SourceRow {
   draft: boolean
   /** Live worker status; null when no worker runs it (disabled or stopped). */
   status: SourceStatus | null
+  /** Access controller decision; null when the controller is not deployed or has stopped. */
+  access: { state: string; revision: number; reason?: string | null } | null
+  connection_test: { transport: string; frames: number; seconds: number; valid: boolean } | null
 }
 
 /** One reason a source may not run. */
@@ -1004,6 +1007,13 @@ export interface ProbeResult {
     text: string
     truncated: boolean
   }[]
+}
+
+export interface DecodedSamples {
+  frames: number
+  records: unknown[]
+  decode_errors: number
+  last_decode_error: string | null
 }
 
 export interface PreviewObservation extends Observation {
@@ -1269,6 +1279,8 @@ export const api = {
     max_secs?: number
     save_as?: string
   }) => request<ProbeResult>('POST', '/probe', body),
+  decodeSamples: (id: string, codec: SourceSpec['pipeline']['codec']) =>
+    request<DecodedSamples>('POST', `/sources/${enc(id)}/samples/decode`, { codec }),
   /** A dry run; `trace` > 0 also follows that many decoded records stage by stage (at most 10). */
   preview: (spec: SourceSpec, storedSamplesOf?: string, samples: string[] = [], trace = 0) =>
     request<PreviewResult>('POST', '/sources/validate', { spec, samples, stored_samples_of: storedSamplesOf, ...(trace > 0 ? { trace } : {}) }),

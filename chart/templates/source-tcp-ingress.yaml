@@ -1,0 +1,59 @@
+{{- if .Values.sourceAccess.enabled }}
+{{- if ne (len .Values.sourceAccess.tcpPorts) (len (uniq .Values.sourceAccess.tcpPorts)) }}
+{{- fail "sourceAccess.tcpPorts contains duplicate ports" }}
+{{- end }}
+{{- range .Values.sourceAccess.tcpPorts }}
+{{- $port := int . }}
+{{- if or (lt $port 1024) (gt $port 65535) (has $port (list 8090 15021)) }}
+{{- fail "sourceAccess.tcpPorts entries must be unprivileged and cannot use OpenTrack or gateway health ports" }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentrack-source-tcp-{{ $port }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: opentrack
+    app.kubernetes.io/component: server
+  ports:
+    - name: tcp-{{ $port }}
+      protocol: TCP
+      port: {{ $port }}
+      targetPort: {{ $port }}
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: opentrack-source-tcp-{{ $port }}
+  namespace: istio-tenant-gateway
+spec:
+  selector:
+    app: tenant-ingressgateway
+  servers:
+    - hosts: ["*"]
+      port:
+        name: opentrack-tcp-{{ $port }}
+        number: {{ $port }}
+        protocol: TCP
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: opentrack-source-tcp-{{ $port }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  gateways:
+    - istio-tenant-gateway/opentrack-source-tcp-{{ $port }}
+  hosts: ["*"]
+  tcp:
+    - match:
+        - port: {{ $port }}
+      route:
+        - destination:
+            host: opentrack-source-tcp-{{ $port }}.{{ $.Release.Namespace }}.svc.cluster.local
+            port:
+              number: {{ $port }}
+---
+{{- end }}
+{{- end }}
