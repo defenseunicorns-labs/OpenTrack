@@ -8,6 +8,8 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 
+mod access;
+mod access_controller;
 mod api;
 mod audit_api;
 mod auth;
@@ -73,6 +75,10 @@ enum Command {
     Cot(cot::CotArgs),
     /// Run every enabled source (transports and pipelines).
     Sources,
+    /// Reconcile approved source egress into the UDS Package.
+    AccessController,
+    /// Join approved multicast groups on a node and forward into OpenTrack.
+    MulticastRelay,
     /// Run the engine (source tracks to system tracks, lifecycle).
     Engine(EngineArgs),
     /// Exchange tracks and decisions with other OpenTrack nodes over the
@@ -337,6 +343,8 @@ impl Command {
             Command::Writer(_) => "writer",
             Command::Cot(_) => "cot",
             Command::Sources => "sources",
+            Command::AccessController => "access-controller",
+            Command::MulticastRelay => "multicast-relay",
             Command::Engine(_) => "engine",
             Command::Link(_) => "link",
             Command::Bridge(_) => "bridge",
@@ -361,6 +369,8 @@ impl Command {
                 | Command::Writer(_)
                 | Command::Cot(_)
                 | Command::Sources
+                | Command::AccessController
+                | Command::MulticastRelay
                 | Command::Engine(_)
                 | Command::Link(_)
                 | Command::Bridge(_)
@@ -428,6 +438,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             common.open_db()?;
             plugins::start(&common).await;
             sources::run(common, shutdown_signal()).await
+        }
+        Command::AccessController => access_controller::run(common, shutdown_signal()).await,
+        Command::MulticastRelay => {
+            access_controller::run_multicast_relay(common, shutdown_signal()).await
         }
         Command::Engine(args) => run_engine(common, args).await,
         Command::Link(args) => link::run(common, args, shutdown_signal()).await,

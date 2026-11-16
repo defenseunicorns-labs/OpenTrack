@@ -36,6 +36,10 @@ export function SourceStatus({ source }: { source: SourceRow }) {
         <dd>
           {link ? `${link.connected ? 'connected' : 'not connected'} · ${link.connects} connect(s) · ${link.errors} error(s)` : 'no worker running'}
         </dd>
+        <dt>Network access</dt>
+        <dd>{source.access ? `${source.access.state.replaceAll('_', ' ')}${source.access.reason ? ` · ${source.access.reason}` : ''}` : 'controller not reporting'}</dd>
+        <dt>Connection test</dt>
+        <dd>{source.connection_test?.valid ? `${source.connection_test.frames} frame(s) captured from this transport` : 'test required for this transport'}</dd>
         <dt>Last frame</dt>
         <dd>{link?.last_frame_at ? `${ago(link.last_frame_at)} ago` : '—'}</dd>
         <dt>Revision</dt>

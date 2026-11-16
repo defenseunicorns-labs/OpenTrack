@@ -91,6 +91,7 @@ export function NodePanel({
             codec={spec.pipeline.codec}
             onTransport={(transport) => onSpec({ ...spec, transport })}
             onCodec={(codec) => onSpec({ ...spec, pipeline: { ...spec.pipeline, codec } })}
+            onTransportCodec={(transport, codec) => onSpec({ ...spec, transport, pipeline: { ...spec.pipeline, codec } })}
           />
           <SenderAuth spec={spec} onChange={onSpec} />
           <div className="form-grid">
@@ -129,6 +130,7 @@ export function NodePanel({
             codec={spec.pipeline.codec}
             onTransport={(transport) => onSpec({ ...spec, transport })}
             onCodec={(codec) => onSpec({ ...spec, pipeline: { ...spec.pipeline, codec } })}
+            onTransportCodec={(transport, codec) => onSpec({ ...spec, transport, pipeline: { ...spec.pipeline, codec } })}
           />
         </div>
       )

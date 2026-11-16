@@ -114,7 +114,7 @@ export function ProtoSchema({
       <FileDropZone
         inputId="proto-file"
         accept=".proto"
-        acceptedExtensions={['.proto']}
+        acceptedExtensions={['proto']}
         file={picked}
         onFileChange={add}
         onReject={(m) => toast({ variant: 'error', title: '.proto', message: m })}

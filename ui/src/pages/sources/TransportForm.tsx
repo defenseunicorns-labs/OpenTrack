@@ -270,12 +270,14 @@ export function TransportForm({
   codec,
   onTransport,
   onCodec,
+  onTransportCodec,
 }: {
   part: 'source' | 'decode'
   transport: Transport
   codec: Codec
   onTransport: (t: Transport) => void
   onCodec: (c: Codec) => void
+  onTransportCodec: (t: Transport, c: Codec) => void
 }) {
   const set = (k: string, v: unknown) => {
     const next = { ...transport, [k]: v }
@@ -292,10 +294,12 @@ export function TransportForm({
   const choosePlugin = (name: string) => {
     const p = plugins.find((x) => x.name === name)
     if (!p) return
-    onCodec({ type: 'plugin', plugin: p.name, options: structuredClone(p.default_options) })
+    const nextCodec: Codec = { type: 'plugin', plugin: p.name, options: structuredClone(p.default_options) }
     // A stream of the plugin's format is framed its way.
     if (p.framing && (transport.type === 'tcp_client' || transport.type === 'tcp_server')) {
-      onTransport({ ...transport, framing: structuredClone(p.framing) })
+      onTransportCodec({ ...transport, framing: structuredClone(p.framing) }, nextCodec)
+    } else {
+      onCodec(nextCodec)
     }
   }
   const [proto, setProto] = useState<ProtoDescription | null>(null)
@@ -385,12 +389,13 @@ export function TransportForm({
               onChange={(name) => {
                 const m = proto?.methods.find((x) => x.name === name)
                 if (!m) return
-                onTransport({ ...transport, method: m.name })
                 // Frames are the method's responses.
                 if (codec.type === 'protobuf' && codec.message !== m.output) {
                   const next: Codec = { ...codec, message: m.output }
                   delete next.records
-                  onCodec(next)
+                  onTransportCodec({ ...transport, method: m.name }, next)
+                } else {
+                  onTransport({ ...transport, method: m.name })
                 }
               }}
             />

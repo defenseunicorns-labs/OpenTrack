@@ -1,0 +1,160 @@
+{{- if .Values.sourceAccess.enabled }}
+{{- if ne .Values.storage.backend "postgres" }}
+{{- fail "sourceAccess.enabled currently requires storage.backend=postgres" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opentrack-source-access
+  namespace: {{ .Release.Namespace }}
+data:
+  approvals.json: {{ .Values.sourceAccess.approvals | toJson | quote }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opentrack-access-controller
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opentrack-access-controller
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [uds.dev]
+    resources: [packages]
+    resourceNames: [opentrack]
+    verbs: [get, patch]
+  {{- if .Values.sourceAccess.multicastRelay.enabled }}
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [opentrack-multicast-plan]
+    verbs: [get, patch]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opentrack-access-controller
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: opentrack-access-controller
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opentrack-access-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentrack-access-controller
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opentrack
+      app.kubernetes.io/component: access-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opentrack
+        app.kubernetes.io/component: access-controller
+    spec:
+      serviceAccountName: opentrack-access-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [access-controller]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OT_DB_BACKEND
+              value: postgres
+            - name: OT_POSTGRES_HOST
+              value: {{ .Values.storage.postgres.host | quote }}
+            - name: OT_POSTGRES_PORT
+              value: {{ .Values.storage.postgres.port | quote }}
+            - name: OT_POSTGRES_DATABASE
+              value: {{ .Values.storage.postgres.database | quote }}
+            - name: OT_POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.storage.postgres.credentialsSecret }}
+                  key: username
+            - name: OT_POSTGRES_PASSWORD_FILE
+              value: /etc/opentrack/postgres/password
+            - name: OT_POSTGRES_SSLMODE
+              value: {{ .Values.storage.postgres.sslmode | quote }}
+            - name: OT_SOURCE_ACCESS_APPROVALS_FILE
+              value: /etc/opentrack/source-access/approvals.json
+            - name: OT_SOURCE_ACCESS_PACKAGE
+              value: opentrack
+            - name: OT_SOURCE_SERVICE_ACCOUNT
+              value: default
+            - name: OT_SOURCE_UDP_PORTS
+              value: {{ .Values.sourceAccess.udpPorts | toJson | quote }}
+            - name: OT_SOURCE_TCP_PORTS
+              value: {{ .Values.sourceAccess.tcpPorts | toJson | quote }}
+            - name: OT_SOURCE_MULTICAST_RELAY_ENABLED
+              value: {{ .Values.sourceAccess.multicastRelay.enabled | quote }}
+            {{- if .Values.sourceAccess.multicastRelay.enabled }}
+            - name: OT_SOURCE_MULTICAST_NODE_CIDR
+              value: {{ .Values.sourceAccess.multicastRelay.nodeCidr | quote }}
+            {{- end }}
+            - name: OT_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.valkey.urlSecret }}
+                  key: url
+            - name: OT_REDIS_PASSWORD_FILE
+              value: /etc/opentrack/valkey/password
+          volumeMounts:
+            - name: postgres-password
+              mountPath: /etc/opentrack/postgres
+              readOnly: true
+            - name: approvals
+              mountPath: /etc/opentrack/source-access
+              readOnly: true
+            - name: valkey-password
+              mountPath: /etc/opentrack/valkey
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: postgres-password
+          secret:
+            secretName: {{ .Values.storage.postgres.credentialsSecret }}
+            items:
+              - key: password
+                path: password
+        - name: approvals
+          configMap:
+            name: opentrack-source-access
+        - name: valkey-password
+          secret:
+            secretName: {{ .Values.valkey.passwordSecret }}
+            items:
+              - key: {{ .Values.valkey.passwordKey }}
+                path: password
+{{- end }}

@@ -8,6 +8,7 @@ import { FlowCanvas, type FlowCanvasEdge, type FlowCanvasNode, type FlowPaletteI
 import {
   api,
   ApiError,
+  type DecodedSamples,
   type PluginInfo,
   type PreviewResult,
   type ProbeResult,
@@ -160,6 +161,7 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
   const [schema, setSchema] = useState<SchemaOverview | null>(null)
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [probe, setProbe] = useState<ProbeResult | null>(null)
+  const [decoded, setDecoded] = useState<{ key: string; samples: DecodedSamples | null; error: string | null }>({ key: '', samples: null, error: null })
   const [capturing, setCapturing] = useState(false)
   const [nonce, setNonce] = useState(0)
   const [trayOpen, setTrayOpen] = useState(true)
@@ -202,6 +204,19 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
   const current = selected && flow.nodes.some((n) => n.id === selected) ? selected : null
   const currentType = flow.nodes.find((n) => n.id === current)?.type
   const live = useLiveCheck(spec, id, nonce, currentType === 'filter' ? MAX_TRACED_SAMPLES : TRACED_SAMPLES, canAdmin)
+  const codecKey = spec ? JSON.stringify(spec.pipeline.codec) : ''
+  const sampleKey = `${id}:${nonce}:${codecKey}`
+  const decodedSamples = decoded.key === sampleKey ? decoded.samples : null
+  const decodedError = decoded.key === sampleKey ? decoded.error : null
+  useEffect(() => {
+    if (!canAdmin || !codecKey) return
+    let active = true
+    api.decodeSamples(id, JSON.parse(codecKey) as SourceSpec['pipeline']['codec']).then(
+      (samples) => { if (active) setDecoded({ key: sampleKey, samples, error: null }) },
+      (e) => { if (active) setDecoded({ key: sampleKey, samples: null, error: errorMessage(e) }) },
+    )
+    return () => { active = false }
+  }, [canAdmin, codecKey, id, sampleKey])
   // What stops it running: the live check's, else what was found when it was saved.
   const problems = useMemo(() => live.problems ?? row?.problems ?? [], [live.problems, row?.problems])
   const byNode = useMemo(() => problemsByNode(problems, flow), [problems, flow])
@@ -528,6 +543,8 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
             title={node ? nodeTitle(spec, node) : ''}
             path={node ? pathTo(flow, node.id) : []}
             preview={live.preview}
+            decodedSamples={decodedSamples}
+            decodedError={decodedError}
             error={live.error}
             open={trayOpen}
             onOpenChange={setTrayOpen}

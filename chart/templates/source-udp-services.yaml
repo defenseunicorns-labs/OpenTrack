@@ -1,0 +1,26 @@
+{{- if .Values.sourceAccess.enabled }}
+{{- if ne (len .Values.sourceAccess.udpPorts) (len (uniq .Values.sourceAccess.udpPorts)) }}
+{{- fail "sourceAccess.udpPorts contains duplicate ports" }}
+{{- end }}
+{{- range .Values.sourceAccess.udpPorts }}
+{{- $port := int . }}
+{{- if or (lt $port 1024) (gt $port 65535) }}
+{{- fail "sourceAccess.udpPorts entries must be unprivileged ports" }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentrack-source-udp-{{ $port }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: opentrack
+    app.kubernetes.io/component: server
+  ports:
+    - name: udp-{{ $port }}
+      protocol: UDP
+      port: {{ $port }}
+      targetPort: {{ $port }}
+---
+{{- end }}
+{{- end }}

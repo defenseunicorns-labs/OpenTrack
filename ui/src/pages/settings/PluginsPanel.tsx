@@ -143,7 +143,7 @@ function AddPlugin({ onClose, onAdded }: { onClose: () => void; onAdded: (p: Plu
           <FileDropZone
             inputId="plugin-file"
             accept=".wasm,application/wasm"
-            acceptedExtensions={['.wasm']}
+            acceptedExtensions={['wasm']}
             file={file}
             onFileChange={setFile}
             onReject={(m) => toast({ variant: 'error', title: 'Plugin', message: m })}

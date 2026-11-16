@@ -17,6 +17,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: opentrack
+        app.kubernetes.io/component: server
     spec:
       securityContext:
         runAsNonRoot: true
@@ -40,8 +41,18 @@ spec:
               value: "https://opentrack.{{ .Values.domain }}"
             - name: OT_SITE_CODE
               value: {{ .Values.siteCode | quote }}
+            {{- if .Values.fileShare.claimName }}
+            - name: OT_SOURCE_FILE_SHARE
+              value: /source-files
+            {{- end }}
             - name: OT_DB_BACKEND
               value: {{ .Values.storage.backend | quote }}
+            - name: OT_SOURCE_ACCESS_REQUIRED
+              value: {{ .Values.sourceAccess.enabled | quote }}
+            {{- if and .Values.sourceAccess.enabled .Values.sourceAccess.multicastRelay.enabled }}
+            - name: OT_MULTICAST_RELAY
+              value: "true"
+            {{- end }}
             {{- if eq .Values.storage.backend "postgres" }}
             - name: OT_DATA_DIR
               value: /data
@@ -104,6 +115,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.fileShare.claimName }}
+            - name: source-files
+              mountPath: /source-files
+              readOnly: true
+            {{- end }}
             - name: valkey-password
               mountPath: /etc/opentrack/valkey
               readOnly: true
@@ -141,6 +157,12 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: opentrack-data
+        {{- if .Values.fileShare.claimName }}
+        - name: source-files
+          persistentVolumeClaim:
+            claimName: {{ .Values.fileShare.claimName | quote }}
+            readOnly: true
+        {{- end }}
         - name: valkey-password
           secret:
             secretName: {{ .Values.valkey.passwordSecret }}
