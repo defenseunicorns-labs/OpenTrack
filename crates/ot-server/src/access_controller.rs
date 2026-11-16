@@ -809,6 +809,137 @@ pub async fn run(
     }
 }
 
+/// The optional host-network bridge for multicast feeds. Only exact group,
+/// interface and port tuples approved by the operator are joined.
+pub async fn run_multicast_relay(
+    _common: Common,
+    shutdown: impl std::future::Future<Output = ()>,
+) -> anyhow::Result<()> {
+    let plan_path: PathBuf = std::env::var_os("OT_SOURCE_MULTICAST_PLAN_FILE")
+        .context("OT_SOURCE_MULTICAST_PLAN_FILE is required")?
+        .into();
+    let available_udp: BTreeSet<u16> = serde_json::from_str::<Vec<u16>>(
+        &std::env::var("OT_SOURCE_UDP_PORTS").unwrap_or_else(|_| "[]".to_owned()),
+    )?
+    .into_iter()
+    .collect();
+    let namespace = std::env::var("POD_NAMESPACE").context("POD_NAMESPACE is required")?;
+    let mut tasks: BTreeMap<MulticastRule, tokio::task::JoinHandle<()>> = BTreeMap::new();
+    let mut ticker = tokio::time::interval(Duration::from_secs(15));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => {
+                for (_, task) in tasks { task.abort(); }
+                return Ok(());
+            }
+            _ = ticker.tick() => {
+                let desired = (|| -> anyhow::Result<BTreeSet<MulticastRule>> {
+                    let rules: Vec<MulticastRule> = serde_json::from_slice(&std::fs::read(&plan_path)?)?;
+                    validate_multicast_plan(rules, &available_udp)
+                })();
+                let desired = match desired {
+                    Ok(value) => value,
+                    Err(error) => {
+                        tracing::warn!(error = %error, "multicast relay plan failed; keeping current groups");
+                        continue;
+                    }
+                };
+                tasks.retain(|rule, task| {
+                    if desired.contains(rule) && !task.is_finished() { true } else {
+                        task.abort();
+                        false
+                    }
+                });
+                for rule in desired {
+                    if tasks.contains_key(&rule) { continue; }
+                    let r = rule.clone();
+                    let ns = namespace.clone();
+                    let task = tokio::spawn(async move {
+                        if let Err(error) = relay_multicast(&r, &ns).await {
+                            tracing::warn!(group = %r.group, port = r.port, error = %error, "multicast relay stopped");
+                        }
+                    });
+                    tasks.insert(rule, task);
+                }
+            }
+        }
+    }
+}
+
+fn validate_multicast_plan(
+    rules: Vec<MulticastRule>,
+    available_udp: &BTreeSet<u16>,
+) -> anyhow::Result<BTreeSet<MulticastRule>> {
+    for rule in &rules {
+        if !rule.group.is_multicast() || !available_udp.contains(&rule.port) {
+            bail!("multicast plan contains a group or port outside the allowed pool");
+        }
+        if let Some(interface) = &rule.interface {
+            let parsed: MulticastInterface = interface.parse().map_err(anyhow::Error::msg)?;
+            ot_source::transport::check_multicast(rule.group, Some(&parsed))
+                .map_err(anyhow::Error::msg)?;
+        }
+    }
+    let desired: BTreeSet<_> = rules.into_iter().collect();
+    if desired
+        .iter()
+        .map(|rule| rule.port)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != desired.len()
+    {
+        bail!("multicast plan assigns more than one group to a port");
+    }
+    Ok(desired)
+}
+
+async fn relay_multicast(rule: &MulticastRule, namespace: &str) -> anyhow::Result<()> {
+    let destination_name = format!(
+        "opentrack-source-udp-{}.{}.svc.cluster.local:{}",
+        rule.port, namespace, rule.port
+    );
+    relay_multicast_to(rule, &destination_name).await
+}
+
+async fn relay_multicast_to(rule: &MulticastRule, destination_name: &str) -> anyhow::Result<()> {
+    let bind: SocketAddr = if rule.group.is_ipv4() {
+        format!("0.0.0.0:{}", rule.port)
+    } else {
+        format!("[::]:{}", rule.port)
+    }
+    .parse()?;
+    let interface: Option<MulticastInterface> = rule
+        .interface
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+    let incoming = ot_source::transport::udp_socket(bind, Some(rule.group), interface.as_ref())?;
+    let outgoing = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+    let mut destination = tokio::net::lookup_host(&destination_name)
+        .await?
+        .find(|addr| addr.is_ipv4())
+        .context("UDP source Service has no IPv4 address")?;
+    let mut refreshed_at = tokio::time::Instant::now();
+    let mut buf = vec![0u8; 65_536];
+    tracing::info!(group = %rule.group, port = rule.port, interface = ?rule.interface, "multicast relay joined group");
+    loop {
+        let (n, _) = incoming.recv_from(&mut buf).await?;
+        if refreshed_at.elapsed() >= Duration::from_secs(60) {
+            if let Ok(Some(addr)) = tokio::net::lookup_host(&destination_name)
+                .await
+                .map(|mut addrs| addrs.find(|addr| addr.is_ipv4()))
+            {
+                destination = addr;
+            }
+            refreshed_at = tokio::time::Instant::now();
+        }
+        outgoing.send_to(&buf[..n], destination).await?;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1081,136 +1212,5 @@ mod tests {
         assert!(desired.tcp_ingress.contains(&7000));
         assert!(desired.udp.contains(&7100));
         assert_eq!(desired.multicast.len(), 1);
-    }
-}
-
-/// The optional host-network bridge for multicast feeds. Only exact group,
-/// interface and port tuples approved by the operator are joined.
-pub async fn run_multicast_relay(
-    _common: Common,
-    shutdown: impl std::future::Future<Output = ()>,
-) -> anyhow::Result<()> {
-    let plan_path: PathBuf = std::env::var_os("OT_SOURCE_MULTICAST_PLAN_FILE")
-        .context("OT_SOURCE_MULTICAST_PLAN_FILE is required")?
-        .into();
-    let available_udp: BTreeSet<u16> = serde_json::from_str::<Vec<u16>>(
-        &std::env::var("OT_SOURCE_UDP_PORTS").unwrap_or_else(|_| "[]".to_owned()),
-    )?
-    .into_iter()
-    .collect();
-    let namespace = std::env::var("POD_NAMESPACE").context("POD_NAMESPACE is required")?;
-    let mut tasks: BTreeMap<MulticastRule, tokio::task::JoinHandle<()>> = BTreeMap::new();
-    let mut ticker = tokio::time::interval(Duration::from_secs(15));
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    tokio::pin!(shutdown);
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => {
-                for (_, task) in tasks { task.abort(); }
-                return Ok(());
-            }
-            _ = ticker.tick() => {
-                let desired = (|| -> anyhow::Result<BTreeSet<MulticastRule>> {
-                    let rules: Vec<MulticastRule> = serde_json::from_slice(&std::fs::read(&plan_path)?)?;
-                    validate_multicast_plan(rules, &available_udp)
-                })();
-                let desired = match desired {
-                    Ok(value) => value,
-                    Err(error) => {
-                        tracing::warn!(error = %error, "multicast relay plan failed; keeping current groups");
-                        continue;
-                    }
-                };
-                tasks.retain(|rule, task| {
-                    if desired.contains(rule) && !task.is_finished() { true } else {
-                        task.abort();
-                        false
-                    }
-                });
-                for rule in desired {
-                    if tasks.contains_key(&rule) { continue; }
-                    let r = rule.clone();
-                    let ns = namespace.clone();
-                    let task = tokio::spawn(async move {
-                        if let Err(error) = relay_multicast(&r, &ns).await {
-                            tracing::warn!(group = %r.group, port = r.port, error = %error, "multicast relay stopped");
-                        }
-                    });
-                    tasks.insert(rule, task);
-                }
-            }
-        }
-    }
-}
-
-fn validate_multicast_plan(
-    rules: Vec<MulticastRule>,
-    available_udp: &BTreeSet<u16>,
-) -> anyhow::Result<BTreeSet<MulticastRule>> {
-    for rule in &rules {
-        if !rule.group.is_multicast() || !available_udp.contains(&rule.port) {
-            bail!("multicast plan contains a group or port outside the allowed pool");
-        }
-        if let Some(interface) = &rule.interface {
-            let parsed: MulticastInterface = interface.parse().map_err(anyhow::Error::msg)?;
-            ot_source::transport::check_multicast(rule.group, Some(&parsed))
-                .map_err(anyhow::Error::msg)?;
-        }
-    }
-    let desired: BTreeSet<_> = rules.into_iter().collect();
-    if desired
-        .iter()
-        .map(|rule| rule.port)
-        .collect::<BTreeSet<_>>()
-        .len()
-        != desired.len()
-    {
-        bail!("multicast plan assigns more than one group to a port");
-    }
-    Ok(desired)
-}
-
-async fn relay_multicast(rule: &MulticastRule, namespace: &str) -> anyhow::Result<()> {
-    let destination_name = format!(
-        "opentrack-source-udp-{}.{}.svc.cluster.local:{}",
-        rule.port, namespace, rule.port
-    );
-    relay_multicast_to(rule, &destination_name).await
-}
-
-async fn relay_multicast_to(rule: &MulticastRule, destination_name: &str) -> anyhow::Result<()> {
-    let bind: SocketAddr = if rule.group.is_ipv4() {
-        format!("0.0.0.0:{}", rule.port)
-    } else {
-        format!("[::]:{}", rule.port)
-    }
-    .parse()?;
-    let interface: Option<MulticastInterface> = rule
-        .interface
-        .as_deref()
-        .map(str::parse)
-        .transpose()
-        .map_err(anyhow::Error::msg)?;
-    let incoming = ot_source::transport::udp_socket(bind, Some(rule.group), interface.as_ref())?;
-    let outgoing = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-    let mut destination = tokio::net::lookup_host(&destination_name)
-        .await?
-        .find(|addr| addr.is_ipv4())
-        .context("UDP source Service has no IPv4 address")?;
-    let mut refreshed_at = tokio::time::Instant::now();
-    let mut buf = vec![0u8; 65_536];
-    tracing::info!(group = %rule.group, port = rule.port, interface = ?rule.interface, "multicast relay joined group");
-    loop {
-        let (n, _) = incoming.recv_from(&mut buf).await?;
-        if refreshed_at.elapsed() >= Duration::from_secs(60) {
-            if let Ok(Some(addr)) = tokio::net::lookup_host(&destination_name)
-                .await
-                .map(|mut addrs| addrs.find(|addr| addr.is_ipv4()))
-            {
-                destination = addr;
-            }
-            refreshed_at = tokio::time::Instant::now();
-        }
-        outgoing.send_to(&buf[..n], destination).await?;
     }
 }
