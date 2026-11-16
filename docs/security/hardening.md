@@ -8,7 +8,7 @@ themselves are described in the administrator guide, under
 ## Before first start
 
 1. **Use a signed image.** Verify a release image before running it:
-   `cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/kineticlogic-io/opentrack@<digest>`
+   `cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/defenseunicorns-labs/opentrack@<digest>`
    ([supply-chain.md](supply-chain.md)).
 2. **Use the image.** Only the image has OpenSSL's FIPS provider, so only it has SAML under FIPS.
    Its runtime is distroless Debian 12 (`gcr.io/distroless/cc-debian12`, non-root): no shell, no

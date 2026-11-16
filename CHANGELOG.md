@@ -38,6 +38,11 @@
 
 ### Changed
 
+- **Repository-owned container delivery.** Native AMD64 and ARM64 CI images publish
+  to `ghcr.io/defenseunicorns-labs/opentrack`. Versioned releases reuse the exact
+  tested CI index and keep mandatory FIPS-provider signing before version-tag
+  promotion; downstream deployment repositories can consume an image digest.
+
 - **Capture's suggested mapping knows no feed's field names.** It reads the values (coordinates,
   times, a track key of fixed-length ids, CoT types) and fields named like an OpenTrack field whose
   values fit. It no longer guesses from names of particular feeds, and no longer suggests

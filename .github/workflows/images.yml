@@ -1,0 +1,148 @@
+name: container-images
+
+on:
+  push:
+    # Temporary branch permission is removed after the initial publication test.
+    branches: [main, release, feat/ci-multiarch-ghcr]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - crates/**
+      - third_party/**
+      - wit/**
+      - ui/**
+      - docs/guides/**
+      - profiles/**
+      - docker/**
+      - LICENSE
+      - scripts/ci/**
+      - tests/ci/**
+      - .github/workflows/images.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.metadata.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Test image publication and release-candidate validation
+        run: python3 -B -m unittest discover -s tests/ci -p 'test_*.py'
+      - name: Identify the repository-owned image
+        id: metadata
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: source
+    if: github.event_name == 'push' && github.repository == 'defenseunicorns-labs/OpenTrack'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the native image with provenance and SBOM
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.architecture }}
+          push: true
+          tags: ${{ needs.source.outputs.image }}:ci-${{ github.sha }}-${{ matrix.architecture }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=OpenTrack
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=opentrack-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=opentrack-${{ matrix.architecture }}
+      - name: Smoke-test the published native executable by digest
+        env:
+          IMAGE: ${{ needs.source.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL
+          --security-opt no-new-privileges
+          --entrypoint /usr/local/bin/opentrack "$IMAGE@$DIGEST" --help
+      - name: Record the tested native digest
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          python3 scripts/ci/images.py record --architecture "$ARCHITECTURE" \
+            --digest "$DIGEST" --output "$RUNNER_TEMP/digests/$ARCHITECTURE.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: opentrack-digest-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/digests/${{ matrix.architecture }}.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  publish:
+    needs: [source, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: opentrack-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - name: Verify the combined index before promoting its development channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/ci/images.py publish --digests "$RUNNER_TEMP/digests" \
+            --output image-references.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: opentrack-image-references
+          path: image-references.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true

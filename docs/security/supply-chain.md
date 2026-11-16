@@ -64,21 +64,32 @@ banned crate is ever built.
 
 Publishing a GitHub release runs `.github/workflows/release.yml`, which:
 
-1. Builds the image with BuildKit's SLSA provenance (`mode=max`) and SBOM attestations attached.
-2. Pushes it to the package `ghcr.io/kineticlogic-io/opentrack:<tag>`. Releases up to
+1. Resolves the exact image reference from a successful protected-branch native
+   container CI run for the release source commit. The AMD64 and ARM64 builds
+   already carry BuildKit's SLSA provenance (`mode=max`) and SBOM attestations.
+   The workflow checks both platforms and the recorded source revision/repository;
+   it does not rebuild the application or select a mutable tag as its input.
+2. Prepares the package `ghcr.io/defenseunicorns-labs/opentrack:<tag>`. Releases up to
    v0.4.7 were made while the project was private and have been withdrawn.
-3. Signs its digest with `scripts/release/sign-image`: cosign makes the payload, the **OpenSSL
+3. Signs its multi-platform index digest with `scripts/release/sign-image`: cosign makes the payload, the **OpenSSL
    3.0.9 FIPS provider** (CMVP #4282, built from the Dockerfile's `openssl-fips` stage) signs it
    with the project key (ECDSA P-256, SHA-256), and cosign attaches the signature. cosign's own
    cryptography never touches the key (SC-13). The signature is not uploaded to a public transparency log. The script then verifies
    the signature.
-4. Attaches the two SBOMs and `image-digest.txt` to the release.
+4. Promotes the version tag only after signing and verification, and attaches
+   the two SBOMs and `image-digest.txt` to the release. Missing signing secrets or
+   a missing successful CI build record fail closed before version-tag promotion.
+
+The separate `.github/workflows/images.yml` publishes `main`, `release`, and
+`sha-<commit>` development images. Those CI publications are **not signed
+versioned releases**. See [container delivery](../container-images.md) for native
+builds, publication triggers, metadata retention and consumer guidance.
 
 **Verify an image:**
 
 ```sh
-cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/kineticlogic-io/opentrack@<digest>
-docker buildx imagetools inspect ghcr.io/kineticlogic-io/opentrack@<digest> --format '{{ json .Provenance }}'
+cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/defenseunicorns-labs/opentrack@<digest>
+docker buildx imagetools inspect ghcr.io/defenseunicorns-labs/opentrack@<digest> --format '{{ json .Provenance }}'
 ```
 
 **The key:**
