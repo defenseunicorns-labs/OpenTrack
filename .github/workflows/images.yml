@@ -2,8 +2,7 @@ name: container-images
 
 on:
   push:
-    # Temporary branch permission is removed after the initial publication test.
-    branches: [main, release, feat/ci-multiarch-ghcr]
+    branches: [main, release]
     paths:
       - Dockerfile
       - .dockerignore
@@ -47,7 +46,7 @@ jobs:
 
   build:
     needs: source
-    if: github.event_name == 'push' && github.repository == 'defenseunicorns-labs/OpenTrack'
+    if: github.event_name == 'push' && github.repository == 'defenseunicorns-labs/OpenTrack' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     permissions:

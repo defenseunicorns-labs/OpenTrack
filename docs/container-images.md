@@ -54,16 +54,18 @@ references.
 BuildKit attestations do not replace the project's release-signing policy.
 Do not treat `main` or a `sha-...` tag as an approved signed-release baseline.
 
-## Triggers and initial branch test
+## Triggers
 
 Relevant source/build-input changes merged into `main` or `release` build
 images. PRs run lightweight metadata tests, not container builds. Branch
 protection is what enforces merge-only updates to those branches.
 
-For initial publication testing, `feat/ci-multiarch-ghcr` is temporarily allowed.
-It can publish only `branch-ci-multiarch-ghcr`, never `main`, `release`, or a
-version tag. Remove that branch exception after native builds and GHCR access
-are verified. This temporary channel cannot supply a signed-release candidate.
+The initial isolated branch test successfully built and smoke-tested both
+architectures and published the combined image in
+[run 43962196791](https://github.com/defenseunicorns-labs/OpenTrack/actions/runs/43962196791).
+The package is public and associated with this repository. Its temporary branch
+permission was then removed from both the workflow and publication helper.
+The historical test channel cannot supply a signed-release candidate.
 
 ## Signed releases
 

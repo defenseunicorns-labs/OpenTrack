@@ -60,10 +60,10 @@ class ImageTests(unittest.TestCase):
                 images.image_name(repository)
 
     def test_only_approved_branches_can_publish(self):
-        for ref, channel in (("main", "main"), ("release", "release"),
-                             ("feat/ci-multiarch-ghcr", "branch-ci-multiarch-ghcr")):
+        for ref, channel in (("main", "main"), ("release", "release")):
             self.assertEqual(images.publication_channel(REPO, f"refs/heads/{ref}"), channel)
-        for ref in ("refs/pull/3/merge", "refs/heads/untrusted", "refs/tags/v1.0.0"):
+        for ref in ("refs/pull/3/merge", "refs/heads/untrusted", "refs/tags/v1.0.0",
+                    "refs/heads/feat/ci-multiarch-ghcr"):
             with self.subTest(ref=ref), self.assertRaises(ValueError):
                 images.publication_channel(REPO, ref)
 
@@ -107,17 +107,23 @@ class ImageTests(unittest.TestCase):
 
     @patch.object(images, "inspect")
     @patch.object(images.subprocess, "run")
-    def test_branch_publication_cannot_promote_main_or_a_version(self, run, inspect):
+    def test_development_publication_cannot_promote_a_version(self, run, inspect):
         inspect.return_value = manifest()
-        result = images.publish(self.root, REPO, REVISION, "branch-ci-multiarch-ghcr")
+        result = images.publish(self.root, REPO, REVISION, "main")
         self.assertFalse(result["release_signed"])
         self.assertEqual(run.call_count, 2)
         tags = run.call_args.args[0]
-        self.assertIn(f"{images.image_name(REPO)}:branch-ci-multiarch-ghcr", tags)
-        self.assertNotIn(f"{images.image_name(REPO)}:main", tags)
+        self.assertIn(f"{images.image_name(REPO)}:main", tags)
+        self.assertNotIn(f"{images.image_name(REPO)}:release", tags)
         self.assertEqual(tags[-1], f"{images.image_name(REPO)}@{INDEX}")
         with self.assertRaises(ValueError):
             images.publish(self.root, REPO, REVISION, "v1.0.0")
+
+    @patch.object(images.subprocess, "run")
+    def test_removed_branch_channel_cannot_publish(self, run):
+        with self.assertRaises(ValueError):
+            images.publish(self.root, REPO, REVISION, "branch-ci-multiarch-ghcr")
+        run.assert_not_called()
 
     @patch.object(images, "inspect")
     @patch.object(images.subprocess, "run")

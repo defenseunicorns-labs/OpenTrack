@@ -35,8 +35,6 @@ def publication_channel(repository, ref):
     channels = {
         "refs/heads/main": "main",
         "refs/heads/release": "release",
-        # Temporary: remove after testing publication from this branch.
-        "refs/heads/feat/ci-multiarch-ghcr": "branch-ci-multiarch-ghcr",
     }
     if ref not in channels:
         raise ValueError("Image promotion requires an explicitly approved branch")
@@ -102,7 +100,7 @@ def inspect(reference):
 
 
 def publish(directory, repository, revision, channel, promote_channel=True):
-    if channel not in ("main", "release", "branch-ci-multiarch-ghcr"):
+    if channel not in ("main", "release"):
         raise ValueError("Unexpected development image channel")
     image = image_name(repository)
     references = native_references(directory, repository, revision)
