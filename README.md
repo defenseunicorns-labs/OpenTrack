@@ -43,7 +43,8 @@ undo it.
 
 Prebuilt Linux images for AMD64 and ARM64 are published by this repository to
 `ghcr.io/defenseunicorns-labs/opentrack`. Use a digest for reproducible deployment.
-The `main` / `release` channels are development builds, not signed versioned
+Each pushed branch gets a matching image tag (normalized when needed).
+These branch channels are development builds, not signed versioned
 releases; see [container delivery](docs/container-images.md) for references,
 registry access, and release verification.
 

@@ -35,10 +35,11 @@ platforms (while retaining attestation descriptors), and then publishes:
 ghcr.io/defenseunicorns-labs/opentrack:sha-<full-source-commit>
 ghcr.io/defenseunicorns-labs/opentrack:main
 ghcr.io/defenseunicorns-labs/opentrack:release
+ghcr.io/defenseunicorns-labs/opentrack:<branch-tag>
 ```
 
-`main` / `release` reflect their respective branch; a historical workflow rerun
-can refresh a commit image but cannot roll either branch channel backwards.
+Branch tags reflect their respective branch; a historical workflow rerun
+can refresh a commit image but cannot roll a newer branch channel backwards.
 Deploy using the combined index digest from the workflow summary or the
 `opentrack-image-references` artifact:
 
@@ -46,7 +47,7 @@ Deploy using the combined index digest from the workflow summary or the
 ghcr.io/defenseunicorns-labs/opentrack@sha256:<index-digest>
 ```
 
-The `ci-<commit>-amd64`, `ci-<commit>-arm64`, and `ci-<commit>-index` tags are
+The `ci-<commit>-amd64`, `ci-<commit>-arm64`, and `ci-<commit>-<hash>-index` tags are
 intermediates and may remain after a partial failure. They are not deployment
 references.
 
@@ -56,16 +57,27 @@ Do not treat `main` or a `sha-...` tag as an approved signed-release baseline.
 
 ## Triggers
 
-Relevant source/build-input changes merged into `main` or `release` build
-images. PRs run lightweight metadata tests, not container builds. Branch
-protection is what enforces merge-only updates to those branches.
+Every branch push in the upstream repository builds both architectures, even
+for documentation-only changes. Forks, branch deletions, and Dependabot pushes
+do not publish. PR events run lightweight metadata tests in source CI; a PR
+branch pushed within this repository also gets its own image through the push
+workflow. Existing branches get a tag on their next push after adopting this
+workflow. Deleting a branch does not automatically delete its registry tag.
 
-The initial isolated branch test successfully built and smoke-tested both
-architectures and published the combined image in
-[run 43962196791](https://github.com/defenseunicorns-labs/OpenTrack/actions/runs/43962196791).
-The package is public and associated with this repository. Its temporary branch
-permission was then removed from both the workflow and publication helper.
-The historical test channel cannot supply a signed-release candidate.
+Docker-valid branch names such as `main`, `release`, and `fix-login` are used
+unchanged. Names containing `/`, Unicode, or more than 128 characters are
+sanitized and get `--` plus the first 16 hex characters of their SHA-256 hash.
+For example, `feat/my-feature` maps to `feat-my-feature--<16-hex-hash>`.
+The slug is truncated to keep the result within Docker's 128-character limit.
+The exact tag is printed in the workflow summary and recorded as
+`branch_reference` in the image-reference artifact.
+
+`latest`, `ci-*`, `sha-*`, version-like names (`v1.2.3`, including prereleases),
+and names ending in the generated `--<16-hex-hash>` form are reserved.
+Those branches also receive a safe hashed tag rather than overwriting release,
+internal, or another normalized branch tag. Reserved prefixes get a `branch-`
+prefix. Branch builds never publish version tags or sign releases; only
+successful `main` / `release` runs may supply signed-release candidates.
 
 ## Signed releases
 

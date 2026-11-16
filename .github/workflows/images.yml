@@ -2,24 +2,7 @@ name: container-images
 
 on:
   push:
-    branches: [main, release]
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - crates/**
-      - third_party/**
-      - wit/**
-      - ui/**
-      - docs/guides/**
-      - profiles/**
-      - docker/**
-      - LICENSE
-      - scripts/ci/**
-      - tests/ci/**
-      - .github/workflows/images.yml
+    branches: ['**']
 
 permissions:
   contents: read
@@ -30,23 +13,25 @@ concurrency:
 
 jobs:
   source:
+    if: github.repository == 'defenseunicorns-labs/OpenTrack' && !github.event.deleted && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       image: ${{ steps.metadata.outputs.image }}
+      branch-tag: ${{ steps.metadata.outputs.branch-tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Test image publication and release-candidate validation
         run: python3 -B -m unittest discover -s tests/ci -p 'test_*.py'
-      - name: Identify the repository-owned image
+      - name: Identify the repository-owned image and safe branch tag
         id: metadata
-        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: python3 scripts/ci/images.py metadata --output "$GITHUB_OUTPUT"
 
   build:
     needs: source
-    if: github.event_name == 'push' && github.repository == 'defenseunicorns-labs/OpenTrack' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
+    if: github.event_name == 'push' && github.repository == 'defenseunicorns-labs/OpenTrack' && startsWith(github.ref, 'refs/heads/')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     permissions:

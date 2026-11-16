@@ -59,13 +59,29 @@ class ImageTests(unittest.TestCase):
             with self.subTest(repository=repository), self.assertRaises(ValueError):
                 images.image_name(repository)
 
-    def test_only_approved_branches_can_publish(self):
-        for ref, channel in (("main", "main"), ("release", "release")):
+    def test_repository_branches_can_publish(self):
+        for ref, channel in (("main", "main"), ("release", "release"),
+                             ("feature-123", "feature-123"), ("Fix_UI.v2", "Fix_UI.v2")):
             self.assertEqual(images.publication_channel(REPO, f"refs/heads/{ref}"), channel)
-        for ref in ("refs/pull/3/merge", "refs/heads/untrusted", "refs/tags/v1.0.0",
-                    "refs/heads/feat/ci-multiarch-ghcr"):
+        for ref in (None, "", "refs/pull/3/merge", "refs/tags/v1.0.0",
+                    "refs/heads/", "refs/heads/a..b", "refs/heads/a\nb",
+                    "refs/heads/a/.hidden", "refs/heads/a.lock", "refs/heads/a//b"):
             with self.subTest(ref=ref), self.assertRaises(ValueError):
                 images.publication_channel(REPO, ref)
+
+    def test_normalized_branch_tags_are_valid_stable_and_distinct(self):
+        branches = ("feat/ci-multiarch-ghcr", "feat-ci-multiarch-ghcr", "修正/地図",
+                    "x" * 200, "latest", "ci-test", "sha-test", "v1.0.0", "v1.0.0-rc.1")
+        tags = [images.branch_tag(branch) for branch in branches]
+        self.assertEqual(len(tags), len(set(tags)))
+        for branch, tag in zip(branches, tags):
+            with self.subTest(branch=branch):
+                self.assertRegex(tag, r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+                self.assertEqual(tag, images.branch_tag(branch))
+                self.assertFalse(images.reserved_tag(tag))
+        normalized = images.branch_tag(branches[0])
+        self.assertNotEqual(images.branch_tag(normalized), normalized)
+        self.assertRegex(normalized, r"^feat-ci-multiarch-ghcr--[0-9a-f]{16}$")
 
     def test_full_commit_and_digest_are_required(self):
         with self.assertRaises(ValueError):
@@ -119,10 +135,27 @@ class ImageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             images.publish(self.root, REPO, REVISION, "v1.0.0")
 
+    @patch.object(images, "inspect")
     @patch.object(images.subprocess, "run")
-    def test_removed_branch_channel_cannot_publish(self, run):
+    def test_branch_publication_uses_only_its_own_tag(self, run, inspect):
+        inspect.return_value = manifest()
+        branch = "feat/ci-multiarch-ghcr"
+        channel = images.branch_tag(branch)
+        result = images.publish(self.root, REPO, REVISION, channel, branch=branch)
+        tags = run.call_args.args[0]
+        self.assertIn(f"{images.image_name(REPO)}:{channel}", tags)
+        self.assertNotIn(f"{images.image_name(REPO)}:main", tags)
+        self.assertEqual(result["branch"], branch)
+        self.assertEqual(result["branch_reference"], f"{images.image_name(REPO)}:{channel}")
+        first_candidate = run.call_args_list[0].args[0][5]
+        run.reset_mock()
+        images.publish(self.root, REPO, REVISION, "other")
+        self.assertNotEqual(first_candidate, run.call_args_list[0].args[0][5])
+
+    @patch.object(images.subprocess, "run")
+    def test_mismatched_branch_channel_cannot_publish(self, run):
         with self.assertRaises(ValueError):
-            images.publish(self.root, REPO, REVISION, "branch-ci-multiarch-ghcr")
+            images.publish(self.root, REPO, REVISION, "main", branch="feature")
         run.assert_not_called()
 
     @patch.object(images, "inspect")
@@ -163,6 +196,7 @@ class ImageTests(unittest.TestCase):
     @patch.object(images, "inspect")
     def test_release_rejects_branch_test_and_tampered_build_records(self, inspect):
         for field, value in (("channel", "branch-ci-multiarch-ghcr"),
+                             ("branch", "feature"),
                              ("revision", "b" * 40),
                              ("reference", "ghcr.io/another/image@" + INDEX),
                              ("platforms", ["linux/amd64"])):
@@ -171,6 +205,14 @@ class ImageTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 images.resolve_release(REPO, REVISION, "v1.0.0", data)
         inspect.assert_not_called()
+
+    @patch.object(images, "inspect")
+    def test_release_rejects_feature_branch_index(self, inspect):
+        data = manifest()
+        data["annotations"]["io.opentrack.image.branch"] = "feature"
+        inspect.return_value = data
+        with self.assertRaises(ValueError):
+            images.resolve_release(REPO, REVISION, "v1.0.0", build_record())
 
     @patch.object(images, "inspect")
     def test_release_checks_the_exact_digest_from_ci_not_a_tag(self, inspect):
