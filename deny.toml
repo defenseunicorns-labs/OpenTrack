@@ -11,6 +11,9 @@ ignore = [
     # rustls-pemfile is unmaintained; only rumqttc's PEM-loading path uses
     # it, and OpenTrack hands rumqttc a ready rustls configuration instead.
     { id = "RUSTSEC-2025-0134", reason = "unused path in third_party/rumqttc" },
+    # Chrono's unmaintained advisory has no safe upgrade. Migration also
+    # requires samael and the workspace crates to change their time types.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained status; no safe upgrade exists" },
 ]
 
 [licenses]
