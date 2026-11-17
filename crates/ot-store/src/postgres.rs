@@ -7,6 +7,7 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Nullable, Text};
 use serde_json::Value;
+use std::time::{Duration, Instant};
 
 use crate::Decision;
 
@@ -342,7 +343,11 @@ fn record_decision(
 
 pub struct PgControlStore {
     connection: PgConnection,
+    database_url: String,
+    last_connection_check: Instant,
 }
+
+const CONNECTION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
 fn count_rows(connection: &mut PgConnection, sql: &'static str) -> Result<i64, PostgresError> {
     let row: SchemaVersion = diesel::sql_query(sql).get_result(connection)?;
@@ -367,9 +372,41 @@ impl PgControlStore {
     /// trusted configuration and never logged because it contains a password.
     pub fn connect(database_url: &str) -> Result<Self, PostgresError> {
         let connection = PgConnection::establish(database_url)?;
-        let mut store = Self { connection };
+        let mut store = Self {
+            connection,
+            database_url: database_url.to_owned(),
+            last_connection_check: Instant::now(),
+        };
         store.migrate()?;
         Ok(store)
+    }
+
+    /// Check at an operation boundary so a connection broken by a PostgreSQL
+    /// restart is replaced before the next transaction begins. Do not attempt
+    /// this inside a transaction: that could split one operation across two
+    /// database sessions.
+    pub(crate) fn reconnect_if_needed(&mut self) {
+        if self.last_connection_check.elapsed() < CONNECTION_CHECK_INTERVAL {
+            return;
+        }
+        self.last_connection_check = Instant::now();
+        let healthy = diesel::sql_query("SELECT 1::bigint AS version")
+            .get_result::<SchemaVersion>(&mut self.connection)
+            .is_ok();
+        if healthy {
+            return;
+        }
+        match PgConnection::establish(&self.database_url) {
+            Ok(connection) => {
+                self.connection = connection;
+                tracing::warn!("reconnected PostgreSQL control store after connection failure");
+            }
+            Err(_) => {
+                tracing::debug!(
+                    "PostgreSQL control store is unavailable; retrying on the next check"
+                );
+            }
+        }
     }
 
     pub fn schema_version(&mut self) -> Result<i64, PostgresError> {
@@ -896,14 +933,32 @@ impl PgControlStore {
 
 #[cfg(test)]
 mod tests {
-    use super::PgControlStore;
+    use super::{CONNECTION_CHECK_INTERVAL, PgControlStore, SUPPORTED_SCHEMA};
     use diesel::prelude::*;
     use diesel::sql_types::Text;
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    // Both tests use OT_TEST_POSTGRES_URL and run against the same schema.
+    // Serializing them also keeps the audit sequence assertions deterministic.
+    static POSTGRES_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[derive(QueryableByName)]
     struct EvidenceRow {
         #[diesel(sql_type = Text)]
         evidence: String,
+    }
+
+    #[derive(QueryableByName)]
+    struct BackendPid {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        pid: i32,
+    }
+
+    #[derive(QueryableByName)]
+    struct Terminated {
+        #[diesel(sql_type = diesel::sql_types::Bool)]
+        terminated: bool,
     }
 
     #[derive(QueryableByName)]
@@ -921,10 +976,37 @@ mod tests {
     }
 
     #[test]
+    fn reopens_a_lost_postgres_connection_at_the_next_operation() {
+        let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let _guard = POSTGRES_TEST_MUTEX.lock().unwrap();
+        let db = crate::Db::open_postgres(&url).unwrap();
+        {
+            let mut pg = db.pg().unwrap();
+            let BackendPid { pid } = diesel::sql_query("SELECT pg_backend_pid() AS pid")
+                .get_result(&mut pg.connection)
+                .unwrap();
+            // A separate session terminates only this test's backend; having
+            // the victim terminate itself can block in libpq for a long time.
+            let mut killer = diesel::PgConnection::establish(&url).unwrap();
+            let result: Terminated =
+                diesel::sql_query("SELECT pg_terminate_backend($1) AS terminated")
+                    .bind::<diesel::sql_types::Integer, _>(pid)
+                    .get_result(&mut killer)
+                    .unwrap();
+            assert!(result.terminated);
+            pg.last_connection_check = Instant::now() - CONNECTION_CHECK_INTERVAL;
+        }
+        assert_eq!(db.schema_version().unwrap(), SUPPORTED_SCHEMA);
+    }
+
+    #[test]
     fn migrates_a_fresh_database_and_reopens_it() {
         let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
             return;
         };
+        let _guard = POSTGRES_TEST_MUTEX.lock().unwrap();
         let mut first = PgControlStore::connect(&url).unwrap();
         assert_eq!(first.schema_version().unwrap(), 1);
         let mut second = PgControlStore::connect(&url).unwrap();

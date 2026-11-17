@@ -153,7 +153,11 @@ impl Db {
 
     #[cfg(feature = "postgres")]
     pub(crate) fn pg(&self) -> Option<std::cell::RefMut<'_, crate::postgres::PgControlStore>> {
-        self.pg.as_ref().map(std::cell::RefCell::borrow_mut)
+        self.pg.as_ref().map(|cell| {
+            let mut pg = cell.borrow_mut();
+            pg.reconnect_if_needed();
+            pg
+        })
     }
 
     fn migrate(&mut self) -> Result<()> {
