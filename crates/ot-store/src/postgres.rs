@@ -936,7 +936,12 @@ mod tests {
     use super::{CONNECTION_CHECK_INTERVAL, PgControlStore, SUPPORTED_SCHEMA};
     use diesel::prelude::*;
     use diesel::sql_types::Text;
+    use std::sync::Mutex;
     use std::time::Instant;
+
+    // Both tests use OT_TEST_POSTGRES_URL and run against the same schema.
+    // Serializing them also keeps the audit sequence assertions deterministic.
+    static POSTGRES_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[derive(QueryableByName)]
     struct EvidenceRow {
@@ -975,6 +980,7 @@ mod tests {
         let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
             return;
         };
+        let _guard = POSTGRES_TEST_MUTEX.lock().unwrap();
         let db = crate::Db::open_postgres(&url).unwrap();
         {
             let mut pg = db.pg().unwrap();
@@ -1000,6 +1006,7 @@ mod tests {
         let Ok(url) = std::env::var("OT_TEST_POSTGRES_URL") else {
             return;
         };
+        let _guard = POSTGRES_TEST_MUTEX.lock().unwrap();
         let mut first = PgControlStore::connect(&url).unwrap();
         assert_eq!(first.schema_version().unwrap(), 1);
         let mut second = PgControlStore::connect(&url).unwrap();
