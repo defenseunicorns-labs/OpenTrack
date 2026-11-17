@@ -1872,11 +1872,11 @@ Redis in the compose file runs the same way: its own user, read-only, no capabil
 
 ### Signed images
 
-Release images (`ghcr.io/kineticlogic-io/opentrack:<version>`) are signed with the project's cosign
+Release images (`ghcr.io/defenseunicorns-labs/opentrack:<version>`) are signed with the project's cosign
 key and carry SLSA provenance and an SBOM. Check one before you run it:
 
 ```sh
-cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/kineticlogic-io/opentrack@<digest>
+cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/defenseunicorns-labs/opentrack@<digest>
 ```
 
 `cosign.pub` is in the repository; the release notes list each image's digest.

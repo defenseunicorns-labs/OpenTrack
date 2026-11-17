@@ -44,7 +44,7 @@ The product documents they build on:
 ## Regenerate for a release
 
 ```sh
-scripts/ato/scan ghcr.io/kineticlogic-io/opentrack:v<version>   # scans/<version>/
+scripts/ato/scan ghcr.io/defenseunicorns-labs/opentrack:v<version>   # scans/<version>/
 scripts/ato/checklist                                      # checklists/ from evaluations/
 scripts/ato/ssp                                            # ssp-narratives.md from ssp/controls.json
 scripts/ato/poam                                           # poam.md, poam.csv from poam.json

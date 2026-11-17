@@ -4,7 +4,7 @@
 # (docs/security/ato/README.md). Writes, per image:
 #   <out>/<version>/trivy.json, grype.json  the scanners' full reports
 #   <out>/<version>/scan.md                 the summary the POA&M cites
-# Usage: scripts/ato/scan ghcr.io/kineticlogic-io/opentrack:v0.4.2 [out-dir]
+# Usage: scripts/ato/scan ghcr.io/defenseunicorns-labs/opentrack:v1.0.0 [out-dir]
 set -euo pipefail
 image="${1:?usage: scripts/ato/scan <image> [out-dir]}"
 out_root="${2:-docs/security/ato/scans}"

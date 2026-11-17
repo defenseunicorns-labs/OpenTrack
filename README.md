@@ -41,10 +41,17 @@ undo it.
 
 ## Quick start
 
+Prebuilt Linux images for AMD64 and ARM64 are published by this repository to
+`ghcr.io/defenseunicorns-labs/opentrack`. Use a digest for reproducible deployment.
+Each pushed branch gets a matching image tag (normalized when needed).
+These branch channels are development builds, not signed versioned
+releases; see [container delivery](docs/container-images.md) for references,
+registry access, and release verification.
+
 With Docker:
 
 ```sh
-git clone https://github.com/kineticlogic-io/OpenTrack.git && cd OpenTrack
+git clone https://github.com/defenseunicorns-labs/OpenTrack.git && cd OpenTrack
 cat > .env <<'EOF'
 OT_ADMIN_EMAIL=you@example.com
 OT_ADMIN_PASSWORD=Choose-A-Long-Passw0rd!
