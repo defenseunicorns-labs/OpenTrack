@@ -25,7 +25,7 @@ use ot_source::transport::{self, SharedStatus};
 use ot_store::RedisStore;
 use serde_json::json;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tracing::Instrument;
 
 use crate::config::Common;
@@ -358,7 +358,10 @@ async fn run_source(
     };
     let link_t = link.clone();
     let tid = id.clone();
-    let supervisor = tokio::spawn(async move {
+    // Dropping a JoinHandle detaches its task. The source is itself aborted on
+    // disable/delete/reconfigure, so its transport must be aborted on drop too.
+    let mut supervisor = JoinSet::new();
+    supervisor.spawn(async move {
         let mut backoff = Duration::from_secs(2);
         loop {
             let started = tokio::time::Instant::now();
@@ -418,7 +421,7 @@ async fn run_source(
             }
         }
     }
-    supervisor.abort();
+    supervisor.shutdown().await;
 }
 
 /// Where a pipeline writes: its Redis stream, and NATS for its topic steps.
@@ -634,13 +637,15 @@ mod tests {
         );
     }
 
-    /// A UDP listener saved before 0.4.5, without the risk acceptance, is
-    /// not started, and its status says why; with the acceptance it runs.
-    #[tokio::test]
-    async fn an_unauthenticated_listener_without_the_acceptance_is_not_started() {
+    async fn source_fixture() -> Option<(
+        tempfile::TempDir,
+        Common,
+        RedisStore,
+        ot_nats::async_nats::Client,
+    )> {
         let Ok(url) = std::env::var("OT_TEST_REDIS_URL") else {
             eprintln!("skipped: OT_TEST_REDIS_URL not set");
-            return;
+            return None;
         };
         let dir = tempfile::tempdir().unwrap();
         let ns = format!(
@@ -683,6 +688,16 @@ mod tests {
             .await
             .unwrap();
         let nats = common.connect_nats().await.unwrap().client().clone();
+        Some((dir, common, redis, nats))
+    }
+
+    /// A UDP listener saved before 0.4.5, without the risk acceptance, is
+    /// not started, and its status says why; with the acceptance it runs.
+    #[tokio::test]
+    async fn an_unauthenticated_listener_without_the_acceptance_is_not_started() {
+        let Some((_dir, common, redis, nats)) = source_fixture().await else {
+            return;
+        };
         let mut spec: serde_json::Value =
             serde_json::from_str(include_str!("../../../docs/examples/gps-udp.json")).unwrap();
         spec["transport"]["bind"] = json!("127.0.0.1:0");
@@ -747,5 +762,122 @@ mod tests {
         for (_, r) in running {
             r.handle.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn source_lifecycle_releases_tcp_listeners() {
+        let Some((_dir, common, redis, nats)) = source_fixture().await else {
+            return;
+        };
+        let registry = Arc::new(Registry::default());
+        let mut running = BTreeMap::new();
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../../../docs/examples/gps-udp.json")).unwrap();
+        let version = spec["pipeline"]["mapping"]["schema_version"]
+            .as_u64()
+            .unwrap_or(1) as u32;
+        let schemas = [(
+            version,
+            ExtensionSchema {
+                version,
+                fields: Vec::new(),
+            },
+        )]
+        .into();
+        let address = || {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+        };
+        let row = |spec: serde_json::Value, revision, enabled| ot_store::SourceRow {
+            id: "gps".into(),
+            name: "GPS".into(),
+            transport: "tcp_server".into(),
+            codec: "json".into(),
+            enabled,
+            priority: 100,
+            revision,
+            spec,
+            raw_subject: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+            problems: json!([]),
+            draft: false,
+        };
+        async fn listening(addr: std::net::SocketAddr) {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if tokio::net::TcpStream::connect(addr).await.is_ok() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("source did not start listening");
+        }
+        async fn released(addr: std::net::SocketAddr, transition: &str) {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
+                        return listener;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("listener survived source {transition}"));
+        }
+
+        for transition in ["disable", "delete", "reconfigure"] {
+            let old = address();
+            spec["transport"] = json!({"type": "tcp_server", "bind": old.to_string()});
+            let refused = reconcile(
+                &common,
+                &mut running,
+                vec![row(spec.clone(), 1, true)],
+                &schemas,
+                &redis,
+                &nats,
+                &registry,
+            );
+            assert!(refused.is_empty());
+            listening(old).await;
+            let replacement = address();
+            let next = match transition {
+                "disable" => vec![row(spec.clone(), 1, false)],
+                "delete" => Vec::new(),
+                _ => {
+                    spec["transport"]["bind"] = json!(replacement.to_string());
+                    vec![row(spec.clone(), 2, true)]
+                }
+            };
+            reconcile(
+                &common,
+                &mut running,
+                next,
+                &schemas,
+                &redis,
+                &nats,
+                &registry,
+            );
+            released(old, transition).await;
+            if transition == "reconfigure" {
+                listening(replacement).await;
+                reconcile(
+                    &common,
+                    &mut running,
+                    Vec::new(),
+                    &schemas,
+                    &redis,
+                    &nats,
+                    &registry,
+                );
+                released(replacement, "delete after reconfigure").await;
+            }
+            assert!(running.is_empty());
+        }
+        redis.purge_namespace().await.unwrap();
     }
 }

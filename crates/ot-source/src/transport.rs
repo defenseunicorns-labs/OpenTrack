@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio_tungstenite::Connector;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -907,11 +908,17 @@ pub async fn run(
                 .await
                 .with_context(|| format!("binding {bind}"))?;
             connected(&status);
+            // Accepted connections must not outlive the listener (including
+            // idle reads or TLS handshakes when a source/probe is cancelled).
+            let mut clients = JoinSet::new();
             loop {
-                let (stream, peer) = listener.accept().await?;
+                let (stream, peer) = tokio::select! {
+                    accepted = listener.accept() => accepted?,
+                    _ = clients.join_next(), if !clients.is_empty() => continue,
+                };
                 let (tx, status, framing) = (tx.clone(), status.clone(), framing.clone());
                 let acceptor = acceptor.clone();
-                tokio::spawn(async move {
+                clients.spawn(async move {
                     let origin = peer.to_string();
                     let ended = match acceptor {
                         Some(acceptor) => match tls_accept(&acceptor, stream, peer).await {
@@ -1588,6 +1595,52 @@ mod tests {
         assert_eq!(&a.bytes[..], b"<event uid=\"a\"></event>");
         assert_eq!(&b.bytes[..], b"<event uid=\"b\"></event>");
         task.abort();
+    }
+
+    #[tokio::test]
+    async fn cancelling_tcp_server_closes_idle_clients() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let config = TransportConfig::TcpServer {
+            bind: addr.to_string(),
+            framing: lines(),
+            tls: None,
+        };
+        let (tx, mut rx) = mpsc::channel(8);
+        let task =
+            tokio::spawn(async move { run(&config, None, tx, SharedStatus::default()).await });
+        let mut client = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(client) = tokio::net::TcpStream::connect(addr).await {
+                    break client;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("TCP server did not start");
+        // Prove accept/read happened before cancellation, then leave the peer
+        // idle: shutting down must not depend on it sending another frame.
+        client.write_all(b"hello\n").await.unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&frame.bytes[..], b"hello");
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let mut byte = [0];
+        let read = tokio::time::timeout(Duration::from_secs(2), client.read(&mut byte))
+            .await
+            .expect("idle TCP client survived server cancellation");
+        assert_eq!(read.unwrap(), 0);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .expect("TCP client still holds the frame sender")
+                .is_none()
+        );
     }
 
     #[tokio::test]
