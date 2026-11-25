@@ -197,6 +197,7 @@ export function EntityEditor({
   onClose,
   onSaved,
   pinTrack,
+  inline = false,
 }: {
   entityId: string | null
   seed?: Partial<Entity>
@@ -204,6 +205,7 @@ export function EntityEditor({
    *  applies to that track, through merges, whatever its feeds' reports grade as. */
   pinTrack?: string
   open: boolean
+  inline?: boolean
   onClose: () => void
   onSaved: (entityId: string | null) => void
 }) {
@@ -246,9 +248,10 @@ export function EntityEditor({
   const unpinned = !!pinTrack && draft !== null && !pinned(draft)
   const dirty = draft !== null && (baseline === null || JSON.stringify(draft) !== baseline || unpinned)
 
+  const drawer = { open, onClose, inline, cancel: inline, label: 'Entity editor', storageKey: 'ot.entityDetail.width' }
   if (!draft) {
     return (
-      <DetailDrawer open={open} onClose={onClose} label="Entity editor" storageKey="ot.entityDetail.width" title={entityId ?? 'Entity'}>
+      <DetailDrawer {...drawer} title={inline ? 'Edit track' : (entityId ?? 'Entity')}>
         <div className="panel-body">{error ? <div className="error-text">{error}</div> : <span className="muted">LOADING…</span>}</div>
       </DetailDrawer>
     )
@@ -308,13 +311,27 @@ export function EntityEditor({
     { key: 'what', header: 'Changed', render: (r) => changes(r, revisions[revisions.indexOf(r) + 1]) },
   ]
 
+  const publishTip = (
+    <InfoTip label="Publish">
+      Automatic: the usual rules (confirmed, and reported by a source that may stand alone). Always: published at once, confirmed or
+      not, whatever reports for them and whatever the output filter says. Never: kept inside OpenTrack, and withdrawn downstream if
+      already published.
+    </InfoTip>
+  )
+  const publishField = (
+    <FieldSelect
+      ariaLabel="Publish"
+      fields={[{ name: 'automatic' }, { name: 'always' }, { name: 'never' }]}
+      value={draft.publish}
+      onChange={(v) => set({ publish: v === 'always' || v === 'never' ? v : 'automatic' })}
+      style={{ width: inline ? '100%' : 118 }}
+    />
+  )
+
   return (
     <DetailDrawer
-      open={open}
-      onClose={onClose}
-      label="Entity editor"
-      storageKey="ot.entityDetail.width"
-      title={draft.minimum.name || view?.entity.id || 'New entity'}
+      {...drawer}
+      title={inline ? 'Edit track' : (draft.minimum.name || view?.entity.id || 'New entity')}
       status={
         <Badge color={draft.status === 'active' ? (entityId ? 'grey' : 'blue') : 'warning'} size="sm" uppercase>
           {entityId ? draft.status : 'new'}
@@ -322,21 +339,13 @@ export function EntityEditor({
       }
       actions={
         <>
-          <span className="publish-pick">
-            <InfoTip label="Publish">
-              Automatic: the usual rules (confirmed, and reported by a source that may stand alone). Always: published at once, confirmed or
-              not, whatever reports for them and whatever the output filter says. Never: kept inside OpenTrack, and withdrawn downstream if
-              already published.
-            </InfoTip>
-            <FieldSelect
-              ariaLabel="Publish"
-              fields={[{ name: 'automatic' }, { name: 'always' }, { name: 'never' }]}
-              value={draft.publish}
-              onChange={(v) => set({ publish: v === 'always' || v === 'never' ? v : 'automatic' })}
-              style={{ width: 118 }}
-            />
-          </span>
+          {!inline && <span className="publish-pick">{publishTip}{publishField}</span>}
           {entityId && canManage && <Button size="sm" variant="ghost" icon={<TbTrash />} aria-label="Delete entity" title="Delete entity" onClick={remove} />}
+          {canManage && unpinned && (
+            <InfoTip label="Track pinning">
+              Saving links this entity to <span className="mono">{pinTrack}</span>. The link stays with the track through merges and changes in reporting sources.
+            </InfoTip>
+          )}
           {canManage && <SaveButton size="sm" dirty={dirty} saving={saving} saved={saved} onSave={save} />}
         </>
       }
@@ -401,6 +410,12 @@ export function EntityEditor({
               style={{ width: '100%' }}
             />
           </div>
+          {inline && (
+            <div className="entity-form-row">
+              <span className="entity-form-label">Publish {publishTip}</span>
+              {publishField}
+            </div>
+          )}
         </div>
 
         <div className="entity-section-head">
@@ -429,12 +444,6 @@ export function EntityEditor({
             <IdentifierRow key={n} i={i} n={n} onChange={setIdent} onRemove={() => set({ identifiers: draft.identifiers.filter((_, j) => j !== n) })} />
           ))}
           {draft.identifiers.length === 0 && !unpinned && <span className="muted kv-empty">No identifiers: tracks cannot find this entity.</span>}
-          {unpinned && (
-            <span className="muted">
-              Saving pins this entity to track <span className="mono">{pinTrack}</span> (identifier <span className="mono">track</span>): it then
-              applies to that track whatever reports for it, through merges.
-            </span>
-          )}
         </div>
 
         <div className="entity-section-head">

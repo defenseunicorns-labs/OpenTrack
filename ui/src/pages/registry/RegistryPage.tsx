@@ -6,7 +6,6 @@ import { errorMessage, fmtTime, show } from '../../lib/format'
 import { InfoTip } from '../../components/InfoTip'
 import { EntityEditor } from './EntityEditor'
 import { useCan } from '../../auth/context'
-import { FILL_PANEL, usePanelOpen } from '../../lib/panelOpen'
 
 const PAGE = 200
 
@@ -60,7 +59,6 @@ export default function RegistryPage() {
   const [plan, setPlan] = useState<{ file: File; result: SheetImport } | null>(null)
   const [busy, setBusy] = useState(false)
   const picker = useRef<HTMLInputElement>(null)
-  const [listOpen, setListOpen] = usePanelOpen('ot.panel.registry')
 
   const load = useCallback(() => {
     api.registryEntities(query.trim(), PAGE).then(
@@ -109,80 +107,73 @@ export default function RegistryPage() {
   const planRows = plan?.result.rows.filter((r) => r.action !== 'unchanged') ?? []
   return (
     <div className="stack fill-page">
-      <CollapsiblePanel
-        title="Registry"
-        badge={rows ? (query.trim() ? `${rows.length.toLocaleString()} of ${total.toLocaleString()}` : total.toLocaleString()) : undefined}
-        open={listOpen}
-        onOpenChange={setListOpen}
-        style={listOpen ? FILL_PANEL : undefined}
-        titleActions={
-          <div className="title-tools">
-            <div className="search">
-              <TbSearch aria-hidden />
-              <Input
-                aria-label="Search the registry"
-                placeholder="Name or identifier"
-                style={{ paddingLeft: 26 }}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </div>
-            <InfoTip label="Registry">
-              One row per real-world entity; click a row to edit it. Search matches part of a name or identifier value, or an exact entity id.
-              Status: active entities are what tracks resolve to; retired ones are kept on record but no track resolves to them.
-            </InfoTip>
-          </div>
-        }
-        actions={
-          <>
-            <Button size="sm" icon={<TbPlus />} disabled={!canManage} onClick={() => setEditing('new')}>
-              New entity
-            </Button>
-            <Button size="sm" variant="ghost" icon={<TbDownload />} onClick={() => window.open(api.registryExportUrl('xlsx'), '_self')}>
-              Export XLSX
-            </Button>
-            <Button size="sm" variant="ghost" icon={<TbDownload />} onClick={() => window.open(api.registryExportUrl('csv'), '_self')}>
-              Export CSV
-            </Button>
-            <Button size="sm" variant="ghost" icon={<TbUpload />} disabled={!canManage || busy} onClick={() => picker.current?.click()}>
-              Import sheet
-            </Button>
-            <InfoTip label="Registry sheets">
-              One row per entity: <span className="mono">entity_id</span>, <span className="mono">name</span>, <span className="mono">status</span>, the
-              minimum (<span className="mono">class_name</span>, <span className="mono">domain</span>, <span className="mono">affiliation</span>,{' '}
-              <span className="mono">track_type</span>, <span className="mono">cot_type</span>, <span className="mono">sidc</span>),{' '}
-              <span className="mono">id:&lt;scheme&gt;</span> (several separated by ;) and <span className="mono">attr:&lt;key&gt;:&lt;type&gt;</span>.
-              Export a sheet to start from. Blank cells leave values as they are; an identifier is never taken from another entity.
-            </InfoTip>
-            <input
-              ref={picker}
-              type="file"
-              accept=".xlsx,.csv"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                e.target.value = ''
-                if (f) preview(f)
-              }}
+      <div className="panel-fill registry-list">
+        <div className="toolbar">
+          <div className="search">
+            <TbSearch aria-hidden />
+            <Input
+              aria-label="Search the registry"
+              placeholder="Name or identifier"
+              style={{ paddingLeft: 26 }}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
             />
-          </>
-        }
-      >
-        <div className="panel-body fill">
-          <DataTable
-            aria-label="Registry entities"
-            columns={COLUMNS}
-            rows={rows ?? []}
-            rowKey={(e) => e.id}
-            onRowClick={(e) => setEditing(e.id)}
-            empty={rows ? 'No entity matches.' : 'Loading…'}
-            maxHeight="none"
+          </div>
+          <InfoTip label="Registry">
+            One row per real-world entity; click a row to edit it. Search matches part of a name or identifier value, or an exact entity id.
+            Status: active entities are what tracks resolve to; retired ones are kept on record but no track resolves to them.
+          </InfoTip>
+          {rows && (
+            <Badge size="sm" color="grey">
+              {query.trim() ? `${rows.length.toLocaleString()} of ${total.toLocaleString()}` : total.toLocaleString()}
+            </Badge>
+          )}
+          <span className="spacer" />
+          <Button size="sm" icon={<TbPlus />} disabled={!canManage} onClick={() => setEditing('new')}>
+            New entity
+          </Button>
+          <Button size="sm" variant="ghost" icon={<TbDownload />} onClick={() => window.open(api.registryExportUrl('xlsx'), '_self')}>
+            Export XLSX
+          </Button>
+          <Button size="sm" variant="ghost" icon={<TbDownload />} onClick={() => window.open(api.registryExportUrl('csv'), '_self')}>
+            Export CSV
+          </Button>
+          <Button size="sm" variant="ghost" icon={<TbUpload />} disabled={!canManage || busy} onClick={() => picker.current?.click()}>
+            Import sheet
+          </Button>
+          <InfoTip label="Registry sheets">
+            One row per entity: <span className="mono">entity_id</span>, <span className="mono">name</span>, <span className="mono">status</span>, the
+            minimum (<span className="mono">class_name</span>, <span className="mono">domain</span>, <span className="mono">affiliation</span>,{' '}
+            <span className="mono">track_type</span>, <span className="mono">cot_type</span>, <span className="mono">sidc</span>),{' '}
+            <span className="mono">id:&lt;scheme&gt;</span> (several separated by ;) and <span className="mono">attr:&lt;key&gt;:&lt;type&gt;</span>.
+            Export a sheet to start from. Blank cells leave values as they are; an identifier is never taken from another entity.
+          </InfoTip>
+          <input
+            ref={picker}
+            type="file"
+            accept=".xlsx,.csv"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (f) preview(f)
+            }}
           />
-          {rows && total > rows.length && <span className="muted">Showing the first {rows.length.toLocaleString()}; search to narrow.</span>}
         </div>
-      </CollapsiblePanel>
+        <DataTable
+          aria-label="Registry entities"
+          columns={COLUMNS}
+          rows={rows ?? []}
+          rowKey={(e) => e.id}
+          onRowClick={(e) => setEditing(e.id)}
+          empty={rows ? 'No entity matches.' : 'Loading…'}
+          maxHeight="none"
+          style={{ border: 0, borderRadius: 0 }}
+        />
+        {rows && total > rows.length && <span className="muted">Showing the first {rows.length.toLocaleString()}; search to narrow.</span>}
+      </div>
 
       {plan && (
         <CollapsiblePanel

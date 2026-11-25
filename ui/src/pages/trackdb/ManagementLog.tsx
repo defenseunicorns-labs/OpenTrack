@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useState } from 'react'
 import { TbArrowBackUp, TbRefresh } from 'react-icons/tb'
-import { Badge, Button, CollapsiblePanel, DataTable, type DataTableColumn } from '@kineticlogic/staresdk'
+import { Badge, Button, DataTable, Tray, type DataTableColumn } from '@kineticlogic/staresdk'
 import { api, UNDOABLE_OPS, type DecisionRow } from '../../api/client'
 import { useCan } from '../../auth/context'
 import { InfoTip } from '../../components/InfoTip'
 import { fmtTime } from '../../lib/format'
+import { FILL_TABLE, useFillHeight } from '../../lib/fillHeight'
 import { evidenceTracks, opLabel, undoable, useUndo } from './undo'
 
 const OPS = [...UNDOABLE_OPS, 'undo', 'delete_history_point']
 const REFRESH_MS = 15_000
 
 /** Recent track management decisions, newest first, with Undo. */
-export function ManagementLog({ rev, onChanged }: { rev: number; onChanged: () => void }) {
+export function ManagementLog({ rev, onChanged, onClose }: { rev: number; onChanged: () => void; onClose: () => void }) {
   const canManage = useCan('track_manager')
   const undo = useUndo()
   const [rows, setRows] = useState<DecisionRow[] | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [site, setSite] = useState<string | null>(null)
+  const [tableFill, tableHeight] = useFillHeight()
   useEffect(() => {
     api.status().then((s) => setSite(s.site), () => {})
   }, [])
@@ -88,7 +90,7 @@ export function ManagementLog({ rev, onChanged }: { rev: number; onChanged: () =
         )
       },
     },
-    { key: 'reason', header: 'Reason', render: (d) => <span title={d.reason ?? ''}>{d.reason ?? '—'}</span> },
+    { key: 'reason', header: 'Reason', width: 240, render: (d) => <span title={d.reason ?? ''}>{d.reason ?? '—'}</span> },
     {
       key: 'status',
       header: 'Status',
@@ -117,33 +119,42 @@ export function ManagementLog({ rev, onChanged }: { rev: number; onChanged: () =
   ]
 
   return (
-    <CollapsiblePanel
+    <Tray
       title="Track management log"
-      persistKey="ot.panel.trackmanagementlog"
-      titleActions={
-        <InfoTip label="Track management log">
-          Pairings, merges, splits, do-not-pair rules, deletes and group changes, newest first. Undo reverses one as a new decision. It is refused when someone has changed
-          those tracks since: undo that decision first. The engine&apos;s own decisions are not undone here.
-          <br />
-          <br />
-          By: who decided; a node badge means it was decided on that other OpenTrack node and shared here. Decision: red for deletes and
-          dissolved groups, amber for undos. Status: undone by #N names the decision that reversed this one; undoes #N, the one this
-          reversed.
-        </InfoTip>
+      aria-label="Track management log"
+      open
+      onOpenChange={onClose}
+      height={248}
+      minHeight={156}
+      maxHeight={480}
+      storageKey="ot.tracks.log.height"
+      actions={
+        <>
+          <InfoTip label="Track management log">
+            Pairings, merges, splits, do-not-pair rules, deletes and group changes, newest first. Undo reverses one as a new decision. It is refused when someone has changed
+            those tracks since: undo that decision first. The engine&apos;s own decisions are not undone here.
+            <br />
+            <br />
+            By: who decided; a node badge means it was decided on that other OpenTrack node and shared here. Decision: red for deletes and
+            dissolved groups, amber for undos. Status: undone by #N names the decision that reversed this one; undoes #N, the one this
+            reversed.
+          </InfoTip>
+          <Button size="xs" variant="ghost" icon={<TbRefresh />} aria-label="Refresh the log" title="Refresh" onClick={load} />
+        </>
       }
-      actions={<Button size="xs" variant="ghost" icon={<TbRefresh />} aria-label="Refresh the log" title="Refresh" onClick={load} />}
     >
-      <div className="panel-body">
+      <div className="panel-fill track-tray-body" ref={tableFill}>
         <DataTable
           aria-label="Track management decisions"
           columns={columns}
           rows={rows ?? []}
           rowKey={(d) => String(d.id)}
-          maxHeight={360}
+          maxHeight={tableHeight ?? 'none'}
+          style={FILL_TABLE}
           defaultSort={{ key: 'id', direction: 'desc' }}
           empty={rows === null ? 'LOADING…' : 'No track management decisions yet.'}
         />
       </div>
-    </CollapsiblePanel>
+    </Tray>
   )
 }

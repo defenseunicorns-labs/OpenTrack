@@ -33,11 +33,13 @@ export function GroupEditor({
   open,
   onClose,
   onSaved,
+  inline = false,
 }: {
   groupId: string | null
   members: string[]
   rows: TrackRow[]
   open: boolean
+  inline?: boolean
   onClose: () => void
   onSaved: (groupId: string | null) => void
 }) {
@@ -101,9 +103,10 @@ export function GroupEditor({
   const current = spec ? JSON.stringify([{ ...spec, sidc }, members]) : null
   const dirty = !!spec && (baseline === null || current !== baseline)
 
+  const drawer = { open, onClose, inline, cancel: inline, label: 'Group editor', storageKey: 'ot.groupDetail.width' }
   if (!spec) {
     return (
-      <DetailDrawer open={open} onClose={onClose} label="Group editor" storageKey="ot.groupDetail.width" title={groupId ?? 'Group'}>
+      <DetailDrawer {...drawer} title={inline ? 'Edit group' : (groupId ?? 'Group')}>
         <div className="panel-body">{error ? <div className="error-text">{error}</div> : <span className="muted">LOADING…</span>}</div>
       </DetailDrawer>
     )
@@ -169,11 +172,8 @@ export function GroupEditor({
 
   return (
     <DetailDrawer
-      open={open}
-      onClose={onClose}
-      label="Group editor"
-      storageKey="ot.groupDetail.width"
-      title={spec.name || (groupId ?? 'New group')}
+      {...drawer}
+      title={inline ? 'Edit group' : (spec.name || groupId || 'New group')}
       status={
         <Badge color={groupId ? 'grey' : 'blue'} size="sm" uppercase>
           {groupId ? 'group' : 'new group'}
