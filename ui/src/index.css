@@ -28,6 +28,11 @@ body {
   margin-right: var(--assistant-width, 0px);
 }
 
+.content--tracks {
+  padding: 0;
+  overflow: hidden;
+}
+
 .panels {
   display: flex;
   flex-direction: column;
@@ -110,6 +115,33 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+.drawer-inline {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 4;
+  max-width: 100%;
+  background: var(--color-bg-secondary);
+  border-left: 1px solid var(--color-glass-border);
+  box-shadow: var(--shadow-deep);
+  transition: transform 0.25s ease;
+}
+
+.drawer-inline[aria-hidden='true'] {
+  transform: translateX(100%);
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.drawer-inline .drawer-body {
+  overscroll-behavior: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-inline {
+    transition: none;
+  }
 }
 
 /* Two columns that wrap when the space (page or drawer) is narrow. */
@@ -321,17 +353,8 @@ body {
   min-width: 0;
 }
 
-/* The workspace row (stareSDK DESIGN-CONTRACT §2): context on the left, the selected item on
-   the right, wrapping to one column when narrow. */
-.workspace {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
-  gap: var(--space-md);
-  align-items: start;
-}
-
-/* A page whose panels take the height left over (Registry, Correlation, Sources, Track
-   Database): an open panel with FILL_PANEL grows, and its body (.panel-body.fill, or .panel-fill
+/* A page whose panels take the height left over (Registry, Correlation, Sources):
+   an open panel with FILL_PANEL grows, and its body (.panel-body.fill, or .panel-fill
    without padding) gives the space to its table, which scrolls. A short window scrolls the page
    instead of squeezing the table below its minimum. */
 .fill-page {
@@ -363,42 +386,63 @@ body {
   flex-shrink: 0;
 }
 
-/* Panels after a filled page's first screen (Track Database's log), a scroll below it. */
-.after-fill {
-  margin-top: var(--space-sm);
-}
-
 /* A denser page (Track Database, on operator direction): panels 8px apart instead of 16. */
-.panels.tight,
-.panels.tight .workspace {
+.panels.tight {
   gap: var(--space-sm);
 }
 
-/* Fixed-height panel bodies in the workspace row, so both sides line up. */
-.workspace-body {
-  height: 440px;
-  min-height: 0;
-  overflow-y: auto;
+.track-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
 }
 
-/* A filling workspace row (Track Database): both panels stretch to the row, which takes its
-   share of the page; their bodies take the panel's height but never less than a usable map. */
-.workspace.fill {
-  align-items: stretch;
-}
-
-.workspace.fill .workspace-body {
+.track-workspace-map {
+  position: relative;
   flex: 1 1 0;
-  height: auto;
-  min-height: 320px;
+  min-height: 0;
+  display: grid;
+  grid-template: minmax(0, 1fr) auto / minmax(0, 1fr);
+  container-type: size;
+  overflow: hidden;
+  isolation: isolate;
 }
 
-.workspace-body.map {
-  overflow: hidden;
-  padding: 0;
+.track-workspace-map > .track-map {
+  position: absolute;
+  inset: 0;
+}
+
+.track-workspace-map > .drawer-inline {
+  grid-area: 1 / 1 / 2 / 2;
+  max-width: calc(100% - 56px);
+}
+
+.track-tray {
+  grid-area: 2 / 1;
+  z-index: 5;
+}
+
+.track-tray > .ui-tray {
+  max-height: 60cqh;
+}
+
+.track-tray > .ui-tray > [role='separator'] {
+  flex-shrink: 0;
+}
+
+.track-tray-body {
+  height: 100%;
+}
+
+.track-search-filters {
+  padding: 0 var(--space-md);
 }
 
 .track-map {
+  --track-palette-columns: 1;
+  --track-palette-offset: 48px;
   position: relative;
   width: 100%;
   min-height: 0;
@@ -408,26 +452,28 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  border: 1px solid var(--color-glass-border);
-  border-radius: var(--radius-md);
 }
 
 .track-map__controls {
   position: absolute;
-  z-index: 2;
+  z-index: 6;
   top: var(--space-sm);
-  right: var(--space-sm);
+  left: var(--space-sm);
+  max-height: calc(100% - 2 * var(--space-sm));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
 }
 
 /* The display options panel over the map: stareSDK controls in label/control rows. */
 .track-map__menu {
   position: absolute;
-  z-index: 3;
+  z-index: 7;
   top: var(--space-sm);
   /* Beside the palette (an xs button, 28px, plus the palette's padding). */
-  right: calc(var(--space-sm) + 48px);
+  left: calc(var(--space-sm) + var(--track-palette-offset));
   display: flex;
-  width: min(260px, calc(100% - 16px));
+  width: min(260px, calc(100% - var(--track-palette-offset) - 2 * var(--space-sm)));
   /* Within the map: past its height, the options scroll (and the wheel stays off the map). */
   max-height: calc(100% - 2 * var(--space-sm));
   overflow-y: auto;
@@ -444,6 +490,17 @@ body {
 /* Rows keep their height; the menu scrolls instead. */
 .track-map__menu > * {
   flex-shrink: 0;
+}
+
+@container (max-height: 660px) {
+  .track-map {
+    --track-palette-columns: 2;
+    --track-palette-offset: 80px;
+  }
+
+  .track-workspace-map > .drawer-inline {
+    max-width: calc(100% - 88px);
+  }
 }
 
 .track-map__menu .subhead {
@@ -673,28 +730,160 @@ body {
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* Correlation: suggestions beside the settings, one column when narrow. */
-.correlation-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
+.correlation-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
   gap: var(--space-sm);
-  /* Suggestions stretch to the settings beside them (a closed panel keeps its title's height). */
-  align-items: stretch;
 }
 
-.correlation-top .panel-body.fill {
+.correlation-view {
+  position: relative;
+  flex: 1;
+  min-height: 460px;
+  min-width: 0;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.correlation-toolbar {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.correlation-view .correlation-toolbar,
+.correlation-view > .error-text {
+  padding: var(--space-sm) 0;
+}
+
+.correlation-view > .ui-data-table,
+.registry-list > .ui-data-table {
+  --color-bg-secondary: var(--color-bg-primary);
+}
+
+.registry-list {
   min-height: 280px;
+  gap: var(--space-sm);
 }
 
-@media (max-width: 1100px) {
-  .correlation-top {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.correlation-tracks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: var(--space-sm);
 }
 
-.correlation-settings {
-  max-height: 560px;
-  overflow-y: auto;
+.correlation-track {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+
+.correlation-sources {
+  margin: 0;
+  padding-left: var(--space-md);
+}
+
+.correlation-outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.correlation-outcomes > div {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.correlation-evidence {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-xs);
+}
+
+.correlation-decision {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.correlation-workspace .num-row {
+  flex-wrap: wrap;
+}
+
+.correlation-input-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.correlation-input-unit > .muted {
+  white-space: nowrap;
+}
+
+.correlation-number-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+}
+
+.correlation-number-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.correlation-settings-section {
+  display: grid;
+  gap: var(--space-xs);
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm) var(--space-sm);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-sm);
+}
+
+.correlation-settings-section legend {
+  padding-inline: var(--space-xs);
+  font-weight: 600;
+}
+
+.correlation-tuning-highlight {
+  outline: 1px solid var(--color-accent);
+  outline-offset: var(--space-xs);
+  border-radius: var(--radius-sm);
+  scroll-margin-block: var(--space-sm);
+}
+
+.correlation-case {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.correlation-case-values {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.correlation-case-values :is(th, td) {
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--color-glass-border);
+  text-align: right;
+}
+
+.correlation-case-values th:first-child {
+  text-align: left;
+}
+
+.correlation-case-values th[scope="row"] {
+  font-weight: 400;
 }
 
 /* A decision's evidence, as stored. */
