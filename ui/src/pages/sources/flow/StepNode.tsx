@@ -1,5 +1,5 @@
-import { useState, type DragEvent, type ReactNode } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react'
 import { Button, RECORD_FIELD_MIME } from '@kineticlogic/staresdk'
 import { gives, KIND_WORD, takes, type StepType } from './sourceFlow'
 
@@ -18,6 +18,9 @@ export interface StepView extends Record<string, unknown> {
   action?: { label: string; icon?: ReactNode; busy?: boolean; onClick: () => void }
   /** A Map takes a field dragged from the samples table: map it. */
   onFieldDrop?: (path: string) => void
+  editing: boolean
+  onEdit: () => void
+  onMenu: (x: number, y: number) => void
 }
 
 /**
@@ -25,8 +28,33 @@ export interface StepView extends Record<string, unknown> {
  * connection in unless it is the input and out unless it is an output, and the first thing that
  * stops it running in red (its settings list them all).
  */
-export function StepNode({ data, selected, isConnectable }: NodeProps) {
+export function StepNode({ id, data, selected, isConnectable }: NodeProps) {
   const step = data as StepView
+  const card = useRef<HTMLDivElement>(null)
+  const { getNode, setViewport } = useReactFlow()
+  useEffect(() => {
+    if (!step.editing) return
+    const frame = requestAnimationFrame(() => {
+      const element = card.current
+      const node = getNode(id)
+      const canvas = element?.closest('.react-flow')?.getBoundingClientRect()
+      const workspace = element?.closest('.source-workspace')
+      const inspector = workspace?.querySelector('.source-inspector')?.getBoundingClientRect()
+      const samplesHeight = workspace?.querySelector<HTMLElement>('.source-samples')?.offsetHeight ?? 0
+      if (!element || !node || !canvas || !inspector) return
+      const inspectorBelow = inspector.width > canvas.width * 0.7
+      const width = inspectorBelow ? canvas.width : inspector.left - canvas.left
+      const height = Math.min(canvas.height - samplesHeight, inspectorBelow ? inspector.top - canvas.top : canvas.height)
+      if (width <= 0 || height <= 0) return
+      const zoom = Math.max(0.2, Math.min(1.35, width / (element.offsetWidth + 48), height / (element.offsetHeight + 48)))
+      void setViewport({
+        x: width / 2 - (node.position.x + element.offsetWidth / 2) * zoom,
+        y: height / 2 - (node.position.y + element.offsetHeight / 2) * zoom,
+        zoom,
+      }, { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220 })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [step.editing, id, getNode, setViewport])
   const failing = step.problems.length > 0
   // A step that takes samples and passes none on is worth a look (a Filter that drops everything).
   const stops = !!step.counts && step.counts.in > 0 && step.counts.out === 0
@@ -46,11 +74,22 @@ export function StepNode({ data, selected, isConnectable }: NodeProps) {
             : 'var(--border-strong)'
   return (
     <div
+      ref={card}
       className="flow-step"
       data-failing={failing || undefined}
       data-trail={mark?.state ?? (step.trail === 'absent' ? 'absent' : undefined)}
       data-drop={over || undefined}
       style={{ border: `1px solid ${over ? 'var(--color-accent)' : border}` }}
+      onDoubleClick={(event) => {
+        if ((event.target as Element).closest('.nodrag, .react-flow__handle')) return
+        event.stopPropagation()
+        step.onEdit()
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        step.onMenu(event.clientX, event.clientY)
+      }}
       onDragOver={(e) => {
         if (!takesField(e)) return
         e.preventDefault()

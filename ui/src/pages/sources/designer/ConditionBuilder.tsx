@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { TbBraces, TbListDetails, TbPlus, TbX } from 'react-icons/tb'
 import { Button, Input, Select } from '@kineticlogic/staresdk'
 import { describeCondition } from '../../../lib/pipeline'
@@ -36,6 +36,7 @@ export function ConditionBuilder({
   onChange,
   fields,
   verb,
+  showSummary = true,
 }: {
   label: string
   value: unknown
@@ -43,7 +44,9 @@ export function ConditionBuilder({
   fields: SampleField[]
   /** How the summary reads: "keep" or "drop". */
   verb: string
+  showSummary?: boolean
 }) {
+  const suggestionId = useId()
   const kinds = useMemo(() => Object.fromEntries(fields.map((f) => [f.path, f.kind])), [fields])
   const [built, setBuilt] = useState<Built | null>(() => toBuilt(value))
   const [json, setJson] = useState(() => toBuilt(value) === null)
@@ -83,7 +86,7 @@ export function ConditionBuilder({
   if (json || built === null) {
     return (
       <div className="stack" style={{ gap: 4 }}>
-        <JsonField label={label} optional value={value} onChange={onChange} describe={(v) => `${verb} when ${describeCondition(v)}`} />
+        <JsonField label={label} optional value={value} onChange={onChange} describe={showSummary ? (v) => `${verb} when ${describeCondition(v)}` : undefined} />
         <div className="toolbar">{toggle}</div>
       </div>
     )
@@ -100,6 +103,8 @@ export function ConditionBuilder({
       {built.rules.map((r, i) => {
         const free = typing.has(i) || (r.path !== '' && !known.has(r.path))
         const need = takes(r.op)
+        const suggestions = need === 'one' || need === 'number' ? fields.find((f) => f.path === r.path)?.values : undefined
+        const list = suggestions?.length ? `${suggestionId}-${i}` : undefined
         return (
           <div className="condition-row" key={i}>
             {free ? (
@@ -132,11 +137,13 @@ export function ConditionBuilder({
                 placeholder={PLACEHOLDER[need]}
                 inputMode={need === 'number' ? 'decimal' : undefined}
                 value={r.value}
+                list={list}
                 onChange={(e) => setRule(i, { value: e.target.value })}
                 autoComplete="off"
                 spellCheck={false}
               />
             )}
+            {list && <datalist id={list}>{suggestions?.map((value) => <option key={value} value={value} />)}</datalist>}
             <Button
               size="xs"
               variant="ghost"
@@ -156,7 +163,7 @@ export function ConditionBuilder({
         </Button>
         {toggle}
       </div>
-      <span className="muted">{summary}</span>
+      {showSummary && <span className="muted">{summary}</span>}
     </div>
   )
 }

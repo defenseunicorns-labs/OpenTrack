@@ -152,10 +152,11 @@ export interface SampleField {
   path: string
   kind: string
   example: unknown
+  values?: string[]
 }
 
 /** Every leaf field in `objects` (objects nested by dots; arrays are leaves), first example kept. */
-export function sampleFields(objects: unknown[]): SampleField[] {
+export function sampleFields(objects: unknown[], suggestValues = false): SampleField[] {
   const seen = new Map<string, SampleField>()
   const walk = (v: unknown, path: string, depth: number) => {
     if (isObj(v) && depth < 8) {
@@ -164,8 +165,19 @@ export function sampleFields(objects: unknown[]): SampleField[] {
     }
     if (!path) return
     const known = seen.get(path)
-    if (known && known.example !== null) return
-    seen.set(path, { path, kind: v === null ? (known?.kind ?? 'null') : Array.isArray(v) ? 'array' : typeof v, example: v })
+    if (!known || known.example === null) {
+      seen.set(path, {
+        path,
+        kind: v === null ? (known?.kind ?? 'null') : Array.isArray(v) ? 'array' : typeof v,
+        example: v,
+        ...(suggestValues ? { values: known?.values ?? [] } : {}),
+      })
+    }
+    const values = seen.get(path)?.values
+    if (values && values.length < 12 && ['string', 'number', 'boolean'].includes(typeof v)) {
+      const text = String(v)
+      if (text.length <= 120 && !values.includes(text)) values.push(text)
+    }
   }
   for (const o of objects) walk(o, '', 0)
   return [...seen.values()].sort((a, b) => a.path.localeCompare(b.path))

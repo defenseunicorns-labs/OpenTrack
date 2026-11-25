@@ -49,6 +49,7 @@ pub fn routes() -> Router<AppState> {
             post(crate::probe::decode_samples),
         )
         .route("/schema", get(schema_overview))
+        .route("/schema/preview/{uid}", post(preview_schema))
         .route(
             "/schema/draft",
             put(put_schema_draft).delete(discard_schema_draft),
@@ -835,10 +836,12 @@ async fn schema_overview(State(s): State<AppState>) -> Result<Json<Value>, ApiEr
     let usage: Vec<Value> = sources
         .iter()
         .map(|r| {
+            let schema_version = serde_json::from_value::<SourceSpec>(r.spec.clone())
+                .map_or(1, |spec| spec.pipeline.schema_version());
             json!({
                 "source": r.id,
                 "enabled": r.enabled,
-                "schema_version": r.spec.pointer("/pipeline/mapping/schema_version").cloned().unwrap_or(json!(1)),
+                "schema_version": schema_version,
             })
         })
         .collect();
@@ -876,25 +879,53 @@ struct DraftBody {
     notes: Option<String>,
 }
 
+fn validated_schema(fields: Vec<Value>) -> Result<ExtensionSchema, ApiError> {
+    let fields = fields
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<_, _>>()
+        .map_err(|e| ApiError::unprocessable(format!("invalid field definition: {e}")))?;
+    let schema = ExtensionSchema { version: 0, fields };
+    schema
+        .validate()
+        .map_err(|e| ApiError::unprocessable(e.to_string()))?;
+    Ok(schema)
+}
+
+/// Show both messages for the same track snapshot, using the publishing resolver.
+async fn preview_schema(
+    State(s): State<AppState>,
+    Path(uid): Path<String>,
+    Json(body): Json<DraftBody>,
+) -> Result<Json<Value>, ApiError> {
+    let schema = validated_schema(body.fields)?;
+    let uid = crate::control::parse_uid(&uid)?;
+    let mut track = s
+        .redis
+        .get_system_track(uid)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("system track {uid}")))?;
+    let version = s.with_db(|db| db.latest_published_schema()).await?;
+    let current = published_schema(&s, version).await?;
+    track.attributes = current
+        .map(|schema| ot_source::schema::resolve_attributes(&schema, &track).0)
+        .unwrap_or_default();
+    let ctx = s.common.publish_context();
+    let now = chrono::Utc::now();
+    let published = ot_core::wire::to_message(&track, &ctx, now);
+    track.attributes = ot_source::schema::resolve_attributes(&schema, &track).0;
+    let draft = ot_core::wire::to_message(&track, &ctx, now);
+    Ok(Json(json!({ "published": published, "draft": draft })))
+}
+
 async fn put_schema_draft(
     State(s): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<DraftBody>,
 ) -> Result<Json<Value>, ApiError> {
-    let fields: Vec<ExtensionField> = body
+    let schema = validated_schema(body.fields)?;
+    let normalised: Vec<Value> = schema
         .fields
-        .iter()
-        .cloned()
-        .map(serde_json::from_value)
-        .collect::<Result<_, _>>()
-        .map_err(|e| ApiError::unprocessable(format!("invalid field definition: {e}")))?;
-    ExtensionSchema {
-        version: 0,
-        fields: fields.clone(),
-    }
-    .validate()
-    .map_err(|e| ApiError::unprocessable(e.to_string()))?;
-    let normalised: Vec<Value> = fields
         .iter()
         .map(|f| serde_json::to_value(f).expect("field serialises"))
         .collect();

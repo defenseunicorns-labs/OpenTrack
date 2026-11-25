@@ -1,6 +1,6 @@
 import { TbDownload, TbWand, TbX } from 'react-icons/tb'
 import { Button, Input, Label, Select } from '@kineticlogic/staresdk'
-import type { PluginInfo, PreviewResult, ProbeResult, SchemaOverview, SourceSpec } from '../../../api/client'
+import type { DecodedSamples, PluginInfo, PreviewResult, ProbeResult, SchemaOverview, SourceSpec } from '../../../api/client'
 import { InfoTip } from '../../../components/InfoTip'
 import { sampleFields } from '../../../lib/conditions'
 import { filterInput } from '../../../lib/trace'
@@ -8,7 +8,8 @@ import { MapEditor } from '../designer/MapEditor'
 import { AffiliationForm, FilterForm, JoinForm, RegistryForm, RejectForm, ThrottleForm, TrackerForm } from '../designer/StageForms'
 import { SenderAuth } from '../SenderAuth'
 import { TransportForm } from '../TransportForm'
-import { codecChoice, codecChoices, KIND_WORD, nodeTitle, TRANSPORTS, withCodec, withTransport, type FlowNode, type StepType } from './sourceFlow'
+import { codecChoice, codecChoices, INPUT, KIND_WORD, nodeTitle, TRANSPORTS, withCodec, withTransport, type FlowNode, type StepType } from './sourceFlow'
+import { StepSampleExample, StepSampleStatus } from './StepPreview'
 
 type Obj = Record<string, unknown>
 
@@ -38,6 +39,9 @@ export function NodePanel({
   schema,
   plugins,
   preview,
+  decodedSamples,
+  decodedError,
+  previewPending,
   probe,
   capturing,
   readOnly,
@@ -54,6 +58,9 @@ export function NodePanel({
   schema: SchemaOverview | null
   plugins: PluginInfo[]
   preview: PreviewResult | null
+  decodedSamples: DecodedSamples | null
+  decodedError: string | null
+  previewPending: boolean
   probe: ProbeResult | null
   capturing: boolean
   readOnly: boolean
@@ -64,6 +71,10 @@ export function NodePanel({
 }) {
   const config = (node.config ?? {}) as Obj
   const set = (patch: Obj) => onConfig({ ...config, ...patch })
+  const connected = path[0] === INPUT
+  const parent = path.at(-2)
+  const incoming = connected ? preview?.trace?.samples.flatMap((sample) => sample.stages.find((stage) => stage.id === parent)?.items ?? []) : []
+  const rawFields = () => sampleFields(incoming?.length ? incoming : decodedSamples?.records ?? [], true)
 
   let settings: React.ReactNode = null
   switch (node.type) {
@@ -137,13 +148,14 @@ export function NodePanel({
       break
     }
     case 'reject':
-      settings = <RejectForm rules={(node.config as Obj[] | undefined) ?? []} onChange={(rules) => onConfig(rules)} />
+      settings = <RejectForm rules={(node.config as Obj[] | undefined) ?? []} fields={rawFields()} onChange={(rules) => onConfig(rules)} />
       break
     case 'map': {
       const mapping = (config.mapping as Obj | undefined) ?? { rules: [] }
       const suggested = probe?.suggestion.mapping
       const offer = suggested && suggested.rules.length > 0 && JSON.stringify(suggested.rules) !== JSON.stringify(mapping.rules)
       const statics = ((mapping.rules as Obj[] | undefined) ?? []).some((r) => r.kind === 'static')
+      const fields = rawFields()
       settings = (
         <>
           {offer && (
@@ -158,18 +170,20 @@ export function NodePanel({
               </InfoTip>
             </div>
           )}
-          {schema ? <MapEditor mapping={mapping} schema={schema} onChange={(m) => set({ mapping: m })} /> : <span className="muted">LOADING…</span>}
+          {schema ? <MapEditor mapping={mapping} schema={schema} sampleFields={fields} onChange={(m) => set({ mapping: m })} /> : <span className="muted">LOADING…</span>}
           {statics && <JoinForm value={(config.static_join as Obj | undefined) ?? {}} onChange={(static_join) => set({ static_join })} />}
         </>
       )
       break
     }
     case 'filter': {
-      const input = filterInput(preview?.trace, node.id, path[path.length - 2])
+      const input = filterInput(connected ? preview?.trace : undefined, node.id, parent)
       const fields = sampleFields([...input.observations, ...(preview?.observations ?? [])])
       const key = (o: unknown) => String((o as { source_track_key?: unknown }).source_track_key ?? '')
       const examples = [...new Set(input.dropped.map(key).filter(Boolean))].slice(0, 3)
-      settings = <FilterForm value={config} onChange={onConfig} fields={fields} effect={preview ? { dropped: input.dropped.length, examples } : null} />
+      const counts = connected ? preview?.steps?.[node.id] : undefined
+      const effect = !previewPending && counts?.in ? { dropped: counts.in - counts.out, examples } : null
+      settings = <FilterForm value={config} onChange={onConfig} fields={fields} effect={effect} />
       break
     }
     case 'registry':
@@ -223,6 +237,7 @@ export function NodePanel({
         <Button size="xs" variant="ghost" icon={<TbX />} aria-label="Close" title="Close" onClick={onClose} />
       </div>
       <div className="node-panel-body">
+        {node.id !== INPUT && <StepSampleStatus nodeId={node.id} connected={connected} pending={previewPending} preview={preview} />}
         {problems.map((m) => (
           <div key={m} className="error-text" role="alert">
             {m}
@@ -233,6 +248,7 @@ export function NodePanel({
             {settings}
           </fieldset>
         )}
+        {connected && !previewPending && preview && <StepSampleExample node={node} path={path} preview={preview} />}
         {node.type === 'input' && (
           <div className="value-row">
             <Button size="sm" variant="secondary" icon={<TbDownload />} disabled={capturing || readOnly} onClick={onCapture}>
@@ -242,6 +258,14 @@ export function NodePanel({
               Connect with these settings and take up to 20 frames or 15 s of the live feed, whichever comes first. They replace the
               source&apos;s stored samples.
             </InfoTip>
+            {decodedSamples && (
+              <span className="muted" role="status">
+                Stored samples · {decodedSamples.frames.toLocaleString()} frames · {decodedSamples.record_count?.toLocaleString() ?? decodedSamples.records.length.toLocaleString()} decoded records
+                {decodedSamples.frames > 0 && (decodedSamples.decode_errors ? ` · ${decodedSamples.decode_errors} decode errors` : ' · Decode OK')}
+              </span>
+            )}
+            {decodedSamples?.last_decode_error && <InfoTip label="Last decode error">{decodedSamples.last_decode_error}</InfoTip>}
+            {decodedError && <span className="error-text" role="alert">{decodedError}</span>}
           </div>
         )}
       </div>

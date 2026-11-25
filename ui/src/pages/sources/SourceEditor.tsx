@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { TbDownload, TbLayoutDistributeVertical, TbSettings, TbTrash, TbWand } from 'react-icons/tb'
+import { TbDownload, TbLayoutDistributeVertical, TbList, TbSettings, TbTable, TbTrash, TbWand } from 'react-icons/tb'
 import type { Connection, Edge, EdgeChange, NodeChange } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Badge, Breadcrumbs, Button, SaveButton, SegmentedControl, SideNav, Toggle, useToast } from '@kineticlogic/staresdk'
+import { Badge, Breadcrumbs, Button, ContextMenu, ContextMenuItem, SaveButton, SegmentedControl, Toggle, useToast } from '@kineticlogic/staresdk'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { CodeEditor } from '@kineticlogic/staresdk/code-editor'
 import { FlowCanvas, type FlowCanvasEdge, type FlowCanvasNode, type FlowPaletteItem } from '@kineticlogic/staresdk/flow-canvas'
 import {
@@ -94,8 +95,10 @@ function useLiveCheck(spec: SourceSpec | null, id: string, nonce: number, trace:
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [problems, setProblems] = useState<SourceProblem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [completed, setCompleted] = useState('')
   const seq = useRef(0)
   const key = spec ? JSON.stringify(withoutPositions(spec)) : ''
+  const requestKey = `${id}:${nonce}:${trace}:${key}`
   useEffect(() => {
     if (!enabled || !key) return
     const n = ++seq.current
@@ -106,6 +109,7 @@ function useLiveCheck(spec: SourceSpec | null, id: string, nonce: number, trace:
           setPreview(r)
           setProblems(r.problems ?? [])
           setError(null)
+          setCompleted(requestKey)
         },
         (e) => {
           if (n !== seq.current) return
@@ -113,12 +117,13 @@ function useLiveCheck(spec: SourceSpec | null, id: string, nonce: number, trace:
           const listed = e instanceof ApiError && e.problems.length > 0
           setProblems(listed ? e.problems : null)
           setError(listed ? null : errorMessage(e))
+          setCompleted(requestKey)
         },
       )
     }, PREVIEW_DELAY_MS)
     return () => clearTimeout(t)
-  }, [key, id, nonce, trace, enabled])
-  return { preview, problems, error }
+  }, [key, id, trace, enabled, requestKey])
+  return { preview, problems, error, pending: enabled && !!key && completed !== requestKey }
 }
 
 /** The steps from the input to `id`. */
@@ -134,15 +139,16 @@ function pathTo(flow: Flow, id: string): string[] {
 }
 
 /**
- * One source as a workspace of steps (#104): the step list on the left; the input, and the steps
- * the user places and connects, to the source's Output and NATS topics. Clicking a step opens its
- * settings and samples; the feed's own settings, status and history open from the top row. Nothing
+ * One source as a workspace of steps (#104): the input and the steps
+ * the user places and connects, to the source's Output and NATS topics. A click selects a sample stage
+ * and a double click opens settings. The feed's own settings open from the top row. Nothing
  * changes on the running source until Save.
  */
 export default function SourceEditor({ id, onClose, onDeleted }: { id: string; onClose: () => void; onDeleted: () => void }) {
   const { confirm, toast } = useToast()
   const canAdmin = useCan('admin')
   const readOnly = !canAdmin
+  const reduceMotion = useReducedMotion()
   const [row, setRow] = useState<SourceRow | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [spec, setSpec] = useState<SourceSpec | null>(null)
@@ -150,8 +156,9 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
   const [selected, setSelected] = useState<string | null>(null)
   const [selectedEdges, setSelectedEdges] = useState<ReadonlySet<string>>(new Set())
   const [feedOpen, setFeedOpen] = useState(false)
-  // A step's settings can be closed and the step stay selected, its samples in the tray.
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sampleStep, setSampleStep] = useState<string | null>(null)
+  const [editingStep, setEditingStep] = useState<string | null>(null)
+  const [stepMenu, setStepMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [view, setView] = useState<'flow' | 'json'>('flow')
   const [jsonText, setJsonText] = useState('')
   const [jsonBox, jsonHeight] = useBoxHeight()
@@ -164,7 +171,8 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
   const [decoded, setDecoded] = useState<{ key: string; samples: DecodedSamples | null; error: string | null }>({ key: '', samples: null, error: null })
   const [capturing, setCapturing] = useState(false)
   const [nonce, setNonce] = useState(0)
-  const [trayOpen, setTrayOpen] = useState(true)
+  const [trayOpen, setTrayOpen] = useState(false)
+  const [stepsOpen, setStepsOpen] = useState(false)
   // A traced sample followed through the flow (from 0).
   const [followed, setFollowed] = useState<number | null>(null)
 
@@ -202,8 +210,10 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
   const flow = useMemo<Flow>(() => (spec ? flowOf(spec) : { nodes: [], edges: [] }), [spec])
   const dirty = spec !== null && JSON.stringify(spec) !== baseline
   const current = selected && flow.nodes.some((n) => n.id === selected) ? selected : null
-  const currentType = flow.nodes.find((n) => n.id === current)?.type
-  const live = useLiveCheck(spec, id, nonce, currentType === 'filter' ? MAX_TRACED_SAMPLES : TRACED_SAMPLES, canAdmin)
+  const sampleNode = flow.nodes.find((n) => n.id === sampleStep)
+  const editNode = flow.nodes.find((n) => n.id === editingStep)
+  const traceCount = sampleNode?.type === 'filter' || editNode?.type === 'filter' ? MAX_TRACED_SAMPLES : TRACED_SAMPLES
+  const live = useLiveCheck(spec, id, nonce, traceCount, canAdmin)
   const codecKey = spec ? JSON.stringify(spec.pipeline.codec) : ''
   const sampleKey = `${id}:${nonce}:${codecKey}`
   const decodedSamples = decoded.key === sampleKey ? decoded.samples : null
@@ -248,13 +258,23 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
     return undefined
   }
 
-  /** A field dragged from the samples onto a Map: mapped where it most likely goes, and the Map opened to check. */
+  /** A field dragged from the samples onto a Map is mapped where it most likely goes. */
   const dropField = (n: FlowNode, path: string) => {
     if (!path) return
     setConfig(n.id, mapField(n.config, path, guessTarget(path, probe?.suggestion.proposals)))
     setSelected(n.id)
-    setSettingsOpen(true)
+  }
+
+  const openStepMenu = (nodeId: string, x: number, y: number) => {
+    setStepMenu({ id: nodeId, x, y })
+  }
+
+  const editStep = (nodeId: string) => {
+    setSelected(nodeId)
+    setSelectedEdges(new Set())
+    setEditingStep(nodeId)
     setFeedOpen(false)
+    setStepsOpen(false)
   }
 
   const trail = useMemo(() => (followed === null ? null : sampleTrail(live.preview?.trace, followed)), [followed, live.preview])
@@ -277,10 +297,13 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
         trail: trail ? (trail[n.id] ?? 'absent') : undefined,
         action: actionFor(n),
         onFieldDrop: n.type === 'map' && !readOnly ? (path) => dropField(n, path) : undefined,
+        editing: n.id === editingStep,
+        onEdit: () => editStep(n.id),
+        onMenu: (x, y) => openStepMenu(n.id, x, y),
       } satisfies StepView,
     }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec, flow, current, byNode, live.preview, trail, probe, capturing, readOnly])
+  }, [spec, flow, current, byNode, live.preview, trail, probe, capturing, readOnly, editingStep])
 
   const edges: FlowCanvasEdge[] = useMemo(
     () =>
@@ -315,20 +338,9 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
     [transportType],
   )
 
-  // Steps move where they are dragged; clicking one opens it; deleting one takes its connections.
-  const onNodesChange = (changes: NodeChange[]) => {
-    const picks = changes.flatMap((c) => (c.type === 'select' ? [c] : []))
-    if (picks.length) {
-      const on = picks.find((c) => c.selected)
-      if (on) {
-        setSelected(on.id)
-        setSettingsOpen(true)
-        setFeedOpen(false)
-      } else if (picks.some((c) => c.id === selected)) setSelected(null)
-    }
-    const moved = new Map(changes.flatMap((c) => (c.type === 'position' && c.position ? [[c.id, c.position] as const] : [])))
-    const removed = new Set(changes.flatMap((c) => (c.type === 'remove' && c.id !== INPUT ? [c.id] : [])))
+  const updateSteps = (moved: Map<string, { x: number; y: number }>, removed: Set<string>) => {
     if (!moved.size && !removed.size) return
+    const edges = flow.edges.filter((e) => !removed.has(e.source) && !removed.has(e.target))
     editFlow({
       nodes: flow.nodes
         .filter((n) => !removed.has(n.id))
@@ -336,9 +348,33 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
           const p = moved.get(n.id)
           return p ? { ...n, position: { x: Math.round(p.x), y: Math.round(p.y) } } : n
         }),
-      edges: flow.edges.filter((e) => !removed.has(e.source) && !removed.has(e.target)),
+      edges,
     })
-    if (selected && removed.has(selected)) setSelected(null)
+    if (removed.size) {
+      setSelected((id) => id && removed.has(id) ? null : id)
+      setEditingStep((id) => id && removed.has(id) ? null : id)
+      setSampleStep((id) => id && removed.has(id) ? INPUT : id)
+      const validEdges = new Set(edges.map((edge) => `${edge.source}->${edge.target}`))
+      setSelectedEdges((ids) => new Set([...ids].filter((id) => validEdges.has(id))))
+    }
+  }
+
+  // React Flow also selects a step when a drag starts. Selection alone does not open a view.
+  const onNodesChange = (changes: NodeChange[]) => {
+    const picks = changes.flatMap((c) => (c.type === 'select' ? [c] : []))
+    if (picks.length) {
+      const on = picks.find((c) => c.selected)
+      if (on) setSelected(on.id)
+      else if (picks.some((c) => c.id === selected)) setSelected(null)
+    }
+    const moved = new Map(changes.flatMap((c) => (c.type === 'position' && c.position ? [[c.id, c.position] as const] : [])))
+    const removed = new Set(changes.flatMap((c) => (c.type === 'remove' && c.id !== INPUT ? [c.id] : [])))
+    updateSteps(moved, removed)
+  }
+
+  const selectRouteStage = (edgeId: string) => {
+    const route = flow.edges.find((edge) => `${edge.source}->${edge.target}` === edgeId)
+    if (route) setSampleStep(route.target)
   }
 
   const onEdgesChange = (changes: EdgeChange[]) => {
@@ -352,6 +388,8 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
         }
         return next
       })
+      const added = picks.findLast((pick) => pick.selected)
+      if (added) selectRouteStage(added.id)
     }
     const removed = new Set(changes.flatMap((c) => (c.type === 'remove' ? [c.id] : [])))
     if (removed.size) editFlow({ ...flow, edges: flow.edges.filter((e) => !removed.has(`${e.source}->${e.target}`)) })
@@ -383,8 +421,7 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
     if (config !== undefined) node.config = config
     editFlow(joinDropped({ ...flow, nodes: [...flow.nodes, node] }, node.id))
     setSelected(node.id)
-    setSettingsOpen(true)
-    setFeedOpen(false)
+    setStepsOpen(false)
   }
 
   const setConfig = (nodeId: string, config: unknown) => editFlow({ ...flow, nodes: flow.nodes.map((n) => (n.id === nodeId ? { ...n, config } : n)) })
@@ -451,6 +488,7 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
 
   const switchView = (v: 'flow' | 'json') => {
     if (v === 'json' && spec) setJsonText(JSON.stringify(spec, null, 2))
+    setStepsOpen(false)
     setView(v)
   }
 
@@ -464,12 +502,21 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
 
   const state = sourceState(row)
   const general = [...(notice ? [notice] : []), ...byNode.general]
-  const node = flow.nodes.find((n) => n.id === current)
   const output = flow.nodes.find((n) => n.type === 'output')
   const tracked = !!output && pathTo(flow, output.id).some((s) => flow.nodes.find((n) => n.id === s)?.type === 'tracker')
+  const showStep = view === 'flow' ? editNode : undefined
+  const showSamples = view === 'flow' && trayOpen
+  const menuNode = stepMenu && flow.nodes.find((n) => n.id === stepMenu.id)
 
   return (
-    <div className="source-editor">
+    <div className="source-editor" onKeyDown={(event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || stepMenu) return
+      if (stepsOpen) setStepsOpen(false)
+      else if (showStep || feedOpen) {
+        setEditingStep(null)
+        setFeedOpen(false)
+      } else if (showSamples) setTrayOpen(false)
+    }}>
       <div className="source-editor-head">
         <Breadcrumbs
           items={[{ label: 'Sources', href: '#sources' }, { label: spec.name || id }]}
@@ -498,9 +545,22 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
           ]}
         />
         {view === 'flow' && (
-          <Button size="sm" variant="secondary" icon={<TbLayoutDistributeVertical />} disabled={readOnly} onClick={() => editFlow(tidy(flow))}>
-            Tidy
-          </Button>
+          <>
+            {!readOnly && (
+              <Button size="sm" variant="secondary" icon={<TbList />} aria-expanded={stepsOpen} active={stepsOpen} onClick={() => setStepsOpen((open) => !open)}>
+                Steps
+              </Button>
+            )}
+            <Button size="sm" variant="secondary" icon={<TbTable />} aria-expanded={showSamples} active={showSamples} onClick={() => {
+              if (!trayOpen && !sampleNode) setSampleStep(current ?? INPUT)
+              setTrayOpen(!trayOpen)
+            }}>
+              Samples
+            </Button>
+            <Button size="sm" variant="secondary" icon={<TbLayoutDistributeVertical />} disabled={readOnly} onClick={() => editFlow(tidy(flow))}>
+              Tidy
+            </Button>
+          </>
         )}
         <Button
           size="sm"
@@ -508,7 +568,8 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
           icon={<TbSettings />}
           onClick={() => {
             setFeedOpen((o) => !o)
-            setSettingsOpen(false)
+            setEditingStep(null)
+            setStepsOpen(false)
           }}
         >
           Feed
@@ -520,100 +581,135 @@ export default function SourceEditor({ id, onClose, onDeleted }: { id: string; o
         {canAdmin && <SaveButton size="sm" dirty={dirty} saving={saving} saved={saved} onSave={save} />}
         <Button size="xs" variant="ghost" icon={<TbTrash />} disabled={readOnly} aria-label="Delete source" title="Delete source" onClick={remove} />
       </div>
-      {view === 'flow' ? (
-        <div className="source-workspace">
-          <div className="source-workspace-canvas">
+      <div className={showStep?.type === 'map' && showSamples ? 'source-workspace source-workspace--map-compare' : 'source-workspace'}>
+        {view === 'flow' ? (
+          <div
+            className="source-workspace-canvas"
+            onClick={(event) => {
+              const edge = (event.target as Element).closest('.react-flow__edge[data-id]')?.getAttribute('data-id')
+              if (edge) selectRouteStage(edge)
+            }}
+            onKeyDown={(event) => {
+              const target = event.target as HTMLElement
+              const nodeId = target.classList.contains('react-flow__node') ? target.getAttribute('data-id') : null
+              if (!nodeId) return
+              if (event.key === 'Enter' || event.key === 'F2') {
+                event.preventDefault()
+                if (event.key === 'F2') editStep(nodeId)
+                else setSampleStep(nodeId)
+              } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                event.preventDefault()
+                const rect = target.getBoundingClientRect()
+                openStepMenu(nodeId, rect.left + rect.width / 2, rect.top + rect.height / 2)
+              }
+            }}
+          >
             <FlowCanvas
               aria-label={`Steps of ${spec.name || id}`}
               nodes={nodes}
               edges={edges}
               nodeTypes={NODE_TYPES}
               onNodesChange={onNodesChange}
+              onNodeClick={setSampleStep}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               isValidConnection={isValidConnection}
-              palette={palette}
+              palette={stepsOpen ? palette : undefined}
               onDropNode={onDropNode}
               readOnly={readOnly}
               height="100%"
+              style={{ border: 0, borderRadius: 0 }}
             />
           </div>
-          <SamplesTray
-            node={node ?? null}
-            title={node ? nodeTitle(spec, node) : ''}
-            path={node ? pathTo(flow, node.id) : []}
-            preview={live.preview}
-            decodedSamples={decodedSamples}
-            decodedError={decodedError}
-            error={live.error}
-            open={trayOpen}
-            onOpenChange={setTrayOpen}
-            followed={followed}
-            onFollow={setFollowed}
-          />
-          {/* A step's settings (or the feed's) open over the right of the page, resizable. */}
-          <SideNav
-            open={(!!node && settingsOpen) || feedOpen}
-            ariaLabel={node ? `Step ${node.id}` : 'Feed settings'}
-            width={640}
-            minWidth={420}
-            maxWidth={1200}
-            storageKey="ot.sourceStep.width"
-            dockRegister={false}
-          >
-            <div
-              className="drawer"
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  setSettingsOpen(false)
-                  setFeedOpen(false)
+        ) : (
+          <div className="source-workspace-canvas source-editor-json" ref={jsonBox}>
+            <CodeEditor
+              aria-label="Source settings as JSON"
+              minHeight={jsonHeight}
+              maxHeight={jsonHeight}
+              value={jsonText}
+              readOnly={readOnly}
+              onChange={(t) => {
+                setJsonText(t)
+                try {
+                  const next = JSON.parse(t) as unknown
+                  if (isSpecShaped(next) && next.id === id) edit(next)
+                } catch {
+                  // Keep the last valid settings; the editor marks the parse error.
                 }
               }}
+            />
+          </div>
+        )}
+        {(showStep || feedOpen) && (
+          <aside className="source-inspector" aria-label={showStep ? `Step ${showStep.id}` : 'Feed settings'}>
+            {showStep ? (
+              <NodePanel
+                key={showStep.id}
+                spec={spec}
+                node={showStep}
+                path={pathTo(flow, showStep.id)}
+                problems={byNode.byNode[showStep.id] ?? []}
+                schema={schema}
+                plugins={plugins}
+                preview={live.preview}
+                decodedSamples={decodedSamples}
+                decodedError={decodedError}
+                previewPending={live.pending}
+                probe={probe}
+                capturing={capturing}
+                readOnly={readOnly}
+                onSpec={edit}
+                onConfig={(c) => setConfig(showStep.id, c)}
+                onCapture={() => void capture()}
+                onClose={() => setEditingStep(null)}
+              />
+            ) : (
+              <FeedPanel spec={spec} row={row} tracked={tracked} problems={byNode.general} readOnly={readOnly} onChange={edit} onClose={() => setFeedOpen(false)} />
+            )}
+          </aside>
+        )}
+        <AnimatePresence initial={false}>
+          {showSamples && (
+            <motion.div
+              className="source-samples"
+              initial={{ y: '100%' }}
+              animate={{ y: 0, pointerEvents: 'auto' }}
+              exit={{ y: '100%', pointerEvents: 'none' }}
+              transition={{ duration: reduceMotion ? 0 : 0.25, ease: 'easeInOut' }}
             >
-              {node && settingsOpen ? (
-                <NodePanel
-                  key={node.id}
-                  spec={spec}
-                  node={node}
-                  path={pathTo(flow, node.id)}
-                  problems={byNode.byNode[node.id] ?? []}
-                  schema={schema}
-                  plugins={plugins}
-                  preview={live.preview}
-                  probe={probe}
-                  capturing={capturing}
-                  readOnly={readOnly}
-                  onSpec={edit}
-                  onConfig={(c) => setConfig(node.id, c)}
-                  onCapture={() => void capture()}
-                  onClose={() => setSettingsOpen(false)}
-                />
-              ) : feedOpen ? (
-                <FeedPanel spec={spec} row={row} tracked={tracked} problems={byNode.general} readOnly={readOnly} onChange={edit} onClose={() => setFeedOpen(false)} />
-              ) : null}
-            </div>
-          </SideNav>
-        </div>
-      ) : (
-        <div className="source-editor-json" ref={jsonBox}>
-          <CodeEditor
-            aria-label="Source settings as JSON"
-            minHeight={jsonHeight}
-            maxHeight={jsonHeight}
-            value={jsonText}
-            readOnly={readOnly}
-            onChange={(t) => {
-              setJsonText(t)
-              try {
-                const next = JSON.parse(t) as unknown
-                if (isSpecShaped(next) && next.id === id) edit(next)
-              } catch {
-                // Keep the last valid settings; the editor marks the parse error.
-              }
-            }}
-          />
-        </div>
-      )}
+              <SamplesTray
+                node={sampleNode ?? null}
+                title={sampleNode ? nodeTitle(spec, sampleNode) : ''}
+                path={sampleNode ? pathTo(flow, sampleNode.id) : []}
+                preview={live.preview}
+                previewPending={live.pending}
+                decodedSamples={decodedSamples}
+                decodedError={decodedError}
+                error={live.error}
+                open
+                onOpenChange={setTrayOpen}
+                followed={followed}
+                onFollow={setFollowed}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {stepMenu && menuNode && (
+          <ContextMenu x={stepMenu.x} y={stepMenu.y} width={160} estimatedHeight={82} size="sm" ariaLabel="Step actions" onClose={() => setStepMenu(null)}>
+            <ContextMenuItem onClick={() => { setStepMenu(null); editStep(menuNode.id) }}>
+              {readOnly ? 'View settings' : 'Edit'}
+            </ContextMenuItem>
+            <ContextMenuItem danger disabled={readOnly || menuNode.id === INPUT} onClick={() => {
+              if (readOnly || menuNode.id === INPUT) return
+              setStepMenu(null)
+              updateSteps(new Map(), new Set([menuNode.id]))
+            }}>
+              Delete
+            </ContextMenuItem>
+          </ContextMenu>
+        )}
+      </div>
     </div>
   )
 }

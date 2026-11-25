@@ -2,7 +2,7 @@
  * A source step's samples: the first stored records as they are after that step, from the dry
  * run's trace (`POST /sources/validate` with `trace`).
  */
-import type { PreviewResult, PreviewTrace, TraceFrameView } from '../api/client'
+import type { PreviewResult, PreviewTrace, TraceFrameView, TraceItemDetail } from '../api/client'
 
 /** Records the designer follows through the pipeline. */
 export const TRACED_SAMPLES = 5
@@ -31,6 +31,9 @@ export interface SampleView {
   blocks: string[]
   /** What happened to it: dropped where and why, held by a stage. */
   notes: string[]
+  itemRules?: string[]
+  matchedRules?: string[]
+  itemDetails?: TraceItemDetail[]
 }
 
 const pretty = (v: unknown) => JSON.stringify(v, null, 2) ?? String(v)
@@ -98,7 +101,7 @@ export function samplesAt(trace: PreviewTrace | undefined, stageId: string, path
     }
     const blocks = s.stages[at].items.map(pretty)
     if (!blocks.length && !notes.length) notes.push('Nothing came out of this step.')
-    return { title, blocks, notes }
+    return { title, blocks, notes, itemRules: s.stages[at].item_rules, matchedRules: s.stages[at].matched_rules, itemDetails: s.stages[at].item_details }
   })
 }
 
@@ -112,13 +115,16 @@ export interface SampleRow {
   before?: unknown
   /** Why nothing came out here: dropped where and why, held, or not in the flow. */
   dropped?: string
+  rule?: string
+  matchedRules?: string[]
+  detail?: TraceItemDetail
 }
 
 /**
  * The traced samples at `stageId` as table rows, each beside what its step before (`parentId`)
  * passed on. A sample with nothing at the step says why, from the steps on `path`.
  */
-export function sampleRows(trace: PreviewTrace | undefined, stageId: string, parentId?: string, path?: string[]): SampleRow[] {
+export function sampleRows(trace: PreviewTrace | undefined, stageId: string, parentId?: string, path?: string[], includeDropped = false): SampleRow[] {
   // The input's samples are frames in `samplesAt`; here they are the records it decoded.
   const views = stageId === 'input' ? [] : samplesAt(trace, stageId, path)
   const samples = (trace?.samples ?? []).slice(0, TRACED_SAMPLES)
@@ -128,14 +134,23 @@ export function sampleRows(trace: PreviewTrace | undefined, stageId: string, par
     const items = at?.items ?? []
     if (!items.length) {
       const why = (stageId === 'input' ? (at?.dropped ?? []) : (views[i]?.notes ?? [])).join(' · ') || 'Nothing came out of this step.'
-      return [{ id: `${i}`, label: `#${i + 1}`, dropped: at ? why : 'This step was not in the flow the preview ran.' }]
+      return [{ id: `${i}`, label: `#${i + 1}`, dropped: at ? why : 'This step was not in the flow the preview ran.', matchedRules: at?.matched_rules }]
     }
-    return items.map((item, j) => ({
+    const outputs: SampleRow[] = items.map((item, j) => ({
       id: `${i}-${j}`,
       label: items.length > 1 ? `#${i + 1}.${j + 1}` : `#${i + 1}`,
       value: item,
       before: before ? (before[j] ?? before[0]) : undefined,
+      rule: at?.item_rules?.[j],
+      matchedRules: at?.matched_rules,
+      detail: at?.item_details?.[j],
     }))
+    if (includeDropped) {
+      for (const [j, dropped] of (at?.dropped ?? []).entries()) {
+        outputs.push({ id: `${i}-held-${j}`, label: `#${i + 1}`, dropped })
+      }
+    }
+    return outputs
   })
 }
 

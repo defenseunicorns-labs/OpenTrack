@@ -400,33 +400,46 @@ pub struct DecodeSamplesRequest {
     codec: CodecConfig,
 }
 
+struct DecodedSampleFrames {
+    records: Vec<Value>,
+    record_count: usize,
+    decode_errors: usize,
+    last_decode_error: Option<String>,
+}
+
 fn decode_sample_frames(
     config: CodecConfig,
     frames: impl IntoIterator<Item = Frame>,
-) -> Result<(Vec<Value>, usize, Option<String>), ApiError> {
+) -> Result<DecodedSampleFrames, ApiError> {
     const SAMPLE_RECORDS: usize = 10;
     let mut codec = Codec::new(config).map_err(|e| ApiError::unprocessable(e.to_string()))?;
     let mut records = Vec::new();
+    let mut record_count = 0;
     let mut decode_errors = 0;
     let mut last_decode_error = None;
     for frame in frames {
         match codec.decode(&frame) {
-            Ok(decoded) => records.extend(
-                decoded
-                    .into_iter()
-                    .take(SAMPLE_RECORDS - records.len())
-                    .map(ot_source::trace::capped),
-            ),
+            Ok(decoded) => {
+                record_count += decoded.len();
+                records.extend(
+                    decoded
+                        .into_iter()
+                        .take(SAMPLE_RECORDS - records.len())
+                        .map(ot_source::trace::capped),
+                );
+            }
             Err(e) => {
                 decode_errors += 1;
                 last_decode_error = Some(e.to_string());
             }
         }
-        if records.len() == SAMPLE_RECORDS {
-            break;
-        }
     }
-    Ok((records, decode_errors, last_decode_error))
+    Ok(DecodedSampleFrames {
+        records,
+        record_count,
+        decode_errors,
+        last_decode_error,
+    })
 }
 
 /// Decode stored frames independently of the Map and the rest of the pipeline.
@@ -447,10 +460,16 @@ pub async fn decode_samples(
         };
         Frame::new(row.bytes).with_meta(meta)
     });
-    let (records, decode_errors, last_decode_error) = decode_sample_frames(req.codec, frames)?;
+    let DecodedSampleFrames {
+        records,
+        record_count,
+        decode_errors,
+        last_decode_error,
+    } = decode_sample_frames(req.codec, frames)?;
     Ok(Json(json!({
         "frames": frame_count,
         "records": records,
+        "record_count": record_count,
         "decode_errors": decode_errors,
         "last_decode_error": last_decode_error,
     })))
@@ -470,13 +489,18 @@ mod tests {
                 .to_string()
                 .into_bytes(),
         );
-        let (records, errors, last_error) =
-            decode_sample_frames(codec, [first, broken, last]).unwrap();
+        let DecodedSampleFrames {
+            records,
+            record_count,
+            decode_errors,
+            last_decode_error,
+        } = decode_sample_frames(codec, [first, last, broken]).unwrap();
         assert_eq!(records.len(), 10);
+        assert_eq!(record_count, 22);
         assert_eq!(records[0]["hex"], "a");
         assert_eq!(records[2]["hex"], 0);
-        assert_eq!(errors, 1);
-        assert!(last_error.is_some());
+        assert_eq!(decode_errors, 1);
+        assert!(last_decode_error.is_some());
     }
 
     fn tcp(tls: bool) -> TransportConfig {

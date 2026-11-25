@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { TbPlus, TbTrash, TbX } from 'react-icons/tb'
-import { Button, FieldSelect, Input, Label, Toggle } from '@kineticlogic/staresdk'
+import { Button, Disclosure, FieldSelect, Input, Label, Toggle } from '@kineticlogic/staresdk'
 import { api, type EmitterMotion, type PluginInfo, type SecurityLabel } from '../../../api/client'
-import { DEFAULT_GRADES, DEFAULT_LINKS, describeCondition, describeValue, entityLinks, type EntityLink, type ValueSpec } from '../../../lib/pipeline'
-import { JsonField } from './JsonField'
+import { DEFAULT_GRADES, DEFAULT_LINKS, describeValue, entityLinks, type EntityLink, type ValueSpec } from '../../../lib/pipeline'
 import { ConditionBuilder } from './ConditionBuilder'
 import type { SampleField } from '../../../lib/conditions'
 import { INPUT } from '../../../lib/valueSpec'
@@ -37,36 +36,37 @@ function Row({ label, children, hint }: { label: string; children: React.ReactNo
 }
 
 /** Records dropped before mapping, each with a reason (counted in the source's metrics). */
-export function RejectForm({ rules, onChange }: { rules: Obj[]; onChange: (r: Obj[]) => void }) {
+export function RejectForm({ rules, fields, onChange }: { rules: Obj[]; fields: SampleField[]; onChange: (r: Obj[]) => void }) {
   return (
     <div className="stack">
       {rules.map((r, i) => (
-        <div key={i} className="map-field">
+        <fieldset key={i} className="map-outline">
+          <legend>Reject rule {i + 1}</legend>
           <div className="value-row">
             <Label size="sm">Reason</Label>
             {i === 0 && (
               <InfoTip label="Reason">
                 Checked against each raw record before mapping; the first rule whose condition holds drops the record. The reason names it in the
                 source&apos;s metrics as <span className="mono">rejected:&lt;reason&gt;</span> (and in the total <span className="mono">rejected</span>), so
-                use a short word such as <span className="mono">no_position</span>.
+                use a short word such as <span className="mono">no_position</span>. A rule without conditions skips no records.
               </InfoTip>
             )}
             <Input style={{ ...INPUT, width: 200 }} aria-label={`Reject rule ${i + 1} reason`} value={String(r.reason ?? '')} onChange={(e) => onChange(rules.map((x, j) => (j === i ? { ...x, reason: e.target.value } : x)))} />
             <span className="spacer" />
             <Button size="xs" variant="ghost" icon={<TbTrash />} aria-label={`Remove reject rule ${i + 1}`} title="Remove" onClick={() => onChange(rules.filter((_, j) => j !== i))} />
           </div>
-          <JsonField
+          <ConditionBuilder
             label={`Reject rule ${i + 1} condition`}
-            optional
-            value={r.when}
-            placeholder='{"path": "lat", "exists": false}'
-            onChange={(v) => onChange(rules.map((x, j) => (j === i ? { ...x, when: v } : x)))}
-            describe={(v) => `drop when ${describeCondition(v)}`}
+            verb="drop"
+            showSummary={false}
+            fields={fields}
+            value={JSON.stringify(r.when) === '{"any":[]}' ? undefined : r.when}
+            onChange={(v) => onChange(rules.map((x, j) => (j === i ? { ...x, when: v ?? { any: [] } } : x)))}
           />
-        </div>
+        </fieldset>
       ))}
       <div>
-        <Button size="sm" variant="secondary" icon={<TbPlus />} onClick={() => onChange([...rules, { reason: 'reason', when: { path: '', exists: false } }])}>
+        <Button size="sm" variant="secondary" icon={<TbPlus />} onClick={() => onChange([...rules, { reason: 'reason', when: { any: [] } }])}>
           Reject rule
         </Button>
       </div>
@@ -217,7 +217,7 @@ export function AffiliationForm({ value, onChange }: Props) {
       <Row label="Country from" hint={`The value holding the track's ISO country code (compared in capitals, spaces trimmed), e.g. the registry flag. Currently: ${describeValue(value.country as ValueSpec)}`}>
         <ValueEditor label="Country" value={value.country as ValueSpec} onChange={(v) => onChange({ ...value, country: v })} />
       </Row>
-      {listInput('friendly', 'Friend', 'Country codes, separated by spaces or commas, whose tracks get affiliation friend. It replaces any affiliation the mapping or entity set.')}
+      {listInput('friendly', 'Friend', 'Enter country codes separated by spaces or commas. Matches become friend unless Entity links already supplied the affiliation.')}
       {listInput('hostile', 'Hostile', 'Country codes whose tracks get affiliation hostile.')}
       {listInput('neutral', 'Neutral', 'Country codes whose tracks get affiliation neutral.')}
       {pick('otherwise', 'Other countries', 'Affiliation for a track whose country is known but in none of the lists. Empty: left as it is.')}
@@ -238,18 +238,14 @@ export function FilterForm({
 }: Props & { fields: SampleField[]; effect: { dropped: number; examples: string[] } | null }) {
   return (
     <div className="stack">
-      <Row
-        label="Keep only if"
-        hint="Observations that do not match are dropped and counted as filtered. Empty: keep all. Fields are the observation after mapping (and ext.registry.* after the entity stage); the list offers those in the stored samples, and Other path… takes any."
-      >
-        <ConditionBuilder label="Keep condition" verb="keep" value={value.keep_if} onChange={(v) => onChange({ ...value, keep_if: v })} fields={fields} />
-      </Row>
-      <Row
-        label="Drop if"
-        hint="Observations that match are dropped (counted as filtered), even when they pass Keep only if. For example, field source_track_key, starts with, tms- drops tracks OpenTrack itself sent out, read back from a TAK Server."
-      >
-        <ConditionBuilder label="Drop condition" verb="drop" value={value.drop_if} onChange={(v) => onChange({ ...value, drop_if: v })} fields={fields} />
-      </Row>
+      <fieldset className="map-outline" aria-label="Keep only if">
+        <legend>Keep only if <InfoTip label="Keep only if">Only matching observations pass. Leave this empty to keep all observations. Choose a field from the stored samples or use Other path… to enter one.</InfoTip></legend>
+        <ConditionBuilder label="Keep condition" verb="keep" showSummary={false} value={value.keep_if} onChange={(v) => onChange({ ...value, keep_if: v })} fields={fields} />
+      </fieldset>
+      <fieldset className="map-outline" aria-label="Drop if">
+        <legend>Drop if <InfoTip label="Drop if">Matching observations are dropped even if they pass Keep only if. For example, drop tracks sent back by a TAK Server by checking whether source_track_key starts with tms-.</InfoTip></legend>
+        <ConditionBuilder label="Drop condition" verb="drop" showSummary={false} value={value.drop_if} onChange={(v) => onChange({ ...value, drop_if: v })} fields={fields} />
+      </fieldset>
       {effect && (
         <div className="muted">
           On the stored samples: {effect.dropped ? `drops ${effect.dropped.toLocaleString()}` : 'drops nothing'}
@@ -345,41 +341,6 @@ export function TrackerForm({ value, onChange }: Props) {
       {field('measurement_sigma_m', 'Plot error σ (m)', 10, 'Position error of a plot, one standard deviation per axis, for detections that report no error ellipse or circular error of their own.')}
       {field('process_noise_mps2', 'Manoeuvre (m/s²)', 0.5, 'How hard targets accelerate or turn (the filter\'s process noise). Higher follows manoeuvres better but gives noisier tracks.')}
       {field('cluster_m', 'Merge plots within (m)', 0, 'Plots of one scan closer than this are merged into one at their centroid, for sensors that return several points off one large object (lidar on a ship). 0: off.')}
-      <h4 className="subhead">
-        Existence
-        <InfoTip label="Existence">
-          Each track carries the probability that it is a real target: plots raise it by how well they fit against clutter, looks without one lower
-          it. It is published as the track&apos;s confidence.
-        </InfoTip>
-      </h4>
-      {field('detection_probability', 'Detection probability', 0.9, 'Chance the sensor detects a target it looks at, between 0 and 1. A look without a plot lowers existence more when this is high.')}
-      {field('clutter_density', 'False plots per m²', 1e-6, 'Expected false plots per square metre per look. Higher makes a plot count for less, so tracks confirm more slowly.')}
-      {field('birth_density', 'New targets per m²', 1e-7, 'Expected new targets per square metre per look. A new track starts at existence birth / (birth + clutter).')}
-      {field('confirm_probability', 'Confirm at probability', 0.95, 'A track is confirmed, and reported, once its existence reaches this and it has enough plots. Must be above the drop probability and below 1.')}
-      {field('drop_probability', 'Drop at probability', 0.02, 'A track is dropped once its existence falls to this. Must be above 0.')}
-      {field('target_lifetime_secs', 'Target lifetime (s)', 600, 'How long a target lasts on average: existence decays at this rate between looks, so misses can end even a long-lived track.')}
-      {field('confirm_hits', 'Confirm after at least (plots)', 3, 'Fewest plots a track needs before it can be confirmed, whatever its existence. At least 1.')}
-      <Row label="Auto timing" hint="Size the drop windows to the sensor's revisit rate, as the codec measures it (STANAG 4607), and count a miss once per revisit instead of once per scan. Each window is the revisits below times the period, but never shorter than its floor. Until the period is known, the fixed drop times apply.">
-        <Toggle
-          size="sm"
-          aria-label="Auto timing"
-          value={value.auto_timing != null}
-          onChange={(on) => onChange({ ...value, auto_timing: on ? {} : undefined })}
-        />
-      </Row>
-      {value.auto_timing != null ? (
-        <>
-          {field('drop_tentative_revisits', 'Drop unconfirmed after (revisits)', 1.3, 'An unconfirmed track is dropped this many revisit periods after its last plot. Above 1, or none survives to the next revisit.', auto, setAuto)}
-          {field('drop_confirmed_revisits', 'Drop after (revisits)', 2.5, 'A confirmed track is dropped this many revisit periods after its last plot. Above 1.', auto, setAuto)}
-          {field('min_drop_tentative_secs', '…drop unconfirmed after at least (s)', 8, 'Floor on the unconfirmed drop window, for sensors that revisit every few seconds but still lose a target for longer (terrain, a stop).', auto, setAuto)}
-          {field('min_drop_confirmed_secs', '…drop after at least (s)', 30, 'Floor on the confirmed drop window.', auto, setAuto)}
-        </>
-      ) : (
-        <>
-          {field('drop_tentative_secs', 'Drop unconfirmed after (s) without a plot', 3, 'An unconfirmed track with no plot for this long is dropped.')}
-          {field('drop_confirmed_secs', 'Drop after (s) without a plot', 8, 'A confirmed track with no plot for this long is dropped (reported once as dropped).')}
-        </>
-      )}
       <Row label="Scans" hint="A scan is one frame, or the plots with the same time.">
         <FieldSelect
           ariaLabel="Scan grouping"
@@ -392,18 +353,62 @@ export function TrackerForm({ value, onChange }: Props) {
       <Row label="Track keys" hint="Prefix of the keys the tracker gives its tracks: prefix, a tag for the tracker's run, and a number (T3f2a-12). The run tag keeps a restarted tracker from continuing an earlier run's tracks. Default T.">
         <Input style={{ ...INPUT, width: 120 }} aria-label="Track key prefix" value={String(value.key_prefix ?? 'T')} onChange={(e) => onChange({ ...value, key_prefix: e.target.value || undefined })} spellCheck={false} />
       </Row>
-      {value.algorithm === 'mht' && (
-        <>
-          <h4 className="subhead">
-            Hypotheses
-            <InfoTip label="Hypotheses">
-              MHT keeps competing plot-to-track assignments for a few scans and settles on the most likely, instead of committing each scan as GNN does.
-            </InfoTip>
-          </h4>
-          {field('n_scan', 'Final after scans', 3, 'Scans an association stays open to revision before it is final. More resolves crossing targets better, at more work and later output.', mht, setMht)}
-          {field('max_branches', 'Hypotheses per target', 20, 'Competing hypotheses kept per possible target; the least likely beyond this are pruned.', mht, setMht)}
-        </>
-      )}
+      <Disclosure label="Advanced settings">
+        <div className="stack">
+          <fieldset className="map-outline">
+            <legend>
+              Existence
+              <InfoTip label="Existence">
+                Each track carries the probability that it is a real target: plots raise it by how well they fit against clutter, looks without one lower
+                it. It is published as the track&apos;s confidence.
+              </InfoTip>
+            </legend>
+            {field('detection_probability', 'Detection probability', 0.9, 'Chance the sensor detects a target it looks at, between 0 and 1. A look without a plot lowers existence more when this is high.')}
+            {field('clutter_density', 'False plots per m²', 1e-6, 'Expected false plots per square metre per look. Higher makes a plot count for less, so tracks confirm more slowly.')}
+            {field('birth_density', 'New targets per m²', 1e-7, 'Expected new targets per square metre per look. A new track starts at existence birth / (birth + clutter).')}
+            {field('confirm_probability', 'Confirm at probability', 0.95, 'A track is confirmed, and reported, once its existence reaches this and it has enough plots. Must be above the drop probability and below 1.')}
+            {field('drop_probability', 'Drop at probability', 0.02, 'A track is dropped once its existence falls to this. Must be above 0.')}
+            {field('target_lifetime_secs', 'Target lifetime (s)', 600, 'How long a target lasts on average: existence decays at this rate between looks, so misses can end even a long-lived track.')}
+            {field('confirm_hits', 'Confirm after at least (plots)', 3, 'Fewest plots a track needs before it can be confirmed, whatever its existence. At least 1.')}
+          </fieldset>
+          <fieldset className="map-outline">
+            <legend>Timing</legend>
+            <Row label="Auto timing" hint="Size the drop windows to the sensor's revisit rate, as the codec measures it (STANAG 4607), and count a miss once per revisit instead of once per scan. Each window is the revisits below times the period, but never shorter than its floor. Until the period is known, the fixed drop times apply.">
+              <Toggle
+                size="sm"
+                aria-label="Auto timing"
+                value={value.auto_timing != null}
+                onChange={(on) => onChange({ ...value, auto_timing: on ? {} : undefined })}
+              />
+            </Row>
+            {value.auto_timing != null ? (
+              <>
+                {field('drop_tentative_revisits', 'Drop unconfirmed after (revisits)', 1.3, 'An unconfirmed track is dropped this many revisit periods after its last plot. Above 1, or none survives to the next revisit.', auto, setAuto)}
+                {field('drop_confirmed_revisits', 'Drop after (revisits)', 2.5, 'A confirmed track is dropped this many revisit periods after its last plot. Above 1.', auto, setAuto)}
+                {field('min_drop_tentative_secs', '…drop unconfirmed after at least (s)', 8, 'Floor on the unconfirmed drop window, for sensors that revisit every few seconds but still lose a target for longer (terrain, a stop).', auto, setAuto)}
+                {field('min_drop_confirmed_secs', '…drop after at least (s)', 30, 'Floor on the confirmed drop window.', auto, setAuto)}
+              </>
+            ) : (
+              <>
+                {field('drop_tentative_secs', 'Drop unconfirmed after (s) without a plot', 3, 'An unconfirmed track with no plot for this long is dropped.')}
+                {field('drop_confirmed_secs', 'Drop after (s) without a plot', 8, 'A confirmed track with no plot for this long is dropped (reported once as dropped).')}
+              </>
+            )}
+          </fieldset>
+          {value.algorithm === 'mht' && (
+            <fieldset className="map-outline">
+              <legend>
+                Hypotheses
+                <InfoTip label="Hypotheses">
+                  MHT keeps competing plot-to-track assignments for a few scans and settles on the most likely, instead of committing each scan as GNN does.
+                </InfoTip>
+              </legend>
+              {field('n_scan', 'Final after scans', 3, 'Scans an association stays open to revision before it is final. More resolves crossing targets better, at more work and later output.', mht, setMht)}
+              {field('max_branches', 'Hypotheses per target', 20, 'Competing hypotheses kept per possible target; the least likely beyond this are pruned.', mht, setMht)}
+            </fieldset>
+          )}
+        </div>
+      </Disclosure>
     </div>
   )
 }
@@ -544,7 +549,7 @@ export function ThrottleForm({ value, onChange }: Props) {
   return (
     <div className="stack">
       {field('min_interval_secs', 'At most every (s)', 'Never more often than this per source track.', 0)}
-      {field('min_move_m', 'Or after moving (m)', 'Between that and the heartbeat, only when the track moved this far.', 0)}
+      {field('min_move_m', 'Or after moving (m)', 'Between the minimum interval and the heartbeat, pass a report when the track has moved this far. Set this to 0 to turn off movement-triggered reports.', 0)}
       {field('heartbeat_secs', 'Heartbeat (s)', 'Always pass a report after this long.', 600)}
     </div>
   )

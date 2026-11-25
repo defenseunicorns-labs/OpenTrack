@@ -1,14 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
-import { TbPlus } from 'react-icons/tb'
-import { Badge, Button, CollapsiblePanel, DataTable, type DataTableColumn } from '@kineticlogic/staresdk'
+import { TbPlus, TbSearch } from 'react-icons/tb'
+import { Badge, Button, DataTable, Input, type DataTableColumn } from '@kineticlogic/staresdk'
 import { api, type SourceRow } from '../../api/client'
 import { ago, errorMessage, fmtCount } from '../../lib/format'
-import { SOURCE_STATES_INFO, sourceState } from '../../lib/sourceState'
+import { sourceState } from '../../lib/sourceState'
 import { NewSource } from './NewSource'
 import { UnauthenticatedBadge } from './SenderAuth'
 import { useCan } from '../../auth/context'
 import { InfoTip } from '../../components/InfoTip'
-import { FILL_PANEL, usePanelOpen } from '../../lib/panelOpen'
 import { FILL_TABLE, useFillHeight } from '../../lib/fillHeight'
 
 // React Flow loads only with the Sources page's topology and the source editor.
@@ -16,6 +15,7 @@ const Topology = lazy(() => import('./Topology'))
 const SourceEditor = lazy(() => import('./SourceEditor'))
 
 const REFRESH_MS = 5000
+const TABLE_STYLE = { ...FILL_TABLE, border: 0, borderRadius: 0 } as const
 
 const COLUMNS: DataTableColumn<SourceRow>[] = [
   {
@@ -65,7 +65,7 @@ export default function SourcesPage({ selected, onSelect }: { selected: string; 
   const [sources, setSources] = useState<SourceRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
-  const [listOpen, setListOpen] = usePanelOpen('ot.panel.sources')
+  const [query, setQuery] = useState('')
   const [listFill, listHeight] = useFillHeight()
 
   const load = useCallback(() => {
@@ -99,60 +99,66 @@ export default function SourcesPage({ selected, onSelect }: { selected: string; 
     )
   }
 
+  const term = query.trim().toLowerCase()
+  const rows = sources?.filter((source) => !term || [source.name, source.id].some((value) => value.toLowerCase().includes(term))) ?? []
+
   return (
-    <div className="panels fill-page">
-      <CollapsiblePanel
-        title="Topology"
-        persistKey="ot.panel.topology"
-        titleActions={
+    <div className="sources-overview fill-page">
+      <section aria-labelledby="source-topology-heading">
+        <div className="toolbar">
+          <h2 className="subhead" id="source-topology-heading">Topology</h2>
           <InfoTip label="Topology">
-            Each source&apos;s pipeline, left to right: decode, map, the stages it has, into correlation, the track writer and NATS
-            (plus any raw feed). Rates are per minute, averaged over the last 10 minutes; moving dashes mark links that carried data,
-            grey dashed links belong to disabled sources. Click a source to open it.
+            Follow each source from left to right to see how OpenTrack handles its messages and where it sends them.
+            Moving dashes show links that carried data. Gray dashed links belong to sources that are switched off.
+            Rates show messages per minute, averaged over the last 10 minutes. Select a source or one of its steps to open it.
           </InfoTip>
-        }
-      >
-        <div className="panel-body">
-          <Suspense fallback={<span className="muted">LOADING…</span>}>
-            {sources ? <Topology sources={sources} onSelect={onSelect} /> : <span className="muted">LOADING…</span>}
-          </Suspense>
         </div>
-      </CollapsiblePanel>
-      <CollapsiblePanel
-        title="Sources"
-        badge={sources ? String(sources.length) : undefined}
-        open={listOpen}
-        onOpenChange={setListOpen}
-        style={listOpen ? FILL_PANEL : undefined}
-        titleActions={
-          <InfoTip label="Sources columns">
-            Source: an UNAUTHENTICATED badge marks a listener that runs without authenticating its senders, with that risk accepted on the
-            source. State: {SOURCE_STATES_INFO} Emitted: track updates the source has sent on since its worker last started (a restart or a saved
-            change resets it). Last frame: how long ago a message last arrived.
-          </InfoTip>
-        }
-      >
-        <div className="panel-body fill" ref={listFill}>
-          <div className="toolbar">
-            <span className="muted">Feeds OpenTrack ingests. Select one to open it.</span>
-            <span className="spacer" />
-            <Button size="sm" icon={<TbPlus />} disabled={!canAdmin} onClick={() => setAdding(true)}>
-              Add source
-            </Button>
+        <Suspense fallback={<span className="muted">LOADING…</span>}>
+          {sources ? <Topology sources={sources} onSelect={onSelect} /> : !error && <span className="muted">LOADING…</span>}
+        </Suspense>
+      </section>
+      <section className="panel-fill source-list" aria-labelledby="sources-list-heading" ref={listFill}>
+        <div className="toolbar">
+          <h2 className="subhead" id="sources-list-heading">Sources</h2>
+          <div className="search">
+            <TbSearch aria-hidden />
+            <Input
+              aria-label="Search sources"
+              placeholder="Name or source ID"
+              style={{ paddingLeft: 26 }}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </div>
-          {error && <div className="error-text">{error}</div>}
-          <DataTable
-            aria-label="Sources"
-            columns={COLUMNS}
-            rows={sources ?? []}
-            rowKey={(s) => s.id}
-            onRowClick={(s) => onSelect(s.id)}
-            maxHeight={listHeight ?? 'none'}
-            style={FILL_TABLE}
-            empty={sources ? 'No sources yet. Add one to start onboarding a feed.' : 'LOADING…'}
-          />
+          <InfoTip label="Sources columns">
+            <div>Select a source to open it. Unauthenticated means the source accepts messages without checking who sent them.</div>
+            <div>Emitted counts updates sent since the source last started. Last frame tells you how long ago a message arrived.</div>
+            <div>
+              A draft is unfinished. A disabled source is switched off. Running means the source is connected or listening.
+              Starting and connecting mean it is still getting ready. Failing means it hit connection errors and will retry.
+              Not started means a problem with the setup kept it from starting.
+            </div>
+          </InfoTip>
+          {sources && <Badge size="sm" color="grey">{term ? `${rows.length} of ${sources.length}` : sources.length}</Badge>}
+          <span className="spacer" />
+          <Button size="sm" icon={<TbPlus />} disabled={!canAdmin} onClick={() => setAdding(true)}>
+            Add source
+          </Button>
         </div>
-      </CollapsiblePanel>
+        {error && <div className="error-text" role="alert">{error}</div>}
+        <DataTable
+          aria-label="Sources"
+          columns={COLUMNS}
+          rows={rows}
+          rowKey={(s) => s.id}
+          onRowClick={(s) => onSelect(s.id)}
+          maxHeight={listHeight ?? 'none'}
+          style={TABLE_STYLE}
+          empty={sources ? term ? 'No sources match.' : 'No sources yet.' : error ? 'Sources unavailable.' : 'LOADING…'}
+        />
+      </section>
       {adding && (
         <NewSource
           onClose={() => setAdding(false)}
