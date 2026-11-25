@@ -14,7 +14,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use ot_core::{Identifier, Observation};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::codec::Codec;
 use crate::expr::{Condition, ValueSpec, as_string};
@@ -79,24 +79,35 @@ pub struct AffiliationStage {
 }
 
 impl AffiliationStage {
-    fn run(&self, obs: &mut Value) {
+    fn run(&self, obs: &mut Value, from_entity: bool, traced: bool) -> Option<Value> {
+        if from_entity && !traced {
+            return None;
+        }
         let country = self.country.eval(obs);
         let code = as_string(&country).trim().to_uppercase();
-        let aff = if code.is_empty() {
-            self.unknown_country.clone()
+        let path: crate::path::Path = "classification.affiliation".parse().expect("path");
+        let before = traced.then(|| path.get(obs).cloned()).flatten();
+        let (aff, decision) = if from_entity {
+            (None, "Kept the entity's affiliation")
+        } else if code.is_empty() {
+            (self.unknown_country.clone(), "No country")
         } else if self.friendly.contains(&code) {
-            Some("friend".to_owned())
+            (Some("friend".to_owned()), "Friend list")
         } else if self.hostile.contains(&code) {
-            Some("hostile".to_owned())
+            (Some("hostile".to_owned()), "Hostile list")
         } else if self.neutral.contains(&code) {
-            Some("neutral".to_owned())
+            (Some("neutral".to_owned()), "Neutral list")
         } else {
-            self.otherwise.clone()
+            (self.otherwise.clone(), "Other countries")
         };
         if let Some(a) = aff {
-            let path: crate::path::Path = "classification.affiliation".parse().expect("path");
             path.set(obs, Value::String(a));
         }
+        traced.then(|| {
+            json!({
+                "country": code, "decision": decision, "before": before, "after": path.get(obs),
+            })
+        })
     }
 }
 
@@ -182,6 +193,12 @@ impl ThrottleSpec {
                 self.min_interval_secs
             );
         }
+        if self.min_move_m <= 0.0 {
+            return format!(
+                "Held: {dt:.1} s since the last report, before the {} s heartbeat. Movement is off.",
+                self.heartbeat_secs
+            );
+        }
         let moved = distance_m(
             last.lat,
             last.lon,
@@ -191,6 +208,29 @@ impl ThrottleSpec {
         format!(
             "throttled: moved {moved:.0} m in {dt:.0} s, under {} m and before the {} s heartbeat",
             self.min_move_m, self.heartbeat_secs
+        )
+    }
+
+    fn why_due(&self, last: Option<&LastWrite>, obs: &Observation, changed: bool) -> String {
+        let Some(last) = last else {
+            return "Passed: first report for this track".into();
+        };
+        if changed {
+            return "Passed: the track's joined details changed".into();
+        }
+        let dt = (obs.observed_at - last.at).num_milliseconds() as f64 / 1000.0;
+        if dt >= self.heartbeat_secs {
+            return format!("Passed: heartbeat reached after {dt:.1} s");
+        }
+        let moved = distance_m(
+            last.lat,
+            last.lon,
+            obs.position.latitude,
+            obs.position.longitude,
+        );
+        format!(
+            "Passed: moved {moved:.0} m, meeting the {} m threshold",
+            self.min_move_m
         )
     }
 }
@@ -758,17 +798,15 @@ impl Pipeline {
             }
             Run::Registry(stage) => {
                 let stage = stage.clone();
-                self.link(&stage, &mut item, registry, out);
-                if let Some(f) = sample {
-                    f.item(&id, || item.value.clone());
+                let detail = self.link(&stage, &mut item, registry, out, sample.is_some());
+                if let (Some(f), Some(detail)) = (sample, detail) {
+                    f.detailed_item(&id, detail, || item.value.clone());
                 }
             }
             Run::Affiliation(stage) => {
-                if !item.entity_affiliation {
-                    stage.run(&mut item.value);
-                }
-                if let Some(f) = sample {
-                    f.item(&id, || item.value.clone());
+                let detail = stage.run(&mut item.value, item.entity_affiliation, sample.is_some());
+                if let (Some(f), Some(detail)) = (sample, detail) {
+                    f.detailed_item(&id, detail, || item.value.clone());
                     if item.entity_affiliation {
                         f.note(&id, "kept the entity's affiliation");
                     }
@@ -809,22 +847,26 @@ impl Pipeline {
                     unreachable!()
                 };
                 let key = obs.source_track_key.clone();
+                let reason;
                 if obs.state == Some(ot_core::TrackState::Dropped) {
                     // A source track's end always passes.
                     last.remove(&key);
                     pending.remove(&key);
+                    reason = sample.as_ref().map(|_| "Passed: end of track".to_owned());
                 } else {
                     if item.changed {
                         pending.insert(key.clone());
                     }
                     let prev = last.get(&key);
-                    if !spec.due(prev, &obs, pending.contains(&key)) {
+                    let changed = pending.contains(&key);
+                    if !spec.due(prev, &obs, changed) {
                         self.counts.throttled += 1;
                         if let Some(f) = sample {
                             f.dropped(&id, spec.why_not(prev, &obs));
                         }
                         return;
                     }
+                    reason = sample.as_ref().map(|_| spec.why_due(prev, &obs, changed));
                     pending.remove(&key);
                     last.insert(
                         key,
@@ -835,15 +877,15 @@ impl Pipeline {
                         },
                     );
                 }
-                if let Some(f) = sample {
-                    f.obs(&id, &obs);
+                if let (Some(f), Some(reason)) = (sample, reason) {
+                    f.detailed_item(&id, json!({ "decision": reason }), || json!(obs));
                 }
             }
             Run::Output => {
                 // Tracks reach correlation with their entity looked up.
                 if !self.linked[at] {
                     let stage = self.default_registry.clone();
-                    self.link(&stage, &mut item, registry, out);
+                    self.link(&stage, &mut item, registry, out, false);
                 }
                 let Some(obs) = self.typed(&id, &item, out, sample.as_deref_mut()) else {
                     return;
@@ -861,7 +903,7 @@ impl Pipeline {
                 self.counts.published += 1;
                 self.step_counts[at].passed += 1;
                 if let Some(f) = sample {
-                    f.item(&id, || item.value.clone());
+                    f.detailed_item(&id, json!({ "subject": subject }), || item.value.clone());
                 }
                 out.published.push((subject.clone(), item.value));
                 return;
@@ -899,8 +941,34 @@ impl Pipeline {
         item: &mut Item,
         registry: &dyn RegistryLookup,
         out: &mut Output,
-    ) {
+        traced: bool,
+    ) -> Option<Value> {
+        let before = traced.then(|| item.value.clone());
         let matched = stage.run(&mut item.value, registry);
+        let detail = before.as_ref().map(|before| match &matched {
+            Some(m) => {
+                let fields: Vec<_> = m.set.iter().filter_map(|field| {
+                    let path = field.parse::<crate::path::Path>().ok()?;
+                    Some(json!({ "field": field, "before": path.get(before), "after": path.get(&item.value) }))
+                }).collect();
+                json!({
+                    "decision": if !m.conflicts.is_empty() { "Conflicting identifiers · feed kept" }
+                        else if !m.applied { "Match grade did not qualify · feed kept" }
+                        else if fields.is_empty() && m.updates.is_empty() { "Matched · no field changes" }
+                        else { "Applied entity links" },
+                    "entity_id": m.entity_id,
+                    "track_fields": fields,
+                    "entity_updates": m.updates,
+                    "before": before.get("name"),
+                    "after": item.value.get("name"),
+                })
+            }
+            None => json!({
+                "decision": "No registry match",
+                "before": before.get("name"),
+                "after": item.value.get("name"),
+            }),
+        });
         // Values mapped to the entity go no further than here.
         if let Some(ext) = item.value.get_mut("ext").and_then(Value::as_object_mut) {
             ext.remove(crate::registry::ENTITY_EXT);
@@ -931,6 +999,7 @@ impl Pipeline {
             }
         }
         *self.counts.grades.entry(grade).or_default() += 1;
+        detail
     }
 
     /// A Map step: the record's rules, static details kept and joined, each
@@ -948,10 +1017,15 @@ impl Pipeline {
             return;
         };
         let schema_version = spec.schema_version;
-        let outcome = spec.apply(&item.value);
         let mut sample = match (trace.as_deref_mut(), item.sample) {
             (Some(t), Some(s)) => t.samples.get_mut(s),
             _ => None,
+        };
+        let outcome = match sample.as_deref_mut().and_then(|f| f.stage(id)) {
+            Some(stage) => spec.apply_traced(&item.value, |rule| {
+                stage.matched_rules.push(rule.to_owned());
+            }),
+            None => spec.apply(&item.value),
         };
         let mapped = match outcome {
             MapOutcome::Rejected(reason) => {
@@ -978,7 +1052,7 @@ impl Pipeline {
         for m in mapped.iter().filter(|m| m.kind == RuleKind::Static) {
             self.counts.statics += 1;
             if let Some(f) = sample.as_deref_mut() {
-                f.item(id, || mapped_json(m));
+                f.mapped_item(id, &m.rule, || mapped_json(m));
                 f.note(
                     id,
                     format!(
@@ -1064,7 +1138,7 @@ impl Pipeline {
                 }
             };
             if let Some(f) = sample.as_deref_mut() {
-                f.item(id, || obs.clone());
+                f.mapped_item(id, &m.rule, || obs.clone());
             }
             let next = Item {
                 value: obs,

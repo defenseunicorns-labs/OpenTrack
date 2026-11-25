@@ -57,6 +57,7 @@ export default function App() {
   const [basemapTiles, setBasemapTiles] = useState(false)
   const [banner, setBanner] = useState<Banner | null>(null)
   const [settingsRev, setSettingsRev] = useState(0)
+  const [schemaDirty, setSchemaDirty] = useState(false)
   useEffect(() => {
     const load = () => {
       api.appSettings().then(
@@ -120,14 +121,18 @@ export default function App() {
           )}
         </PageHeader>
         <Tabs variant="bar" aria-label="Workspaces" value={active} onChange={(id) => go(id)} tabs={tabs} />
-        <main className={active === 'tracks' ? 'content content--tracks' : 'content'}>
+        <main className={active === 'tracks' ? 'content content--tracks' : active === 'sources' && sub ? 'content content--source-editor' : 'content'}>
           {active === 'overview' && <OverviewPage onStatus={onStatus} />}
           <Suspense fallback={<span className="muted">LOADING…</span>}>
             {active === 'sources' && <SourcesPage selected={sub} onSelect={(id) => go('sources', id)} />}
             {active === 'correlation' && <CorrelationPage />}
             {active === 'tracks' && <TrackDbPage selected={sub} onSelect={(id) => go('tracks', id)} />}
             {active === 'registry' && <RegistryPage />}
-            {active === 'schema' && <SchemaPage />}
+            {(active === 'schema' || schemaDirty) && (
+              <div hidden={active !== 'schema'}>
+                <SchemaPage visible={active === 'schema'} onDirtyChange={setSchemaDirty} />
+              </div>
+            )}
             {active === 'settings' && <SettingsPage onSaved={() => setSettingsRev((n) => n + 1)} />}
             {active === 'help' && <HelpPage sub={sub} />}
           </Suspense>

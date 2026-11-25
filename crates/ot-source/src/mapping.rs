@@ -251,6 +251,10 @@ impl MappingSpec {
     }
 
     pub fn apply(&self, record: &Value) -> MapOutcome {
+        self.apply_traced(record, |_| {})
+    }
+
+    pub(crate) fn apply_traced(&self, record: &Value, mut matched: impl FnMut(&str)) -> MapOutcome {
         if let Some(r) = self.reject.iter().find(|r| r.when.eval(record)) {
             return MapOutcome::Rejected(r.reason.clone());
         }
@@ -259,6 +263,7 @@ impl MappingSpec {
             if rule.when.as_ref().is_some_and(|c| !c.eval(record)) {
                 continue;
             }
+            matched(&rule.name);
             let bound;
             let record = if rule.bindings.is_empty() {
                 record

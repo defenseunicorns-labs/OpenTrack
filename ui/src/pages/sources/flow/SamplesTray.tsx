@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Badge, RecordTable, SegmentedControl, Tray } from '@kineticlogic/staresdk'
+import { Badge, RecordTable, SegmentedControl, Select, Tray } from '@kineticlogic/staresdk'
 import type { DecodedSamples, PreviewResult } from '../../../api/client'
 import { InfoTip } from '../../../components/InfoTip'
 import { PIPELINE_COUNTS_INFO } from '../../../lib/sourceState'
 import { countsLine, sampleRows } from '../../../lib/trace'
 import { StageSamples } from '../designer/StageSamples'
-import type { FlowNode } from './sourceFlow'
+import { INPUT, type FlowNode } from './sourceFlow'
+import { StepSampleStatus } from './StepPreview'
 
 /** Fields shown first in a sample table, when the samples have them. */
 const PINNED = ['source_track_key', 'name', 'observed_at', 'position.latitude', 'position.longitude']
@@ -20,6 +21,7 @@ export function SamplesTray({
   title,
   path,
   preview,
+  previewPending,
   decodedSamples,
   decodedError,
   error,
@@ -33,6 +35,7 @@ export function SamplesTray({
   /** The steps from the input to the selected one. */
   path: string[]
   preview: PreviewResult | null
+  previewPending: boolean
   decodedSamples: DecodedSamples | null
   decodedError: string | null
   error: string | null
@@ -43,13 +46,40 @@ export function SamplesTray({
   onFollow: (sample: number | null) => void
 }) {
   const [view, setView] = useState<'table' | 'json'>('table')
-  const parent = path.length > 1 ? path[path.length - 2] : undefined
-  const inputFallback = !!node && !preview && ['input', 'reject', 'map'].includes(node.type)
-  const rows = node && preview ? sampleRows(preview.trace, node.id, parent, path) : []
-  const counts = countsLine(preview)
+  const [selection, setSelection] = useState<{ step: string; rule: string } | null>(null)
+  const connected = path[0] === INPUT
+  const mapping = node?.type === 'map'
+  const throttle = node?.type === 'throttle'
+  const output = node?.type === 'output'
+  const stageId = output ? 'publish' : node?.id
+  const stagePath = output ? [...path, 'publish'] : path
+  const rules = mapping ? (node.config as { mapping?: { rules?: { name?: string }[] } } | undefined)?.mapping?.rules : undefined
+  const names = [...new Set((rules ?? []).map((rule) => rule.name).filter((name): name is string => !!name))]
+  const ruleFilter = selection && selection.step === node?.id && names.includes(selection.rule) ? selection.rule : undefined
+  const ready = connected && !previewPending
+  const inputFallback = ready && !!node && !preview?.trace && ['input', 'reject', 'map'].includes(node.type) && !!decodedSamples
+  const rows = ready && stageId ? sampleRows(preview?.trace, stageId, stagePath.at(-2), stagePath, throttle) : []
+  const counts = ready ? countsLine(preview) : ''
   // A row's sample: `2` or `2-0` (the first of what one sample made).
   const sampleOf = (rowId: string) => Number(rowId.split('-')[0])
-  const selected = followed === null ? null : (rows.find((r) => sampleOf(r.id) === followed)?.id ?? null)
+  const overlaps = mapping ? new Set(rows.filter((r) => (r.matchedRules?.length ?? 0) > 1).map((r) => sampleOf(r.id))).size : 0
+  const visibleRows = ruleFilter ? rows.filter((r) => r.rule === ruleFilter) : rows
+  const selected = followed === null ? null : (visibleRows.find((r) => sampleOf(r.id) === followed)?.id ?? null)
+  const tableRows = mapping ? visibleRows.map((r) => {
+    const matches = r.matchedRules
+    const overlap = matches && matches.length > 1
+    return {
+      ...r,
+      value: r.value && typeof r.value === 'object'
+        ? { Rule: r.rule, Overlap: overlap ? matches.join(', ') : undefined, ...r.value }
+        : r.value,
+      dropped: r.dropped && overlap ? `${r.dropped} · Matches: ${matches.join(', ')}` : r.dropped,
+    }
+  }) : throttle ? visibleRows.map((r) => ({
+    ...r,
+    value: r.value && typeof r.value === 'object' ? { Decision: r.detail?.decision, ...r.value } : r.value,
+  })) : visibleRows
+  const empty = ruleFilter ? 'No traced samples produced output for this rule.' : 'No samples to show for this step.'
 
   return (
     <Tray
@@ -73,7 +103,8 @@ export function SamplesTray({
             the Input, Reject and Map steps show decoded input records for reference. In the table,
             fields the step added or changed are tinted and ones it removed are struck through. Click a sample to follow it through the
             flow: the steps it passed light up, and the one that dropped it says why. On the input, drag a column onto a Map to map that
-            field. Nothing is published.
+            field. Output shows the message that would be published using the active schema. Its track ID is a placeholder for the one assigned by correlation.
+            The dry run publishes nothing.
           </InfoTip>
           <SegmentedControl
             aria-label="Samples view"
@@ -89,14 +120,34 @@ export function SamplesTray({
       }
     >
       <div className="samples-tray-body">
-        {error && <div className="error-text">{error}</div>}
-        {view === 'table' && counts && (
+        {node && <StepSampleStatus nodeId={node.id} connected={connected} pending={previewPending} preview={preview} />}
+        {ready && error && <div className="error-text">{error}</div>}
+        {counts && (
           <div className="value-row">
             <span className="mono muted">{counts}</span>
             <InfoTip label="Sample counts">What the source did with all the stored samples. {PIPELINE_COUNTS_INFO}</InfoTip>
           </div>
         )}
-        {view === 'table' && [...new Set(preview?.errors ?? [])].map((e) => (
+        {ready && mapping && preview?.trace && names.length > 0 && (
+          <div className="value-row">
+            <Select
+              ariaLabel="Map rule"
+              options={[{ value: '', label: 'All rules' }, ...names.map((name) => ({ value: name, label: name }))]}
+              value={ruleFilter ?? ''}
+              onChange={(rule) => setSelection(rule ? { step: node.id, rule } : null)}
+              style={{ width: 180 }}
+            />
+          </div>
+        )}
+        {overlaps > 0 && (
+          <div className="value-row">
+            <Badge size="sm" color="warning">{overlaps} sampled {overlaps === 1 ? 'record' : 'records'} matched multiple rules</Badge>
+            <InfoTip label="Rule overlap">
+              This counts overlaps across all rules. Overlap lists the rules that matched, and Rule identifies which one produced each row. A rule can match without producing output.
+            </InfoTip>
+          </div>
+        )}
+        {ready && [...new Set(preview?.errors ?? [])].map((e) => (
           <div key={e} className="error-text">
             {e}
           </div>
@@ -108,23 +159,30 @@ export function SamplesTray({
             <span className="mono muted">Input samples before mapping · {decodedSamples.frames} frame(s) · {decodedSamples.records.length} decoded record(s)</span>
           </div>
         )}
-        {!node ? null : inputFallback ? (
-          <pre className="mono">{JSON.stringify(decodedSamples?.records ?? [], null, 2)}</pre>
-        ) : !preview ? null : view === 'table' ? (
+        {!node || !ready ? null : inputFallback ? (
+          view === 'table' ? (
+            <RecordTable
+              aria-label="Decoded input samples"
+              rows={decodedSamples.records.map((value, i) => ({ id: String(i), label: `#${i + 1}`, value }))}
+              draggableColumns
+              empty="No decoded records. Capture samples on the input."
+            />
+          ) : <pre className="mono">{JSON.stringify(decodedSamples.records, null, 2)}</pre>
+        ) : !preview || !stageId ? null : view === 'table' ? (
           <RecordTable
             aria-label={`Samples after ${title}`}
-            rows={rows}
-            pinned={PINNED}
+            rows={tableRows}
+            pinned={mapping ? ['Rule', 'Overlap', ...PINNED] : throttle ? ['Decision', ...PINNED] : output ? ['track_id', ...PINNED] : PINNED}
             // A Map makes observations out of records: everything would differ.
-            showChanges={node.type !== 'input' && node.type !== 'map'}
+            showChanges={node.type !== 'input' && !mapping && !output}
             // A record's fields can be dragged onto a Map to map them.
             draggableColumns={node.type === 'input' || node.type === 'reject'}
             selectedId={selected}
             onRowClick={(id) => onFollow(sampleOf(id) === followed ? null : sampleOf(id))}
-            empty="No stored samples. Capture some on the input."
+            empty={empty}
           />
         ) : (
-          <StageSamples result={preview} stageId={node.type === 'output' ? 'publish' : node.id} path={path} />
+          <StageSamples result={preview} stageId={stageId} path={stagePath} ruleFilter={ruleFilter} empty={empty} />
         )}
       </div>
     </Tray>

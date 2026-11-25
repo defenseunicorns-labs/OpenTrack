@@ -3,8 +3,8 @@ import { Button, FieldSelect, Input } from '@kineticlogic/staresdk'
 import type { ExtensionField, SchemaOverview } from '../../api/client'
 import { validKey } from '../../lib/schemaUsage'
 import { InfoTip } from '../../components/InfoTip'
+import { FIELD_TYPES } from './schemaFields'
 
-const TYPES: ExtensionField['type'][] = ['string', 'integer', 'number', 'boolean', 'enum', 'timestamp', 'position', 'json']
 const CARD_OR_FEED = 'feed or entity'
 // Inputs as tall as the selects beside them.
 const ROW_INPUT = { height: 28, fontSize: 12 }
@@ -12,9 +12,10 @@ const ROW_INPUT = { height: 28, fontSize: 12 }
 /** Why a field would be refused, checked as the user types (the server checks again on save). */
 function problem(f: ExtensionField, all: ExtensionField[], reserved: string[]): string | null {
   const bad = validKey(f.key, reserved)
-  if (bad) return `name: ${bad}`
-  if (all.filter((x) => x.key === f.key).length > 1) return 'name: used twice'
-  if (f.type === 'enum' && !(f.enum_values ?? []).length) return 'enum: list at least one value'
+  if (bad === 'reserved') return 'This name is reserved. Choose another.'
+  if (bad) return 'Start the name with a lowercase letter. Use up to 64 lowercase letters, numbers, or underscores.'
+  if (all.filter((x) => x.key === f.key).length > 1) return 'This name is already in the draft.'
+  if (f.type === 'enum' && !(f.enum_values ?? []).length) return 'Enter at least one allowed value.'
   return null
 }
 
@@ -53,37 +54,36 @@ export function FieldForm({
         <span>
           Name
           <InfoTip label="Name">
-            Published as <span className="mono">attributes.&lt;name&gt;</span> and mapped as <span className="mono">ext.&lt;name&gt;</span>: a
-            lower-case letter, then letters, digits or _, at most 64. registry and entity are reserved.
+            Start with a lowercase letter. Use up to 64 lowercase letters, numbers, or underscores. The names registry and entity are reserved.
+            Feed mappings use <code>ext.&lt;name&gt;</code>. Other systems receive it as <code>attributes.&lt;name&gt;</code>.
           </InfoTip>
         </span>
         <span>
           Type
           <InfoTip label="Type">
-            What values are converted to before publishing: string, integer, number, boolean (true/false, yes/no, 1/0), enum (one of a list
-            of values), timestamp (RFC 3339), position (an object with latitude and longitude in degrees) or json (any value, kept as is). A
-            feed value that does not convert is dropped.
+            Choose the kind of value this field sends. For example, string is text, integer is a whole number, and enum lets you pick the allowed values.
+            A timestamp uses RFC 3339, such as 2026-01-01T12:00:00Z. A position needs latitude and longitude in degrees. JSON keeps the value as it is.
+            OpenTrack skips values it cannot convert to the selected type.
           </InfoTip>
         </span>
         <span>
           Unit
-          <InfoTip label="Unit">A label for people reading the schema (m, kn, deg…). OpenTrack does not convert values.</InfoTip>
+          <InfoTip label="Unit">Enter the unit the value already uses, such as meters or knots. It tells readers what the number means. OpenTrack leaves the number as it is.</InfoTip>
         </span>
         <span>
           Filled by
           <InfoTip label="Filled by">
-            {CARD_OR_FEED}: a source mapping sets <span className="mono">ext.&lt;name&gt;</span>, or a pipeline links an entity attribute to it
-            (the entity&apos;s value wins). A built-in fills it from OpenTrack instead: state, cot_type, course_deg, speed_mps, heading_deg,
-            vertical_rate_mps, altitude_hae_m, cep_m, callsign, identifiers, platform_type/flag/hull, sensor_code, confidence, sources,
-            contributors, observation_count, first_seen, last_seen or entity_id. A built-in fixes the type.
+            Choose feed or entity to use a feed mapping or a linked registry value. If both provide a value, the registry value wins.
+            Choose a built-in, such as speed_mps, to let OpenTrack fill the value and set its type.
           </InfoTip>
         </span>
-        <span>Notes</span>
+        <span>Notes<InfoTip label="Notes">Describe what the field means for people who maintain the schema or use its data.</InfoTip></span>
         <span />
       </div>
       {fields.map((f, i) => {
         const err = problem(f, fields, schema.reserved_extension_keys)
         const feeds = usage[f.key] ?? []
+        const builtin = builtins.find((b) => b.name === f.builtin)
         return (
           <div key={i} className="field-block">
             <div className="field-row">
@@ -91,12 +91,15 @@ export function FieldForm({
               {f.builtin ? (
                 <span className="mono muted">
                   {f.type}
-                  <InfoTip label="Built-in type">Fixed by the built-in {f.builtin}; pick feed or entity under Filled by to change it.</InfoTip>
+                  <InfoTip label="Built-in type">
+                    OpenTrack chooses the type for {f.builtin}. Select feed or entity under Filled by to choose a type yourself.
+                    {builtin?.reads?.length ? ` OpenTrack reads this value from ${builtin.reads.join(', ')}.` : ''}
+                  </InfoTip>
                 </span>
               ) : (
                 <FieldSelect
                   ariaLabel={`Field ${i + 1} type`}
-                  fields={TYPES.map((name) => ({ name }))}
+                  fields={FIELD_TYPES.map((name) => ({ name }))}
                   value={f.type}
                   onChange={(v) => set(i, { type: (v ?? 'string') as ExtensionField['type'], enum_values: v === 'enum' ? f.enum_values : undefined })}
                 />
@@ -111,31 +114,29 @@ export function FieldForm({
                   set(i, b ? { builtin: b.name, type: b.type, enum_values: undefined } : { builtin: undefined })
                 }}
               />
-              <Input style={ROW_INPUT} aria-label={`Field ${i + 1} notes`} value={f.description ?? ''} placeholder="What it is, for maintainers and consumers" onChange={(e) => set(i, { description: e.target.value || undefined })} />
-              <Button size="xs" variant="ghost" icon={<TbTrash />} aria-label={`Remove ${f.key || 'field'}`} title="Remove field" onClick={() => onChange(fields.filter((_, j) => j !== i))} />
+              <Input style={ROW_INPUT} aria-label={`Field ${i + 1} notes`} value={f.description ?? ''} onChange={(e) => set(i, { description: e.target.value || undefined })} />
+              <div className="schema-field-actions">
+                {!f.builtin && feeds.length > 0 && (
+                  <InfoTip label={`Feeds for ${f.key}`}>
+                    These feeds supply this field: {feeds.join(', ')}. A linked registry value takes priority.
+                  </InfoTip>
+                )}
+                <Button size="xs" variant="ghost" icon={<TbTrash />} aria-label={`Remove ${f.key || 'field'}`} title="Remove field" onClick={() => onChange(fields.filter((_, j) => j !== i))} />
+              </div>
             </div>
             {f.type === 'enum' && (
-              <div className="field-sub">
+              <div className="field-sub schema-enum-values">
                 <Input
                   style={ROW_INPUT}
                   aria-label={`Field ${i + 1} values`}
                   value={(f.enum_values ?? []).join(', ')}
-                  placeholder="Allowed values, comma-separated"
+                  placeholder="Allowed values"
                   onChange={(e) => set(i, { enum_values: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })}
                 />
+                <InfoTip label="Allowed values">Separate each choice with a comma. For example, low, medium, high.</InfoTip>
               </div>
             )}
-            {(err || f.builtin || feeds.length > 0) && (
-              <div className="field-sub muted">
-                {err ? (
-                  <span className="error-text">{err}</span>
-                ) : f.builtin ? (
-                  `OpenTrack fills it${builtins.find((b) => b.name === f.builtin)?.reads?.length ? ` from ${builtins.find((b) => b.name === f.builtin)!.reads!.join(', ')}` : ''}; feeds and entities do not.`
-                ) : (
-                  `Fed by ${feeds.join(', ')}; where a pipeline links it to an entity attribute, the entity's value takes precedence.`
-                )}
-              </div>
-            )}
+            {err && <div className="field-sub error-text">{err}</div>}
           </div>
         )
       })}

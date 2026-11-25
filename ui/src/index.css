@@ -33,6 +33,10 @@ body {
   overflow: hidden;
 }
 
+.content--source-editor {
+  padding: 0;
+}
+
 .panels {
   display: flex;
   flex-direction: column;
@@ -595,15 +599,62 @@ body {
 }
 
 /* The schema draft form: one grid row per field, notes and problems under it. */
+.schema-section {
+  min-width: 0;
+}
+
+.schema-section-toolbar {
+  margin-bottom: var(--space-xs);
+}
+
+.schema-section-toolbar .subhead {
+  flex: none;
+}
+
+.schema-version-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.schema-field-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.schema-field-star {
+  display: inline-flex;
+  color: var(--color-accent);
+}
+
+.schema-preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-md);
+}
+
+.schema-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-sm);
+}
+
 .field-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  overflow-x: auto;
 }
 
 .field-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.2fr) 120px 80px 170px minmax(160px, 2fr) 28px;
+  grid-template-columns: minmax(120px, 1.2fr) 120px 80px 170px minmax(160px, 2fr) 48px;
   gap: var(--space-sm);
   align-items: center;
 }
@@ -625,6 +676,17 @@ body {
 .field-sub {
   padding-left: 2px;
   font-size: 11px;
+}
+
+.schema-field-actions,
+.schema-enum-values {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.schema-field-actions {
+  justify-content: flex-end;
 }
 
 .stage-samples {
@@ -714,22 +776,6 @@ body {
   align-items: start;
 }
 
-/* The Map editor: the Source → Destination table beside the selected row's settings. */
-.map-table {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-md);
-  align-items: start;
-}
-
-.map-table > .map-field {
-  width: 320px;
-}
-
-.map-table .value-row.three {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .correlation-workspace {
   display: flex;
   flex-direction: column;
@@ -756,13 +802,32 @@ body {
 }
 
 .correlation-view > .ui-data-table,
-.registry-list > .ui-data-table {
+.registry-list > .ui-data-table,
+.source-list > .ui-data-table,
+.schema-section > .ui-data-table,
+.schema-section .toolbar + .ui-data-table {
   --color-bg-secondary: var(--color-bg-primary);
 }
 
 .registry-list {
   min-height: 280px;
   gap: var(--space-sm);
+}
+
+.sources-overview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-sm);
+}
+
+.sources-overview .toolbar > .subhead {
+  flex: none;
+}
+
+.source-list {
+  min-height: 240px;
+  gap: var(--space-xs);
 }
 
 .correlation-tracks {
@@ -840,7 +905,8 @@ body {
   gap: var(--space-xs);
 }
 
-.correlation-settings-section {
+.correlation-settings-section,
+.map-outline {
   display: grid;
   gap: var(--space-xs);
   min-inline-size: 0;
@@ -850,7 +916,8 @@ body {
   border-radius: var(--radius-sm);
 }
 
-.correlation-settings-section legend {
+.correlation-settings-section legend,
+.map-outline legend {
   padding-inline: var(--space-xs);
   font-weight: 600;
 }
@@ -1103,16 +1170,12 @@ body {
   gap: var(--space-md);
 }
 
-/* Source editor (#104): a workspace of the source's steps, the step list on its left; a step's
-   settings (or the feed's) open in a SideNav over the right of the page. It fills the page below
-   the tabs. */
+/* The source canvas fills the workspace. The step picker, inspector and samples sit above it. */
 .source-editor {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
-  height: calc(100vh - 120px);
-  min-height: 480px;
-  padding: var(--space-sm) var(--space-md);
+  height: 100%;
+  min-height: 380px;
 }
 
 .source-editor-head {
@@ -1120,6 +1183,7 @@ body {
   align-items: center;
   gap: var(--space-sm);
   flex-wrap: wrap;
+  padding: var(--space-sm) var(--space-md);
 }
 
 .source-editor-general {
@@ -1131,18 +1195,85 @@ body {
 }
 
 .source-workspace {
-  flex: 1;
+  position: relative;
+  flex: 1 1 0;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--color-glass-border);
-  border-radius: var(--radius-md);
+  display: grid;
+  grid-template: minmax(0, 1fr) auto / minmax(0, 1fr);
+  container-type: size;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .source-workspace-canvas {
-  flex: 1;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.source-workspace-canvas [aria-label='Steps'] {
+  position: absolute;
+  z-index: 6;
+  top: var(--space-sm);
+  left: var(--space-sm);
+  max-height: calc(100% - 2 * var(--space-sm));
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-deep);
+}
+
+.source-workspace:has(.source-samples) .source-workspace-canvas [aria-label='Steps'] {
+  max-height: calc(40cqh - 2 * var(--space-sm));
+}
+
+.source-inspector {
+  grid-area: 1 / 1;
+  justify-self: end;
+  z-index: 4;
+  display: flex;
+  width: min(660px, 58%);
   min-height: 0;
+  margin: var(--space-sm);
+  overflow: hidden;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-deep);
+}
+
+@container (max-width: 740px) {
+  .source-inspector {
+    align-self: end;
+    width: calc(100% - 2 * var(--space-sm));
+    max-height: 58%;
+  }
+}
+
+.source-samples {
+  grid-area: 2 / 1;
+  z-index: 5;
+}
+
+.source-samples > .ui-tray {
+  max-height: 60cqh;
+}
+
+@container (min-width: 851px) {
+  .source-workspace--map-compare > .source-inspector {
+    grid-area: 1 / 1 / 3 / 2;
+    width: calc(52% - 2 * var(--space-sm));
+  }
+
+  .source-workspace--map-compare > .source-samples {
+    justify-self: start;
+    width: 48%;
+  }
+}
+
+@container (max-width: 850px) {
+  .source-workspace--map-compare > .source-samples > .ui-tray {
+    max-height: 34cqh;
+  }
 }
 
 .samples-tray-body {
@@ -1202,8 +1333,6 @@ body {
 }
 
 .source-editor-json {
-  flex: 1;
-  min-height: 0;
   overflow: hidden;
 }
 

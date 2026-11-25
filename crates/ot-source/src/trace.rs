@@ -74,6 +74,15 @@ pub struct StageTrace {
     /// What this stage passed on: the record up to the reject stage, the
     /// mapping's outputs, then observations.
     pub items: Vec<Value>,
+    /// For a Map, the rule that produced each item, in the same order as items.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub item_rules: Vec<String>,
+    /// Structured decisions for outputs of a step, in the same order as items.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub item_details: Vec<Value>,
+    /// Map rules whose conditions matched, including those that did not produce an item.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub matched_rules: Vec<String>,
     /// Why it (or one of its outputs) was dropped here.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dropped: Vec<String>,
@@ -123,6 +132,9 @@ impl Trace {
                 .map(|id| StageTrace {
                     id: id.clone(),
                     items: Vec::new(),
+                    item_rules: Vec::new(),
+                    item_details: Vec::new(),
+                    matched_rules: Vec::new(),
                     dropped: Vec::new(),
                     notes: Vec::new(),
                     held: false,
@@ -144,6 +156,20 @@ impl SampleTrace {
     pub(crate) fn item(&mut self, id: &str, v: impl FnOnce() -> Value) {
         if let Some(s) = self.stage(id) {
             s.items.push(capped(v()));
+        }
+    }
+
+    pub(crate) fn mapped_item(&mut self, id: &str, rule: &str, v: impl FnOnce() -> Value) {
+        if let Some(s) = self.stage(id) {
+            s.items.push(capped(v()));
+            s.item_rules.push(rule.to_owned());
+        }
+    }
+
+    pub(crate) fn detailed_item(&mut self, id: &str, detail: Value, v: impl FnOnce() -> Value) {
+        if let Some(stage) = self.stage(id) {
+            stage.items.push(capped(v()));
+            stage.item_details.push(capped(detail));
         }
     }
 

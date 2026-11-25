@@ -1012,6 +1012,7 @@ export interface ProbeResult {
 export interface DecodedSamples {
   frames: number
   records: unknown[]
+  record_count: number
   decode_errors: number
   last_decode_error: string | null
 }
@@ -1066,12 +1067,28 @@ export interface TraceStage {
   id: string
   /** What the stage passed on: the record up to Reject, the mapping's outputs, then observations, the published message at Publish. */
   items: unknown[]
+  /** Map rule for each output item, in the same order as items. */
+  item_rules?: string[]
+  item_details?: TraceItemDetail[]
+  /** Map rules whose conditions matched this record. */
+  matched_rules?: string[]
   /** Why it (or one of its outputs) was dropped at this stage. */
   dropped?: string[]
   /** What the stage did with it that is not a drop (a static identity kept, say): shown at this stage only. */
   notes?: string[]
   /** The stage held it back (a tracker waiting for the rest of a scan). */
   held?: boolean
+}
+
+export interface TraceItemDetail {
+  decision?: string
+  country?: string
+  subject?: string
+  before?: unknown
+  after?: unknown
+  entity_id?: string
+  track_fields?: { field: string; before: unknown; after: unknown }[]
+  entity_updates?: [string, unknown][]
 }
 
 // --- Schema --------------------------------------------------------------------------------
@@ -1286,6 +1303,8 @@ export const api = {
     request<PreviewResult>('POST', '/sources/validate', { spec, samples, stored_samples_of: storedSamplesOf, ...(trace > 0 ? { trace } : {}) }),
 
   schema: () => get<SchemaOverview>('/schema'),
+  previewSchema: (uid: string, fields: ExtensionField[]) =>
+    request<{ published: TrackMessage; draft: TrackMessage }>('POST', `/schema/preview/${enc(uid)}`, { fields }),
   saveDraft: (fields: ExtensionField[], notes?: string) =>
     request<SchemaVersion>('PUT', '/schema/draft', { fields, notes }),
   publishDraft: () => request<SchemaVersion>('POST', '/schema/draft/publish'),
