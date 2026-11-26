@@ -471,6 +471,7 @@ async fn pipeline_loop(
             }
             _ = hold.tick(), if pipeline.has_tracker() => pipeline.flush(Utc::now(), false, registry.as_ref()),
             _ = flush.tick() => {
+                pipeline.prune(Utc::now());
                 let mut counts = pipeline.take_counts().pairs();
                 if publish_errors > 0 {
                     counts.push(("publish_error".to_owned(), std::mem::take(&mut publish_errors)));
@@ -479,7 +480,6 @@ async fn pipeline_loop(
                 for (k, n) in &counts {
                     *totals.entry(k.clone()).or_default() += n;
                 }
-                pipeline.prune(Utc::now());
                 let link = link.lock().map(|l| l.clone()).unwrap_or_default();
                 let status = json!({
                     "source": id,

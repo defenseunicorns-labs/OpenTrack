@@ -617,8 +617,9 @@ impl Pipeline {
         std::mem::take(&mut self.counts)
     }
 
-    /// Forget throttle and static state older than they are kept.
+    /// Expire buffered input and forget old throttle and static state.
     pub fn prune(&mut self, now: DateTime<Utc>) {
+        self.collect_codec_rejections(now, false);
         for s in &mut self.steps {
             match s {
                 Run::Map {
@@ -679,6 +680,7 @@ impl Pipeline {
                 return out;
             }
         };
+        self.collect_codec_rejections(frame.received_at, false);
         // A tracker timed by the sensor follows what the codec has learnt.
         if let Some(h) = self.codec.hints() {
             for s in &mut self.steps {
@@ -1165,6 +1167,12 @@ impl Pipeline {
         })
     }
 
+    fn collect_codec_rejections(&mut self, now: DateTime<Utc>, force: bool) {
+        if let Some((reason, count)) = self.codec.take_rejections(now, force) {
+            *self.counts.rejected.entry(reason.into()).or_default() += count;
+        }
+    }
+
     /// Run the Tracker steps on scans still waiting (plots grouped by time
     /// wait `scan_hold_secs` for more; `force` runs them regardless). The
     /// worker calls this on a timer; a dry run calls it with `force` at the
@@ -1175,6 +1183,7 @@ impl Pipeline {
         force: bool,
         registry: &dyn RegistryLookup,
     ) -> Output {
+        self.collect_codec_rejections(now, force);
         let mut out = Output::default();
         self.run_trackers(now, force, registry, &mut out, &mut None);
         out
@@ -1190,6 +1199,7 @@ impl Pipeline {
         registry: &dyn RegistryLookup,
         trace: &mut Trace,
     ) -> Output {
+        self.collect_codec_rejections(now, force);
         let mut out = Output::default();
         let mut t = Some(&mut *trace);
         self.run_trackers(now, force, registry, &mut out, &mut t);

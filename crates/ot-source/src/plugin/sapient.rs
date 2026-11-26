@@ -9,8 +9,10 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{Kind, Manifest, Plugin, PluginDecoder};
+use super::{Kind, Manifest, OptionKind, Plugin, PluginDecoder, PluginOption};
 use crate::frame::{DEFAULT_MAX_FRAME, Endian, Framing, PrefixWidth};
+
+mod origin;
 
 pub struct Sapient {
     manifest: Manifest,
@@ -29,7 +31,24 @@ impl Sapient {
             description: "SAPIENT (BSI Flex 335 v2.0): protobuf messages decoded via prost-reflect"
                 .into(),
             kinds: vec![Kind::Codec],
-            options: vec![],
+            options: vec![
+                PluginOption {
+                    name: "resolve_bearing_origin".into(),
+                    label: "Resolve bearing origin from status reports".into(),
+                    help: "Match each bearing to the reporting node's position at detection time.".into(),
+                    kind: OptionKind::Bool { default: false },
+                },
+                PluginOption {
+                    name: "max_position_gap_secs".into(),
+                    label: "Maximum position interval".into(),
+                    help: "Interpolate between positions up to this interval apart. Zero requires matching timestamps.".into(),
+                    kind: OptionKind::Number {
+                        default: Some(0.0),
+                        unit: "s".into(),
+                        min: Some(0.0),
+                    },
+                },
+            ],
             framing,
         };
         Self { manifest }
@@ -48,21 +67,46 @@ impl Plugin for Sapient {
     }
 
     fn decoder(&self, options: &Value) -> Result<Box<dyn PluginDecoder>, String> {
-        if !options.is_null() {
-            return Err(format!("sapient takes no options, got {}", options));
+        let options: origin::Options = if options.is_null() {
+            origin::Options::default()
+        } else {
+            serde_json::from_value(options.clone()).map_err(|e| format!("sapient options: {e}"))?
+        };
+        if options.max_position_gap_secs > 300 {
+            return Err("sapient max_position_gap_secs must be at most 300".into());
         }
         let inner = ot_sapient::Decoder::new().map_err(|e| format!("sapient init: {e}"))?;
-        Ok(Box::new(Decoder { inner }))
+        let origins = options
+            .resolve_bearing_origin
+            .then(|| origin::Resolver::new(&options));
+        Ok(Box::new(Decoder { inner, origins }))
     }
 }
 
 struct Decoder {
     inner: ot_sapient::Decoder,
+    origins: Option<origin::Resolver>,
 }
 
 impl PluginDecoder for Decoder {
-    fn decode(&mut self, bytes: &[u8], _received_at: DateTime<Utc>) -> Result<Vec<Value>, String> {
-        self.inner.decode(bytes).map_err(|e| e.to_string())
+    fn decode(&mut self, bytes: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Value>, String> {
+        let records = self.inner.decode(bytes).map_err(|e| e.to_string())?;
+        let Some(origins) = self.origins.as_mut() else {
+            return Ok(records);
+        };
+        origins.expire(received_at, false);
+        let mut output = Vec::new();
+        for record in records {
+            origins.record(record, received_at, &mut output);
+        }
+        Ok(output)
+    }
+
+    fn take_rejections(&mut self, now: DateTime<Utc>, force: bool) -> Option<(&'static str, u64)> {
+        let origins = self.origins.as_mut()?;
+        origins.expire(now, force);
+        let unresolved = origins.take_unresolved();
+        (unresolved > 0).then_some(("sapient_bearing_origin_unresolved", unresolved))
     }
 }
 
@@ -80,13 +124,14 @@ mod tests {
     }
 
     #[test]
-    fn decoder_rejects_non_null_options() {
+    fn decoder_accepts_defaults_and_rejects_unknown_options() {
         let s = Sapient::new();
         assert!(s.decoder(&Value::Null).is_ok());
         let e = s
-            .decoder(&Value::Object(serde_json::Map::new()))
+            .decoder(&serde_json::json!({"unknown": true}))
             .err()
             .unwrap();
-        assert!(e.contains("takes no options"), "{e}");
+        assert!(e.contains("unknown field"), "{e}");
+        assert!(s.decoder(&serde_json::json!({})).is_ok());
     }
 }
