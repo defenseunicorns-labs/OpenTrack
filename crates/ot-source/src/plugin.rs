@@ -179,6 +179,15 @@ pub fn describe(p: &dyn Plugin) -> Value {
 pub trait PluginDecoder: Send {
     fn decode(&mut self, bytes: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Value>, String>;
 
+    /// Expire buffered records and take input rejections since the last call.
+    fn take_rejections(
+        &mut self,
+        _now: DateTime<Utc>,
+        _force: bool,
+    ) -> Option<(&'static str, u64)> {
+        None
+    }
+
     /// What the stream has shown about the sensor so far, for stages that
     /// adapt to it (a tracker's `auto_timing`).
     fn hints(&self) -> Option<StreamHints> {

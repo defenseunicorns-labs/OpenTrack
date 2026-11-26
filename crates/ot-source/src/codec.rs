@@ -144,6 +144,14 @@ impl Codec {
         self.plugin.as_ref()?.hints()
     }
 
+    pub fn take_rejections(
+        &mut self,
+        now: chrono::DateTime<chrono::Utc>,
+        force: bool,
+    ) -> Option<(&'static str, u64)> {
+        self.plugin.as_mut()?.take_rejections(now, force)
+    }
+
     /// Decode one frame into zero or more records. Transport metadata on the
     /// frame is added to every record under `_frame`.
     pub fn decode(&mut self, frame: &Frame) -> Result<Vec<Value>, CodecError> {
