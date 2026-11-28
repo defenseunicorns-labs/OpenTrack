@@ -68,8 +68,8 @@ impl Keys {
         format!("{}:thist:{uid}", self.ns)
     }
 
-    pub fn original_report(&self, digest: &str) -> String {
-        format!("{}:evidence:report:{digest}", self.ns)
+    pub fn original_report(&self, identity: &str) -> String {
+        format!("{}:evidence:report:{identity}", self.ns)
     }
 
     pub fn evidence_publications(&self) -> String {

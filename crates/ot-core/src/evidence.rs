@@ -73,9 +73,3 @@ impl Lineage {
         lineage
     }
 }
-
-/// Hex SHA-256 over exact bytes, with no JSON canonicalization.
-pub fn digest(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(bytes))
-}

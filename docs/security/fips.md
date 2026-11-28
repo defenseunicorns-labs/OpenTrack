@@ -47,6 +47,7 @@ apply.
 | NATS `.creds` | Ed25519 (FIPS 186-5) over the server nonce |
 | Sync messages between nodes | Ed25519 (FIPS 186-5): each node's key pair is made by the module (`Ed25519KeyPair::generate_pkcs8v1`) and every message is signed and verified with it; key fingerprints and ids are SHA-256. AWS-LC's service indicator reports Ed25519 key generation, signing and verification as approved in FIPS mode (aws-lc-rs's `signature/tests/fips.rs`), so ECDSA P-256 was not needed |
 | Plugin identity | SHA-256 |
+| Contributor evidence | SHA-256 over original report and fused update bytes |
 | Client certificate status (OCSP) | Response signatures verified by `rustls-webpki` with the AWS-LC provider's algorithms; the request nonce from the DRBG; the RFC 6960 CertID's issuer name and key hashes are SHA-1 (`SHA1_FOR_LEGACY_USE_ONLY`), as the protocol defines them: an identifier, not a signature or security strength |
 
 ### SAML signatures

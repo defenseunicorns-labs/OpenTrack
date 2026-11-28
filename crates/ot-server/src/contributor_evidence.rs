@@ -2,8 +2,9 @@
 
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use ot_core::evidence::{Lineage, OriginalReport, ReportRef, digest};
+use ot_core::evidence::{Lineage, OriginalReport, ReportRef};
 use ot_nats::Outgoing;
+use ot_plugin::sha256_hex as digest;
 use ot_source::pipeline::ReportEvidenceSettings;
 use serde::{Deserialize, Serialize};
 

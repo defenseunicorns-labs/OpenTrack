@@ -914,7 +914,7 @@ impl RedisStore {
         }
         let mut pipe = redis::pipe();
         for record in records {
-            let identity = ot_core::evidence::digest(&serde_json::to_vec(&record.reference)?);
+            let identity = serde_json::to_string(&record.reference)?;
             pipe.cmd("SET")
                 .arg(self.keys.original_report(&identity))
                 .arg(serde_json::to_vec(record)?)
@@ -941,7 +941,7 @@ impl RedisStore {
             .map(|reference| {
                 Ok(self
                     .keys
-                    .original_report(&ot_core::evidence::digest(&serde_json::to_vec(reference)?)))
+                    .original_report(&serde_json::to_string(reference)?))
             })
             .collect::<Result<Vec<_>>>()?;
         let mut pipe = redis::pipe();

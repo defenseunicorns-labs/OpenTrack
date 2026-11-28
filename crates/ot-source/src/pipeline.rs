@@ -26,6 +26,14 @@ use crate::trace::{SampleTrace, Trace};
 pub use crate::flow::PipelineSpec;
 use crate::flow::{INPUT, Step};
 
+fn evidence_digest(bytes: &[u8]) -> String {
+    aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PipelineError {
     #[error(transparent)]
@@ -553,7 +561,7 @@ impl Pipeline {
     pub fn with_report_evidence(mut self, settings: ReportEvidenceSettings) -> Self {
         let profile = serde_json::to_vec(&(&self.spec.codec, &settings))
             .expect("codec and evidence settings serialize");
-        self.evidence = Some((settings, ot_core::evidence::digest(&profile)));
+        self.evidence = Some((settings, evidence_digest(&profile)));
         self
     }
 
@@ -709,7 +717,7 @@ impl Pipeline {
         }
         let evidence = self.evidence.as_ref().map(|_| {
             (
-                ot_core::evidence::digest(&frame.bytes),
+                evidence_digest(&frame.bytes),
                 self.codec
                     .original_records(&frame.bytes)
                     .filter(|original| original.len() == records.len()),
@@ -725,7 +733,7 @@ impl Pipeline {
                     source_id: self.source_id.clone(),
                     frame_sha256: frame_digest.clone(),
                     capture_profile_sha256: profile.clone(),
-                    record_sha256: original.map(ot_core::evidence::digest),
+                    record_sha256: original.map(evidence_digest),
                     record_index,
                 };
                 let native = original.and_then(|bytes| self.codec.decode_original_record(bytes));

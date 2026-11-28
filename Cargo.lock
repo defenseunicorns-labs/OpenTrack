@@ -2656,7 +2656,6 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "sha2",
  "thiserror",
  "url",
 ]
@@ -2767,6 +2766,7 @@ name = "ot-source"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "aws-lc-rs",
  "base64 0.22.1",
  "bytes",
  "chrono",

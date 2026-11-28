@@ -444,7 +444,7 @@ impl<S: TrackSink> Writer<S> {
         settings: &crate::contributor_evidence::Settings,
     ) -> anyhow::Result<()> {
         use crate::contributor_evidence::{Publication, report_id};
-        use ot_core::evidence::digest;
+        use ot_plugin::sha256_hex as digest;
 
         let pending = redis
             .pending_evidence_deliveries(CONCURRENT_PUBLISHES, settings.retention())
@@ -990,7 +990,7 @@ mod tests {
                 .unwrap();
                 assert_eq!(
                     report["reference"]["record_sha256"],
-                    ot_core::evidence::digest(&bytes)
+                    ot_plugin::sha256_hex(&bytes)
                 );
                 if format == "json" {
                     assert_eq!(
@@ -1009,10 +1009,7 @@ mod tests {
             }
             let manifest: serde_json::Value = serde_json::from_slice(&frames[3].body).unwrap();
             assert_eq!(manifest["update_id"], track.msg_id);
-            assert_eq!(
-                manifest["track_sha256"],
-                ot_core::evidence::digest(&track.body)
-            );
+            assert_eq!(manifest["track_sha256"], ot_plugin::sha256_hex(&track.body));
             assert_eq!(manifest["complete"], true);
             assert_eq!(manifest["reports"].as_array().unwrap().len(), 2);
 
@@ -1113,13 +1110,13 @@ mod tests {
             let manifest = stream
                 .get_last_raw_message_by_subject(&format!(
                     "{subject_prefix}.update.{}",
-                    ot_core::evidence::digest(msg_id.as_bytes())
+                    ot_plugin::sha256_hex(msg_id.as_bytes())
                 ))
                 .await
                 .unwrap();
             let manifest: serde_json::Value = serde_json::from_slice(&manifest.payload).unwrap();
             assert_eq!(manifest["update_id"], *msg_id);
-            assert_eq!(manifest["track_sha256"], ot_core::evidence::digest(&body));
+            assert_eq!(manifest["track_sha256"], ot_plugin::sha256_hex(&body));
             assert_eq!(manifest["complete"], false);
             js.delete_stream(evidence_stream).await.unwrap();
             js.delete_stream(track_stream).await.unwrap();
