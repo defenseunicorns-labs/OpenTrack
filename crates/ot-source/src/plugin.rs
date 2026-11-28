@@ -179,6 +179,13 @@ pub fn describe(p: &dyn Plugin) -> Value {
 pub trait PluginDecoder: Send {
     fn decode(&mut self, bytes: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Value>, String>;
 
+    /// Decode an original frame that is exactly one native record, without
+    /// applying cached state or enrichment. Implement this only when the
+    /// runtime `decode` output is known to correspond to that frame alone.
+    fn original_record(&self, _bytes: &[u8]) -> Option<Value> {
+        None
+    }
+
     /// Expire buffered records and take input rejections since the last call.
     fn take_rejections(
         &mut self,

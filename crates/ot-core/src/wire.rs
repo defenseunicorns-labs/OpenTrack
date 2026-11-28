@@ -309,7 +309,15 @@ pub fn to_message(
         kind: track.kind,
         members: track.members.iter().map(|u| u.doc_id()).collect(),
         area: area_of(&track.view),
-        bearings: track.bearings.clone(),
+        bearings: track
+            .bearings
+            .iter()
+            .cloned()
+            .map(|mut bearing| {
+                bearing.report_lineage = None;
+                bearing
+            })
+            .collect(),
         groups: track.groups.clone(),
         paired_with: track.paired_with.iter().map(|u| u.doc_id()).collect(),
         publisher: ctx.clone(),

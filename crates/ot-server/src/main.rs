@@ -18,6 +18,7 @@ mod bridge;
 mod cert_status;
 mod config;
 mod config_backup;
+mod contributor_evidence;
 mod control;
 mod correlate;
 mod correlation_api;
@@ -706,12 +707,17 @@ async fn run_writer(common: Common, args: WriterArgs) -> anyhow::Result<()> {
     };
     let nats = common.connect_nats().await?;
     tracing::info!(url = %common.nats.url, stream = %common.nats.stream, "publishing to NATS");
+    let evidence = contributor_evidence::Settings::load()?;
+    if let Some(settings) = &evidence {
+        settings.check_track_stream(&common.nats.stream, &common.nats.tracks_subject)?;
+    }
     let w = writer::Writer::new(
         common.open_redis().await?,
         nats,
         common.publish_context(),
         settings,
-    );
+    )
+    .with_evidence(evidence);
     w.run(shutdown_signal()).await?;
     Ok(())
 }

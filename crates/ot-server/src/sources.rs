@@ -444,6 +444,13 @@ async fn pipeline_loop(
     let mut pipeline = Pipeline::new(id, spec.pipeline.clone())
         .context("invalid pipeline")?
         .with_schema(schema.clone());
+    let evidence = crate::contributor_evidence::Settings::load()?;
+    if let Some(settings) = evidence
+        .as_ref()
+        .and_then(|settings| settings.sources.get(id))
+    {
+        pipeline = pipeline.with_report_evidence(settings.clone());
+    }
     let static_ttl = pipeline.static_ttl();
 
     // Warm the static cache so identity survives a restart.
@@ -507,6 +514,11 @@ async fn pipeline_loop(
                     o.insert("security".into(), label.clone());
                 }
             }
+        }
+        if let Some(settings) = &evidence {
+            redis
+                .record_original_reports(&out.original_reports, settings.retention())
+                .await?;
         }
         redis
             .append_observations(id, &out.observations)

@@ -9,6 +9,7 @@
 //! JetStream as a duplicate.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -124,7 +125,7 @@ type PendingDelete = (Instant, Vec<String>, Option<String>);
 
 pub struct Writer<S> {
     redis: RedisStore,
-    sink: S,
+    sink: Arc<S>,
     ctx: PublishContext,
     settings: WriterSettings,
     schedule: Schedule,
@@ -133,6 +134,7 @@ pub struct Writer<S> {
     history: Vec<(Instant, String, wire::HistoryDeleteMessage)>,
     /// Set after a failed publish: check the destination before the next one.
     needs_prepare: bool,
+    evidence: Option<crate::contributor_evidence::Settings>,
     pub tally: Tally,
 }
 
@@ -144,11 +146,20 @@ impl<S: TrackSink> Writer<S> {
             history: Vec::new(),
             needs_prepare: true,
             redis,
-            sink,
+            sink: Arc::new(sink),
             ctx,
             settings,
+            evidence: None,
             tally: Tally::default(),
         }
+    }
+
+    pub(crate) fn with_evidence(
+        mut self,
+        evidence: Option<crate::contributor_evidence::Settings>,
+    ) -> Self {
+        self.evidence = evidence;
+        self
     }
 
     /// Run until `shutdown` resolves.
@@ -159,13 +170,31 @@ impl<S: TrackSink> Writer<S> {
         self.redis.ensure_outbox_group(GROUP).await?;
         tracing::info!(consumer = %self.settings.consumer,
             subject = %format!("{}.>", self.settings.tracks_subject), "writer started");
-        tokio::pin!(shutdown);
+        let evidence = self.evidence.clone();
+        let evidence_redis = self.redis.clone();
+        let evidence_sink = self.sink.clone();
+        let evidence_worker = async move {
+            if let Some(settings) = evidence {
+                loop {
+                    if let Err(error) =
+                        Self::deliver_evidence(&evidence_redis, evidence_sink.as_ref(), &settings)
+                            .await
+                    {
+                        tracing::warn!(%error, "failed to process contributor evidence delivery");
+                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+            std::future::pending::<()>().await;
+        };
+        tokio::pin!(shutdown, evidence_worker);
         let mut backoff = Duration::from_millis(500);
         // First, anything this consumer was handed before a restart.
         let mut pending = true;
         loop {
             tokio::select! {
                 _ = &mut shutdown => break,
+                () = &mut evidence_worker => unreachable!("evidence worker only ends on shutdown"),
                 res = async {
                     // Create and validate the stream even when the outbox is empty.
                     // The status endpoint should reflect readiness before the first track.
@@ -308,6 +337,163 @@ impl<S: TrackSink> Writer<S> {
         }
     }
 
+    async fn flush_with_evidence(
+        &mut self,
+        uid: Uid,
+        ids: &[String],
+        track: Option<&ot_core::SystemTrack>,
+    ) -> anyhow::Result<Option<usize>> {
+        use crate::contributor_evidence::Publication;
+
+        let Some(track) = track.filter(|track| track.is_published()) else {
+            self.redis
+                .acknowledge_evidence_publication(GROUP, ids, None)
+                .await?;
+            self.tally.skipped += 1;
+            return Ok(Some(ids.len()));
+        };
+        let mut frozen = self.redis.staged_evidence_publications(ids).await?;
+        if !frozen.iter().any(Option::is_some) {
+            let last = ids.len() - 1;
+            let id = &ids[last];
+            let track_json =
+                serde_json::to_vec(&wire::to_message(track, &self.ctx, chrono::Utc::now()))?;
+            let mut lineage = track
+                .view
+                .provenance
+                .report_lineage
+                .clone()
+                .unwrap_or_default();
+            if track.kind == ot_core::TrackKind::Group {
+                lineage
+                    .incomplete
+                    .insert("group_lineage_unavailable".into());
+            }
+            if !track.bearings.is_empty() {
+                lineage = ot_core::evidence::Lineage::combine(
+                    std::iter::once(Some(&lineage)).chain(
+                        track
+                            .bearings
+                            .iter()
+                            .map(|bearing| bearing.report_lineage.as_ref()),
+                    ),
+                );
+            }
+            let retention = self
+                .evidence
+                .as_ref()
+                .expect("evidence configured")
+                .retention();
+            let originals = self
+                .redis
+                .original_reports(&lineage.reports, retention)
+                .await?;
+            let update_id = format!("{}:{id}", self.ctx.node_id);
+            let publication = Publication::new(
+                self.evidence.as_ref().expect("evidence is configured"),
+                track_json,
+                &self.ctx.node_id,
+                &update_id,
+                lineage,
+                originals,
+            )?;
+            frozen[last] = Some(
+                self.redis
+                    .stage_evidence_publication(id, &serde_json::to_vec(&publication)?)
+                    .await?,
+            );
+        }
+        let (index, bytes) = frozen
+            .into_iter()
+            .enumerate()
+            .find_map(|(i, item)| item.map(|bytes| (i, bytes)))
+            .expect("frozen publication");
+        let publication: Publication = serde_json::from_slice(&bytes)?;
+        let id = &ids[index];
+        let track_message = self.outgoing(uid, Op::Upsert, id, publication.track_json);
+        anyhow::ensure!(
+            publication.update_id == track_message.msg_id,
+            "frozen publisher identity changed"
+        );
+        let stored = match self.send(track_message).await {
+            Ok(stored) => stored,
+            Err(error) => {
+                tracing::warn!(%error, %uid, "track publication will retry");
+                self.tally.retried += 1;
+                return Ok(None);
+            }
+        };
+        self.redis
+            .acknowledge_evidence_publication(
+                GROUP,
+                &ids[..=index],
+                stored.then_some(bytes.as_slice()),
+            )
+            .await?;
+        if stored {
+            self.tally.written += 1;
+        } else {
+            self.tally.rejected += 1;
+        }
+        Ok(Some(index + 1))
+    }
+
+    async fn deliver_evidence(
+        redis: &RedisStore,
+        sink: &S,
+        settings: &crate::contributor_evidence::Settings,
+    ) -> anyhow::Result<()> {
+        use crate::contributor_evidence::{Publication, report_id};
+        use ot_core::evidence::digest;
+
+        let pending = redis
+            .pending_evidence_deliveries(CONCURRENT_PUBLISHES, settings.retention())
+            .await?;
+        for snapshot in pending {
+            let publication: Publication = serde_json::from_slice(&snapshot)?;
+            if publication.stream != settings.stream
+                || publication.subject_prefix != settings.subject_prefix
+            {
+                tracing::warn!(update = %publication.update_id, "withholding contributor evidence queued for a different destination");
+                continue;
+            }
+            let originals = redis
+                .original_reports(&publication.report_refs, settings.retention())
+                .await?;
+            if originals.len() != publication.report_refs.len() {
+                tracing::warn!(update = %publication.update_id, "withholding evidence with missing original reports");
+                continue;
+            }
+            let records = originals
+                .iter()
+                .map(|report| {
+                    Ok(settings.outgoing(
+                        "report",
+                        &report_id(&report.reference)?,
+                        serde_json::to_vec(report)?,
+                    ))
+                })
+                .collect::<serde_json::Result<Vec<_>>>()?;
+            let manifest = settings.outgoing(
+                "update",
+                &digest(publication.update_id.as_bytes()),
+                publication.manifest_json,
+            );
+            let mut keep_for_retry = false;
+            for message in records.into_iter().chain([manifest]) {
+                if let Err(error) = sink.publish(message).await {
+                    keep_for_retry = error.is_transient();
+                    tracing::warn!(%error, update = %publication.update_id, "contributor evidence delivery failed");
+                    break;
+                }
+            }
+            if !keep_for_retry {
+                redis.settle_evidence_delivery(&snapshot).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn flush(&mut self) -> anyhow::Result<()> {
         let now = Instant::now();
         let (mut written, mut deleted, mut failed) = (0, 0, 0);
@@ -391,6 +577,43 @@ impl<S: TrackSink> Writer<S> {
         let mut acks: Vec<String> = Vec::new();
         let mut sends: Vec<(Uid, Vec<String>, Outgoing)> = Vec::new();
         for ((uid, ids), track) in due.into_iter().zip(tracks) {
+            if self.evidence.is_some() {
+                let mut settled = 0;
+                while settled < ids.len() {
+                    match self
+                        .flush_with_evidence(uid, &ids[settled..], track.as_ref())
+                        .await
+                    {
+                        Ok(Some(count)) => {
+                            settled += count;
+                        }
+                        Ok(None) => {
+                            failed += 1;
+                            self.schedule.retry(
+                                uid,
+                                ids[settled..].to_vec(),
+                                now + self.settings.retry_after,
+                            );
+                            break;
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, %uid, "failed to stage evidence publication");
+                            failed += 1;
+                            self.schedule.retry(
+                                uid,
+                                ids[settled..].to_vec(),
+                                now + self.settings.retry_after,
+                            );
+                            break;
+                        }
+                    }
+                }
+                if settled > 0 {
+                    self.schedule.written(uid, now);
+                    written += 1;
+                }
+                continue;
+            }
             let Some(track) = track else {
                 // Retired since it was queued; its delete is in the outbox.
                 self.tally.skipped += 1;
@@ -452,6 +675,10 @@ impl<S: TrackSink> Writer<S> {
             }
         }
         self.redis.ack_outbox(GROUP, &acks).await?;
+        #[cfg(test)]
+        if let Some(settings) = &self.evidence {
+            Self::deliver_evidence(&self.redis, self.sink.as_ref(), settings).await?;
+        }
 
         for (metric, n) in [
             ("written", written),
@@ -606,6 +833,297 @@ mod tests {
             }))
             .unwrap();
             SystemTrack::from_first_observation(uid(n), obs)
+        }
+
+        fn evidence_settings() -> crate::contributor_evidence::Settings {
+            crate::contributor_evidence::Settings {
+                stream: "TRACK_EVIDENCE".into(),
+                subject_prefix: "restricted.evidence".into(),
+                retention_seconds: 600,
+                sources: Default::default(),
+            }
+        }
+
+        fn input(
+            source: &str,
+            codec: serde_json::Value,
+            record: &'static str,
+            paths: [&str; 4],
+            schema_version: u32,
+        ) -> ot_source::pipeline::Output {
+            use ot_source::pipeline::{Pipeline, ReportEvidenceSettings};
+            use ot_source::schema::ExtensionSchema;
+            let [key, latitude, longitude, marking] = paths;
+            let spec = serde_json::from_value(serde_json::json!({
+                "codec": codec,
+                "mapping": { "schema_version": schema_version, "rules": [{
+                    "name": "position", "key": key, "fields": {
+                        "position.latitude": latitude, "position.longitude": longitude
+                    }
+                }]}
+            }))
+            .unwrap();
+            let mut pipeline = Pipeline::new(source, spec)
+                .unwrap()
+                .with_schema(ExtensionSchema {
+                    version: schema_version,
+                    fields: vec![],
+                })
+                .with_report_evidence(ReportEvidenceSettings {
+                    marking_path: Some(marking.parse().unwrap()),
+                    report_id_path: Some(key.parse().unwrap()),
+                });
+            pipeline.process(
+                &ot_source::frame::Frame::new(record),
+                &std::collections::BTreeMap::new(),
+            )
+        }
+
+        #[tokio::test]
+        async fn contributor_evidence_recovers_the_exact_published_revision() {
+            let Some(redis) = store().await else {
+                eprintln!("skipped: OT_TEST_REDIS_URL not set");
+                return;
+            };
+            let sink = FakeSink::default();
+            let ctx = PublishContext {
+                node_id: "opentrack-OTK".into(),
+                version: "test".into(),
+                correlation: "correlation-test".into(),
+            };
+            let settings = WriterSettings {
+                consumer: "restartable".into(),
+                tracks_subject: "tracks".into(),
+                min_interval: Duration::ZERO,
+                retry_after: Duration::from_millis(1),
+                batch: 100,
+            };
+            redis.ensure_outbox_group(GROUP).await.unwrap();
+            let a = input(
+                "json-a",
+                serde_json::json!({"type":"json", "records":"frames"}),
+                r#"{"frames":[{"id":"a1", "lat":32.0, "lon":-117.0, "mark":{"classification":"A"}}, {"id":"a2", "lat":33.0, "lon":-117.0}]}"#,
+                ["id", "lat", "lon", "mark"],
+                3,
+            );
+            let b = input(
+                "xml-b",
+                serde_json::json!({"type":"xml", "record_element":"message"}),
+                r#"<batch><message id="b1" lat="32.0" lon="-117.0"><security>Keep Original Case</security></message></batch>"#,
+                [
+                    "message.@id",
+                    "message.@lat",
+                    "message.@lon",
+                    "message.security",
+                ],
+                6,
+            );
+            assert_eq!(a.observations.len(), 2, "{:?}", a.last_error);
+            assert_eq!(b.observations.len(), 1, "{:?}", b.last_error);
+            assert_eq!(
+                (
+                    a.observations[0].schema_version,
+                    b.observations[0].schema_version
+                ),
+                (3, 6)
+            );
+            let retention = evidence_settings().retention();
+            redis
+                .record_original_reports(&a.original_reports, retention)
+                .await
+                .unwrap();
+            redis
+                .record_original_reports(&b.original_reports, retention)
+                .await
+                .unwrap();
+            let (view, _) = crate::correlate::best_view(
+                &[
+                    crate::correlate::Contribution {
+                        obs: &a.observations[0],
+                        priority: 1,
+                    },
+                    crate::correlate::Contribution {
+                        obs: &b.observations[0],
+                        priority: 2,
+                    },
+                ],
+                30.0,
+                &crate::correlate::LabelSettings::default(),
+            );
+            let mut original = SystemTrack::from_first_observation(uid(1), view);
+            original.published = Some(true);
+            let mut first = Writer::new(redis.clone(), sink.clone(), ctx.clone(), settings.clone())
+                .with_evidence(Some(evidence_settings()));
+            *sink.fail_next.lock().unwrap() = 1;
+            redis.put_system_track(&original, true).await.unwrap();
+            first.pump(false).await.unwrap();
+            assert!(sink.sent.lock().unwrap().is_empty());
+            drop(first);
+            let mut next = SystemTrack::from_first_observation(uid(1), a.observations[1].clone());
+            next.published = Some(true);
+            redis.put_system_track_quietly(&next).await.unwrap();
+            let mut restored = Writer::new(redis.clone(), sink.clone(), ctx.clone(), settings)
+                .with_evidence(Some(evidence_settings()));
+            restored.pump(true).await.unwrap();
+
+            let frames = sink.sent.lock().unwrap().clone();
+            assert_eq!(frames.len(), 4);
+            let track = &frames[0];
+            assert_eq!(track.subject, "tracks.tms-OTK000000001");
+            assert_eq!(
+                track.headers,
+                [
+                    (wire::HEADER_OP, "upsert".into()),
+                    (wire::HEADER_SCHEMA, wire::TRACK_SCHEMA.into())
+                ]
+            );
+            let body: wire::TrackMessage = serde_json::from_slice(&track.body).unwrap();
+            assert_eq!(body, wire::to_message(&original, &ctx, body.published_at));
+            for (frame, format) in [(&frames[1], "json"), (&frames[2], "xml")] {
+                let report: serde_json::Value = serde_json::from_slice(&frame.body).unwrap();
+                assert_eq!(report["format"], format);
+                assert_eq!(report["marking"]["state"], "present");
+                let bytes = base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    report["original_base64"].as_str().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    report["reference"]["record_sha256"],
+                    ot_core::evidence::digest(&bytes)
+                );
+                if format == "json" {
+                    assert_eq!(
+                        bytes,
+                        br#"{"id":"a1", "lat":32.0, "lon":-117.0, "mark":{"classification":"A"}}"#
+                    );
+                    assert_eq!(report["marking"]["value"]["classification"], "A");
+                } else {
+                    assert_eq!(bytes, br#"<message id="b1" lat="32.0" lon="-117.0"><security>Keep Original Case</security></message>"#);
+                    assert!(
+                        report["marking"]["value"]
+                            .to_string()
+                            .contains("Keep Original Case")
+                    );
+                }
+            }
+            let manifest: serde_json::Value = serde_json::from_slice(&frames[3].body).unwrap();
+            assert_eq!(manifest["update_id"], track.msg_id);
+            assert_eq!(
+                manifest["track_sha256"],
+                ot_core::evidence::digest(&track.body)
+            );
+            assert_eq!(manifest["complete"], true);
+            assert_eq!(manifest["reports"].as_array().unwrap().len(), 2);
+
+            redis.put_system_track(&next, true).await.unwrap();
+            restored.pump(false).await.unwrap();
+            let frames = sink.sent.lock().unwrap().clone();
+            assert_ne!(frames[4].msg_id, track.msg_id);
+            let second: serde_json::Value = serde_json::from_slice(&frames[6].body).unwrap();
+            assert_eq!(second["update_id"], frames[4].msg_id);
+            assert_eq!(second["reports"].as_array().unwrap().len(), 1);
+            redis.purge_namespace().await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn contributor_evidence_uses_a_separate_jetstream_subject() {
+            let (Some(redis), Ok(url)) = (store().await, std::env::var("OT_TEST_NATS_URL")) else {
+                eprintln!("skipped: OT_TEST_REDIS_URL or OT_TEST_NATS_URL not set");
+                return;
+            };
+            let nonce = chrono::Utc::now().timestamp_micros();
+            let tracks_subject = format!("evidence-test-{nonce}.tracks");
+            let subject_prefix = format!("evidence-test-{nonce}.restricted");
+            let track_stream = format!("EVIDENCE_TEST_TRACKS_{nonce}");
+            let evidence_stream = format!("EVIDENCE_TEST_REPORTS_{nonce}");
+            let client = ot_nats::Nats::connect(ot_nats::NatsSettings {
+                url,
+                name: "contributor-evidence-test".into(),
+                creds_file: None,
+                token: None,
+                user: None,
+                password: None,
+                tls_ca: None,
+                tls_first: false,
+                tls_cert: None,
+                tls_key: None,
+                stream: track_stream.clone(),
+                tracks_subject: tracks_subject.clone(),
+                max_age: Duration::from_secs(600),
+            })
+            .await
+            .unwrap();
+            client.ensure_stream().await.unwrap();
+            let js = ot_nats::async_nats::jetstream::new(client.client().clone());
+            let ctx = PublishContext {
+                node_id: "opentrack-OTK".into(),
+                version: "test".into(),
+                correlation: "correlation-test".into(),
+            };
+            let settings = WriterSettings {
+                consumer: "evidence-test".into(),
+                tracks_subject: tracks_subject.clone(),
+                min_interval: Duration::ZERO,
+                retry_after: Duration::from_millis(1),
+                batch: 100,
+            };
+            redis.ensure_outbox_group(GROUP).await.unwrap();
+            let mut original = track(1, 32.0);
+            original.published = Some(true);
+            let mut writer = Writer::new(redis.clone(), client, ctx.clone(), settings)
+                .with_evidence(Some(crate::contributor_evidence::Settings {
+                    stream: evidence_stream.clone(),
+                    subject_prefix: subject_prefix.clone(),
+                    retention_seconds: 600,
+                    sources: Default::default(),
+                }));
+            redis.put_system_track(&original, true).await.unwrap();
+            writer.pump(false).await.unwrap();
+            let subject = wire::subject(&tracks_subject, uid(1));
+            let (headers, body) = writer.sink.last_message(&subject).await.unwrap().unwrap();
+            let msg_id = &headers
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case("Nats-Msg-Id"))
+                .unwrap()
+                .1;
+            let published: wire::TrackMessage = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                body.as_ref(),
+                serde_json::to_vec(&wire::to_message(&original, &ctx, published.published_at))
+                    .unwrap()
+            );
+            let stream = js
+                .create_stream(ot_nats::async_nats::jetstream::stream::Config {
+                    name: evidence_stream.clone(),
+                    subjects: vec![format!("{subject_prefix}.>")],
+                    max_age: Duration::from_secs(600),
+                    max_messages_per_subject: 1,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            Writer::deliver_evidence(
+                &redis,
+                writer.sink.as_ref(),
+                writer.evidence.as_ref().unwrap(),
+            )
+            .await
+            .unwrap();
+            let manifest = stream
+                .get_last_raw_message_by_subject(&format!(
+                    "{subject_prefix}.update.{}",
+                    ot_core::evidence::digest(msg_id.as_bytes())
+                ))
+                .await
+                .unwrap();
+            let manifest: serde_json::Value = serde_json::from_slice(&manifest.payload).unwrap();
+            assert_eq!(manifest["update_id"], *msg_id);
+            assert_eq!(manifest["track_sha256"], ot_core::evidence::digest(&body));
+            assert_eq!(manifest["complete"], false);
+            js.delete_stream(evidence_stream).await.unwrap();
+            js.delete_stream(track_stream).await.unwrap();
+            redis.purge_namespace().await.unwrap();
         }
 
         #[tokio::test]

@@ -564,6 +564,8 @@ pub struct Platform {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Provenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_lineage: Option<crate::evidence::Lineage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sensor_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_code: Option<String>,

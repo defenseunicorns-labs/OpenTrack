@@ -1373,6 +1373,16 @@ pub fn best_view(
     view.identifiers = identifiers;
     // Never marked below what went into it.
     view.security = labels.combine(by_priority.iter().filter_map(|c| c.obs.security.as_ref()));
+    if contribs
+        .iter()
+        .any(|c| c.obs.provenance.report_lineage.is_some())
+    {
+        view.provenance.report_lineage = Some(ot_core::evidence::Lineage::combine(
+            contribs
+                .iter()
+                .map(|c| c.obs.provenance.report_lineage.as_ref()),
+        ));
+    }
     (view, provenance)
 }
 

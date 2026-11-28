@@ -52,6 +52,8 @@ pub struct AttributeNotice {
 /// A line of bearing associated with a track.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BearingContact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_lineage: Option<crate::evidence::Lineage>,
     pub source_id: String,
     pub source_track_key: String,
     pub observed_at: DateTime<Utc>,

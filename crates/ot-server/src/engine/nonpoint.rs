@@ -1069,6 +1069,7 @@ impl Engine {
                 && (at - b.observed_at).abs() <= keep
         });
         t.bearings.push(BearingContact {
+            report_lineage: lob.obs.provenance.report_lineage.clone(),
             source_id: lob.obs.source_id.clone(),
             source_track_key: lob.obs.source_track_key.clone(),
             observed_at: at,
@@ -1234,7 +1235,7 @@ impl Engine {
             v
         };
         let domain = used.iter().find_map(|l| l.obs.classification.domain);
-        serde_json::from_value(json!({
+        let mut observation: Observation = serde_json::from_value(json!({
             "schema_version": used[0].obs.schema_version,
             "source_id": FIX,
             "source_track_key": key,
@@ -1246,7 +1247,17 @@ impl Engine {
             "classification": {"domain": domain},
             "provenance": {"sensor_code": "crossfix", "source_code": sensors.join(",")},
         }))
-        .expect("a fix is an observation")
+        .expect("a fix is an observation");
+        if used
+            .iter()
+            .any(|lob| lob.obs.provenance.report_lineage.is_some())
+        {
+            observation.provenance.report_lineage = Some(ot_core::evidence::Lineage::combine(
+                used.iter()
+                    .map(|lob| lob.obs.provenance.report_lineage.as_ref()),
+            ));
+        }
+        observation
     }
 }
 
