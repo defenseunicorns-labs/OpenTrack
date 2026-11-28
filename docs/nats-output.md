@@ -254,3 +254,80 @@ Publish on `tracks.>` and on your sources' NATS topic subjects, plus the JetStre
 (`$JS.API.STREAM.INFO.TRACKS`, and `$JS.API.STREAM.CREATE.TRACKS` unless the stream is created
 beforehand). Authenticate with `OT_NATS_CREDS` (credentials file), `OT_NATS_TOKEN`, or
 `OT_NATS_USER` and `OT_NATS_PASSWORD`.
+
+## Contributor evidence
+
+OpenTrack can publish original report evidence for individual track updates on a
+separate JetStream stream. Set `OT_CONTRIBUTOR_EVIDENCE_CONFIG` on the source and
+writer roles to enable it. The option is off when the variable is unset. The
+track stream, message body, subjects, and headers use the same contract in both
+modes.
+
+Create a separate evidence stream before enabling delivery. Give it the exact
+subject prefix followed by `.>`, a finite message age, and one message per
+subject. Grant the OpenTrack writer publish access and grant evidence readers
+access only as appropriate for the input data. The ordinary track subscriber
+does not need any evidence permissions. Protect the underlying Redis namespace
+as well as JetStream. Originals contain source data and may carry sensitive
+markings. Enroll only source feeds intended for these readers. Transport
+credentials and injected frame metadata are outside the evidence.
+
+Example configuration:
+
+```json
+{
+  "stream": "TRACK_EVIDENCE",
+  "subject_prefix": "restricted.track_evidence",
+  "retention_seconds": 86400,
+  "sources": {
+    "coastal-observations": {
+      "marking_path": "meta.marking",
+      "report_id_path": "messageId"
+    },
+    "harbor-feed": {
+      "marking_path": "event.detail.security",
+      "report_id_path": "event.@uid"
+    }
+  }
+}
+```
+
+Paths point into the original decoded record. Source IDs are the configured
+OpenTrack source IDs. The marking path refers to the original value, before any
+mapping, source-level label override, or fused-label calculation. A configured
+path that is absent yields `absent`. A missing path configuration or original
+record boundary yields `unavailable`. OpenTrack preserves native marking values
+in their input shape.
+
+For each published upsert:
+
+1. Read the existing track `Nats-Msg-Id` and compute its SHA-256. The corresponding
+   manifest subject is `<prefix>.update.<sha256-of-message-id>`.
+2. Check the manifest's `publisher_id` and `update_id` and compare
+   `track_sha256` to the SHA-256 of the exact received track body. The evidence
+   uses the independently versioned schema `opentrack.contributor-evidence.v1`.
+3. Each entry in `reports` carries a `reference` and, when the original is
+   available, a `report_id`. Read `<prefix>.report.<report_id>`.
+   The report record carries the same reference, codec format, optional native
+   report ID, original record bytes in base64 when available, and the original
+   marking state and value. Verify the original bytes against `record_sha256`.
+
+The writer freezes the exact track bytes and their evidence before attempting
+the track publish. On track acknowledgment it durably queues the evidence.
+The evidence worker publishes the originals before the manifest. The evidence
+can arrive later than the track. On restart the writer retries the same frozen
+update and the evidence worker resumes its pending queue. The Redis retention
+limits how long pending evidence and original records remain available.
+
+The manifest reports `complete: false` with reasons when the contributing
+records or original markings cannot all be identified. Examples include old
+state from before capture was enabled, opaque codec or tracker output, derived
+tracker history without exact input references, and previously retained identity
+fields without provenance. JSON arrays and XML records are captured separately.
+A protobuf frame containing exactly one report can be retained as a record.
+Codecs without provable record boundaries yield incomplete evidence. Native
+codec plugins may opt in when they can prove single-record framing. Stateful
+codec enrichment requires evidence for all of its inputs. Consumers
+should treat absent or expired evidence as unavailable. Manifests describe
+what OpenTrack used. A consumer still validates the source evidence and applies
+its own release policy.

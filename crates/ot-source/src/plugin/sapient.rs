@@ -102,6 +102,13 @@ impl PluginDecoder for Decoder {
         Ok(output)
     }
 
+    fn original_record(&self, bytes: &[u8]) -> Option<Value> {
+        if self.origins.is_some() {
+            return None;
+        }
+        self.inner.decode(bytes).ok()?.pop()
+    }
+
     fn take_rejections(&mut self, now: DateTime<Utc>, force: bool) -> Option<(&'static str, u64)> {
         let origins = self.origins.as_mut()?;
         origins.expire(now, force);
@@ -121,6 +128,18 @@ mod tests {
         assert_eq!(s.manifest().name, "sapient");
         assert!(s.manifest().provides(Kind::Codec));
         assert!(!s.manifest().provides(Kind::Tracker));
+    }
+
+    #[test]
+    fn only_a_stateless_decoder_confirms_original_frame_evidence() {
+        let plugin = Sapient::new();
+        let bytes = [0x12, 0x01, b'x'];
+        let direct = plugin.decoder(&Value::Null).unwrap();
+        assert_eq!(direct.original_record(&bytes).unwrap()["node_id"], "x");
+        let stateful = plugin
+            .decoder(&serde_json::json!({"resolve_bearing_origin": true}))
+            .unwrap();
+        assert!(stateful.original_record(&bytes).is_none());
     }
 
     #[test]

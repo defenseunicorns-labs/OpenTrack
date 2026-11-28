@@ -51,6 +51,27 @@ impl Path {
     }
 
     /// Set a value, creating intermediate objects. Array indexes must exist.
+    pub(crate) fn raw<'v>(
+        &self,
+        mut value: &'v serde_json::value::RawValue,
+    ) -> Option<&'v serde_json::value::RawValue> {
+        use serde_json::value::RawValue;
+        for segment in &self.segments {
+            value = match segment {
+                Segment::Key(key) => {
+                    let fields: std::collections::BTreeMap<String, &RawValue> =
+                        serde_json::from_str(value.get()).ok()?;
+                    *fields.get(key)?
+                }
+                Segment::Index(index) => {
+                    let items: Vec<&RawValue> = serde_json::from_str(value.get()).ok()?;
+                    *items.get(*index)?
+                }
+            };
+        }
+        Some(value)
+    }
+
     pub fn set(&self, target: &mut Value, value: Value) -> bool {
         let mut cur = target;
         for (i, seg) in self.segments.iter().enumerate() {

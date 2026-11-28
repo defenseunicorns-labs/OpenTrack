@@ -5,6 +5,7 @@
 //! identity ([`uid`]), system tracks themselves ([`track`]) and the message
 //! they are published as ([`wire`]).
 
+pub mod evidence;
 pub mod geometry;
 pub mod gold;
 pub mod netlog;

@@ -26,6 +26,14 @@ use crate::trace::{SampleTrace, Trace};
 pub use crate::flow::PipelineSpec;
 use crate::flow::{INPUT, Step};
 
+fn evidence_digest(bytes: &[u8]) -> String {
+    aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PipelineError {
     #[error(transparent)]
@@ -314,6 +322,7 @@ impl Counts {
 #[derive(Debug, Default)]
 pub struct Output {
     pub observations: Vec<Observation>,
+    pub original_reports: Vec<ot_core::evidence::OriginalReport>,
     /// Static cache entries that changed, for the worker to persist.
     pub statics: Vec<(String, StaticEntry)>,
     /// Entity fields the feed reports differently (track → entity links),
@@ -325,6 +334,13 @@ pub struct Output {
     pub plots: Vec<Observation>,
     /// What reached each NATS topic step: its subject and the item as JSON.
     pub published: Vec<(String, Value)>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReportEvidenceSettings {
+    pub marking_path: Option<crate::path::Path>,
+    pub report_id_path: Option<crate::path::Path>,
 }
 
 pub struct Pipeline {
@@ -353,6 +369,7 @@ pub struct Pipeline {
     /// value writes it once, not until the registry snapshot catches up.
     entity_sent: HashMap<(String, String), Value>,
     keep_plots: bool,
+    evidence: Option<(ReportEvidenceSettings, String)>,
 }
 
 /// A step's settings and state.
@@ -393,6 +410,7 @@ pub struct StepCount {
 /// What passes between steps: a record, or an observation's JSON form.
 #[derive(Clone)]
 struct Item {
+    lineage: Option<ot_core::evidence::Lineage>,
     value: Value,
     /// The mapping rule's kind, for observations.
     kind: RuleKind,
@@ -534,11 +552,19 @@ impl Pipeline {
             default_registry: RegistryStage::default(),
             entity_sent: HashMap::new(),
             keep_plots: false,
+            evidence: None,
         })
     }
 
     /// Also return the plots the Tracker steps are given (benchmarks score
     /// what the sensor saw as well as what the tracker made of it).
+    pub fn with_report_evidence(mut self, settings: ReportEvidenceSettings) -> Self {
+        let profile = serde_json::to_vec(&(&self.spec.codec, &settings))
+            .expect("codec and evidence settings serialize");
+        self.evidence = Some((settings, evidence_digest(&profile)));
+        self
+    }
+
     pub fn keep_plots(mut self, on: bool) -> Self {
         self.keep_plots = on;
         self
@@ -689,7 +715,76 @@ impl Pipeline {
                 }
             }
         }
-        for record in records {
+        let evidence = self.evidence.as_ref().map(|_| {
+            (
+                evidence_digest(&frame.bytes),
+                self.codec
+                    .original_records(&frame.bytes)
+                    .filter(|original| original.len() == records.len()),
+            )
+        });
+        for (record_index, record) in records.into_iter().enumerate() {
+            let lineage = evidence.as_ref().map(|(frame_digest, original)| {
+                let (settings, profile) = self.evidence.as_ref().expect("enabled evidence");
+                let original = original
+                    .as_ref()
+                    .and_then(|records| records.get(record_index).copied());
+                let reference = ot_core::evidence::ReportRef {
+                    source_id: self.source_id.clone(),
+                    frame_sha256: frame_digest.clone(),
+                    capture_profile_sha256: profile.clone(),
+                    record_sha256: original.map(evidence_digest),
+                    record_index,
+                };
+                let native = original.and_then(|bytes| self.codec.decode_original_record(bytes));
+                let marking = native.as_ref().zip(settings.marking_path.as_ref()).map_or(
+                    ot_core::evidence::OriginalMarking::Unavailable,
+                    |(native, path)| {
+                        path.get(native)
+                            .map_or(ot_core::evidence::OriginalMarking::Absent, |value| {
+                                ot_core::evidence::OriginalMarking::Present(value.clone())
+                            })
+                    },
+                );
+                let mut lineage = ot_core::evidence::Lineage::default();
+                if original.is_none() {
+                    lineage
+                        .incomplete
+                        .insert("original_record_boundary_unavailable".into());
+                }
+                if matches!(marking, ot_core::evidence::OriginalMarking::Unavailable) {
+                    lineage
+                        .incomplete
+                        .insert("original_marking_unavailable".into());
+                }
+                lineage.reports.insert(reference.clone());
+                out.original_reports
+                    .push(ot_core::evidence::OriginalReport {
+                        reference,
+                        format: match &self.spec.codec {
+                            crate::codec::CodecConfig::Plugin { plugin, .. } => {
+                                format!("plugin:{plugin}")
+                            }
+                            crate::codec::CodecConfig::Protobuf { message, .. } => {
+                                format!("protobuf:{message}")
+                            }
+                            codec => codec.name().to_owned(),
+                        },
+                        native_report_id: native
+                            .as_ref()
+                            .zip(settings.report_id_path.as_ref())
+                            .and_then(|(native, path)| path.get(native))
+                            .cloned(),
+                        original_base64: original.map(|bytes| {
+                            base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                bytes,
+                            )
+                        }),
+                        marking,
+                    });
+                lineage
+            });
             self.counts.records += 1;
             let sample = trace
                 .as_deref_mut()
@@ -698,6 +793,7 @@ impl Pipeline {
                 t.samples[at].item(INPUT, || record.clone());
             }
             let item = Item {
+                lineage,
                 value: record,
                 kind: RuleKind::Observation,
                 changed: false,
@@ -923,7 +1019,10 @@ impl Pipeline {
         sample: Option<&mut SampleTrace>,
     ) -> Option<Observation> {
         match serde_json::from_value::<Observation>(item.value.clone()) {
-            Ok(o) => Some(o),
+            Ok(mut o) => {
+                o.provenance.report_lineage = item.lineage.clone();
+                Some(o)
+            }
             Err(e) => {
                 self.counts.invalid += 1;
                 if let Some(f) = sample {
@@ -1096,7 +1195,13 @@ impl Pipeline {
             else {
                 return;
             };
+            let mut lineage = item.lineage.clone();
             if let Some(s) = statics.get(&m.key) {
+                if let Some(lineage) = &mut lineage {
+                    lineage
+                        .incomplete
+                        .insert("static_join_lineage_unavailable".into());
+                }
                 mapping::fill_missing(&mut m.fields, &s.fields);
                 for i in &s.identifiers {
                     if !m.identifiers.contains(i) {
@@ -1143,6 +1248,7 @@ impl Pipeline {
                 f.mapped_item(id, &m.rule, || obs.clone());
             }
             let next = Item {
+                lineage,
                 value: obs,
                 kind: m.kind,
                 changed: details_changed,
@@ -1259,6 +1365,7 @@ impl Pipeline {
                     Ok(mut tracks) => {
                         for t in &mut tracks {
                             t.source_id = self.source_id.clone();
+                            t.provenance.report_lineage = None;
                             t.provenance.tracker = Some(version.clone());
                         }
                         tracks
@@ -1273,6 +1380,16 @@ impl Pipeline {
             };
             let id = self.spec.nodes[at].id.clone();
             for (i, obs) in reports.into_iter().enumerate() {
+                let lineage = self.evidence.as_ref().map(|_| {
+                    let mut lineage = ot_core::evidence::Lineage::combine([obs
+                        .provenance
+                        .report_lineage
+                        .as_ref()]);
+                    lineage
+                        .incomplete
+                        .insert("tracker_history_unavailable".into());
+                    lineage
+                });
                 let mut sample = None;
                 if let Some(t) = trace.as_deref_mut() {
                     sample = dets.get(i).and_then(|d| {
@@ -1285,6 +1402,7 @@ impl Pipeline {
                     }
                 }
                 let item = Item {
+                    lineage,
                     value: serde_json::to_value(&obs).unwrap_or(Value::Null),
                     kind: RuleKind::Track,
                     changed: false,

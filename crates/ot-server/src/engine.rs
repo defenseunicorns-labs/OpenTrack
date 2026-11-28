@@ -144,7 +144,19 @@ pub fn apply(track: &mut SystemTrack, obs: Observation, confirm_after: u64) -> A
 /// Show a new view on a system track (one contributor's report, or the best
 /// of several) and update its state.
 pub fn apply_view(track: &mut SystemTrack, mut view: Observation, confirm_after: u64) -> Applied {
+    let previous = view
+        .provenance
+        .report_lineage
+        .as_ref()
+        .map(|_| view.clone());
     keep_identity(&track.view, &mut view);
+    if previous.as_ref().is_some_and(|before| *before != view)
+        && let Some(lineage) = &mut view.provenance.report_lineage
+    {
+        lineage
+            .incomplete
+            .insert("retained_identity_lineage_unavailable".into());
+    }
     let before_state = track.state;
     let identity_changed = track.view.name != view.name
         || track.view.callsign != view.callsign

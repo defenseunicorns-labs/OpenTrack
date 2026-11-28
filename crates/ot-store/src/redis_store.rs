@@ -903,6 +903,163 @@ impl RedisStore {
         Ok(())
     }
 
+    /// Retains original records before observations that reference them are queued.
+    pub async fn record_original_reports(
+        &self,
+        records: &[ot_core::evidence::OriginalReport],
+        retention: Duration,
+    ) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut pipe = redis::pipe();
+        for record in records {
+            let identity = serde_json::to_string(&record.reference)?;
+            pipe.cmd("SET")
+                .arg(self.keys.original_report(&identity))
+                .arg(serde_json::to_vec(record)?)
+                .arg("EX")
+                .arg(retention.as_secs())
+                .arg("NX")
+                .ignore();
+        }
+        pipe.query_async::<()>(&mut self.conn.clone()).await?;
+        Ok(())
+    }
+
+    /// Looks up retained originals for one captured track revision.
+    pub async fn original_reports(
+        &self,
+        references: &std::collections::BTreeSet<ot_core::evidence::ReportRef>,
+        retention: Duration,
+    ) -> Result<Vec<ot_core::evidence::OriginalReport>> {
+        if references.is_empty() {
+            return Ok(Vec::new());
+        }
+        let keys = references
+            .iter()
+            .map(|reference| {
+                Ok(self
+                    .keys
+                    .original_report(&serde_json::to_string(reference)?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut pipe = redis::pipe();
+        pipe.atomic().cmd("MGET").arg(&keys);
+        for key in keys {
+            pipe.cmd("EXPIRE")
+                .arg(key)
+                .arg(retention.as_secs())
+                .arg("GT")
+                .ignore();
+        }
+        let (records,): (Vec<Option<Vec<u8>>>,) = pipe.query_async(&mut self.conn.clone()).await?;
+        let mut reports = Vec::new();
+        for (reference, bytes) in references.iter().zip(records) {
+            if let Some(bytes) = bytes {
+                let record: ot_core::evidence::OriginalReport = serde_json::from_slice(&bytes)?;
+                if record.reference == *reference {
+                    reports.push(record);
+                }
+            }
+        }
+        Ok(reports)
+    }
+
+    /// Freezes the wire bytes and the evidence before a publication is attempted.
+    /// A competing attempt for the same outbox identity reads the first snapshot.
+    pub async fn stage_evidence_publication(&self, id: &str, bytes: &[u8]) -> Result<Vec<u8>> {
+        let (_, frozen): (bool, Vec<u8>) = redis::pipe()
+            .atomic()
+            .cmd("HSETNX")
+            .arg(self.keys.evidence_publications())
+            .arg(id)
+            .arg(bytes)
+            .cmd("HGET")
+            .arg(self.keys.evidence_publications())
+            .arg(id)
+            .query_async(&mut self.conn.clone())
+            .await?;
+        Ok(frozen)
+    }
+
+    pub async fn staged_evidence_publications(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<Option<Vec<u8>>>> {
+        let frozen = redis::cmd("HMGET")
+            .arg(self.keys.evidence_publications())
+            .arg(ids)
+            .query_async(&mut self.conn.clone())
+            .await?;
+        Ok(frozen)
+    }
+
+    /// Settles track publishing work. If NATS accepted the track, queue its
+    /// contributor evidence in the same transaction that acknowledges the track.
+    pub async fn acknowledge_evidence_publication(
+        &self,
+        group: &str,
+        ids: &[String],
+        snapshot: Option<&[u8]>,
+    ) -> Result<()> {
+        let mut pipe = redis::pipe();
+        pipe.atomic()
+            .cmd("XACK")
+            .arg(self.keys.outbox())
+            .arg(group)
+            .arg(ids)
+            .ignore()
+            .cmd("HDEL")
+            .arg(self.keys.evidence_publications())
+            .arg(ids)
+            .ignore();
+        if let Some(snapshot) = snapshot {
+            pipe.cmd("ZADD")
+                .arg(self.keys.evidence_delivery())
+                .arg("NX")
+                .arg(Utc::now().timestamp_millis())
+                .arg(snapshot)
+                .ignore();
+        }
+        pipe.query_async::<()>(&mut self.conn.clone()).await?;
+        Ok(())
+    }
+
+    pub async fn pending_evidence_deliveries(
+        &self,
+        limit: usize,
+        retention: Duration,
+    ) -> Result<Vec<Vec<u8>>> {
+        let cutoff = Utc::now()
+            .timestamp_millis()
+            .saturating_sub(i64::try_from(retention.as_millis()).unwrap_or(i64::MAX));
+        let messages = redis::pipe()
+            .atomic()
+            .cmd("ZREMRANGEBYSCORE")
+            .arg(self.keys.evidence_delivery())
+            .arg("-inf")
+            .arg(cutoff)
+            .ignore()
+            .cmd("ZRANGE")
+            .arg(self.keys.evidence_delivery())
+            .arg(0)
+            .arg(limit.saturating_sub(1))
+            .query_async::<(Vec<Vec<u8>>,)>(&mut self.conn.clone())
+            .await?
+            .0;
+        Ok(messages)
+    }
+
+    pub async fn settle_evidence_delivery(&self, snapshot: &[u8]) -> Result<()> {
+        let _: i64 = redis::cmd("ZREM")
+            .arg(self.keys.evidence_delivery())
+            .arg(snapshot)
+            .query_async(&mut self.conn.clone())
+            .await?;
+        Ok(())
+    }
+
     /// Append a batch of observations (one pipeline, trimmed to the window).
     pub async fn append_observations(&self, source: &str, batch: &[Observation]) -> Result<()> {
         if batch.is_empty() {

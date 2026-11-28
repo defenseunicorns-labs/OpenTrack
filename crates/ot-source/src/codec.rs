@@ -381,6 +381,85 @@ fn close(
     }
 }
 
+impl Codec {
+    pub(crate) fn decode_original_record(&self, input: &[u8]) -> Option<Value> {
+        match &self.config {
+            CodecConfig::Plugin { .. } => self.plugin.as_ref()?.original_record(input),
+            CodecConfig::Json { .. } => serde_json::from_slice(input).ok(),
+            CodecConfig::CotXml => decode_xml(input, "event").ok()?.pop(),
+            CodecConfig::Xml { record_element } => decode_xml(input, record_element).ok()?.pop(),
+            CodecConfig::Protobuf { records: None, .. } => {
+                let (set, desc) = self.proto.as_ref()?;
+                set.decode(desc, input).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// Isolate the exact input bytes behind decoded records when the codec
+    /// has an unambiguous record boundary.
+    pub(crate) fn original_records<'a>(&self, input: &'a [u8]) -> Option<Vec<&'a [u8]>> {
+        use serde_json::value::RawValue;
+        match &self.config {
+            CodecConfig::Json { records, .. } => {
+                let root: &RawValue = serde_json::from_slice(input).ok()?;
+                let value = match records {
+                    Some(path) => path.raw(root)?,
+                    None => root,
+                };
+                if value.get().starts_with('[') {
+                    let records: Vec<&RawValue> = serde_json::from_str(value.get()).ok()?;
+                    Some(
+                        records
+                            .iter()
+                            .map(|record| record.get().as_bytes())
+                            .collect(),
+                    )
+                } else if records.is_none() {
+                    Some(vec![value.get().as_bytes()])
+                } else {
+                    None
+                }
+            }
+            CodecConfig::Protobuf { records: None, .. } => Some(vec![input]),
+            CodecConfig::CotXml => xml_records(input, "event"),
+            CodecConfig::Xml { record_element } => xml_records(input, record_element),
+            CodecConfig::Plugin { .. } => self
+                .plugin
+                .as_ref()?
+                .original_record(input)
+                .map(|_| vec![input]),
+            CodecConfig::Protobuf { .. } => None,
+        }
+    }
+}
+
+fn xml_records<'a>(bytes: &'a [u8], element: &str) -> Option<Vec<&'a [u8]>> {
+    let mut reader = Reader::from_reader(bytes);
+    let mut open = Vec::new();
+    let mut records = Vec::new();
+    loop {
+        let start = usize::try_from(reader.buffer_position()).ok()?;
+        match reader.read_event().ok()? {
+            Event::Start(tag) => open.push((tag.name().as_ref() == element, start)),
+            Event::End(_) => {
+                let (selected, start) = open.pop()?;
+                if selected {
+                    let end = usize::try_from(reader.buffer_position()).ok()?;
+                    records.push(bytes.get(start..end)?);
+                }
+            }
+            Event::Empty(tag) if tag.name().as_ref() == element => {
+                let end = usize::try_from(reader.buffer_position()).ok()?;
+                records.push(bytes.get(start..end)?);
+            }
+            Event::Eof if open.is_empty() => return Some(records),
+            Event::Eof => return None,
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
